@@ -77,7 +77,7 @@ Summary: QEMU is a FAST! processor emulator
 Name: %{pkgname}%{?pkgsuffix}
 Version: 1.5.3
 # We change it to 501 in case of overwriiten, change by Luo Gangyi
-Release: 501%{?dist}.bc
+Release: 502%{?dist}.bc
 # Epoch because we pushed a qemu-1.0 package. AIUI this can't ever be dropped
 Epoch: 10
 License: GPLv2+ and LGPLv2+ and BSD
@@ -3163,6 +3163,16 @@ Patch1552: kvm-qemu-iotests-Filter-qemu-io-output-in-025.patch
 # For bz#1270341 - qemu-kvm build failure race condition in tests/ide-test
 Patch1553: kvm-qtest-ide-test-disable-flush-test.patch
 
+Patch1554: sheepdog-check-return-values-of-qemu_co_recv-send-co.patch
+Patch1555: sheepdog-handle-vdi-objects-in-resend_aio_req.patch
+Patch1556: sheepdog-reload-inode-outside-of-resend_aioreq.patch
+Patch1557: sheepdog-try-to-reconnect-to-sheepdog-after-network-.patch
+Patch1558: sheepdog-make-add_aio_request-and-send_aioreq-void-f.patch
+Patch1559: sheepdog-check-simultaneous-create-in-resend_aioreq.patch
+Patch1560: sheepdog-fix-overlapping-metadata-update.patch
+Patch1561: sheepdog-fix-a-core-dump.patch
+Patch1562: sheepdog-add-reconnect-to-cluster.patch
+
 
 BuildRequires: zlib-devel
 BuildRequires: SDL-devel
@@ -5006,7 +5016,7 @@ dobuild() {
 %if 0%{?have_tcmalloc:1}
         --enable-tcmalloc \
 %endif
-        --block-drv-rw-whitelist=qcow2,raw,file,host_device,blkdebug,nbd,iscsi,gluster,rbd \
+        --block-drv-rw-whitelist=qcow2,raw,file,host_device,blkdebug,nbd,iscsi,gluster,rbd,sheepdog \
         --block-drv-ro-whitelist=vmdk,vhdx,vpc,ssh,https \
         "$@"
 
@@ -5380,6 +5390,10 @@ sh %{_sysconfdir}/sysconfig/modules/kvm.modules &> /dev/null || :
 %{_libdir}/pkgconfig/libcacard.pc
 
 %changelog
+* Mon May 16 2016 Luo Gangyi <luogangyi@cmss.chinamobile.com>
+- enable block live migration
+- enable sheepdog driver
+
 * Fri Oct 16 2015 Jeff E. Nelson <jen@redhat.com> - 1.5.3-105.el7
 - kvm-qtest-ide-test-disable-flush-test.patch [bz#1270341]
 - Resolves: bz#1270341
@@ -8902,3 +8916,4 @@ sh %{_sysconfdir}/sysconfig/modules/kvm.modules &> /dev/null || :
 
 * Thu Jul 17 2003 Jeff Johnson <jbj@redhat.com> 0.4.3-1
 - Create.
+
