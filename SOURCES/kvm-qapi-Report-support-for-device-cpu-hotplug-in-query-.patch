@@ -1,0 +1,87 @@
+From 3ab885fc5fee68cd14c91af8de7752e8423630e1 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:51 +0200
+Subject: [PATCH 18/34] qapi: Report support for -device cpu hotplug in
+ query-machines
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-19-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71138
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 18/27] qapi: Report support for -device cpu hotplug in query-machines
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+For management apps it's very useful to know whether the selected
+machine type supports cpu hotplug via the new -device approach. Using
+the presence of 'query-hotpluggable-cpus' alone is not enough as a
+witness.
+
+Add a property to 'MachineInfo' called 'hotpluggable-cpus' that will
+report the presence of this feature.
+
+Example of output:
+    {
+        "hotpluggable-cpus": false,
+        "name": "mac99",
+        "cpu-max": 1
+    },
+    {
+        "hotpluggable-cpus": true,
+        "name": "pseries-2.7",
+        "is-default": true,
+        "cpu-max": 255,
+        "alias": "pseries"
+    },
+
+Signed-off-by: Peter Krempa <pkrempa@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Reviewed-by: Igor Mammedov <imammedo@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 62c9467dfffa62d999b9b9d6ff74e03454faea5f)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ qapi-schema.json | 5 ++++-
+ vl.c             | 1 +
+ 2 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/qapi-schema.json b/qapi-schema.json
+index 62ad1d8..d14ac90 100644
+--- a/qapi-schema.json
++++ b/qapi-schema.json
+@@ -2929,11 +2929,14 @@
+ # @cpu-max: maximum number of CPUs supported by the machine type
+ #           (since 1.5.0)
+ #
++# @hotpluggable-cpus: cpu hotplug via -device is supported (since 2.7.0)
++#
+ # Since: 1.2.0
+ ##
+ { 'struct': 'MachineInfo',
+   'data': { 'name': 'str', '*alias': 'str',
+-            '*is-default': 'bool', 'cpu-max': 'int' } }
++            '*is-default': 'bool', 'cpu-max': 'int',
++            'hotpluggable-cpus': 'bool'} }
+ 
+ ##
+ # @query-machines:
+diff --git a/vl.c b/vl.c
+index bd013b9..4e70834 100644
+--- a/vl.c
++++ b/vl.c
+@@ -1533,6 +1533,7 @@ MachineInfoList *qmp_query_machines(Error **errp)
+ 
+         info->name = g_strdup(mc->name);
+         info->cpu_max = !mc->max_cpus ? 1 : mc->max_cpus;
++        info->hotpluggable_cpus = !!mc->query_hotpluggable_cpus;
+ 
+         entry = g_malloc0(sizeof(*entry));
+         entry->value = info;
+-- 
+1.8.3.1
+

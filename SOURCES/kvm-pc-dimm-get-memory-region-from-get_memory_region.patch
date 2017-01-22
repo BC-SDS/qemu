@@ -1,0 +1,67 @@
+From 74d19e75c0cc769fe20c3aa98bc06a84b8ee57b1 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 24 Jun 2016 18:55:45 +0200
+Subject: [PATCH 16/33] pc-dimm: get memory region from ->get_memory_region()
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466794559-27963-9-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70775
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 08/22] pc-dimm: get memory region from ->get_memory_region()
+Bugzilla: 1270345
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+
+Curretly, the memory region of backed memory is all directly
+mapped to guest's address space, however, it will be not true
+for nvdimm device if we introduce nvdimm label which only can
+be indirectly accessed by ACPI DSM method
+
+Also it improves the comments a bit to reflect this fact
+
+Signed-off-by: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Reviewed-by: Stefan Hajnoczi <stefanha@redhat.com>
+(cherry picked from commit 3c3e88a814ef4eb8b2f8bf81863baec24838d998)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/mem/pc-dimm.c         | 3 ++-
+ include/hw/mem/pc-dimm.h | 3 ++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/hw/mem/pc-dimm.c b/hw/mem/pc-dimm.c
+index 9e7de56..70b9451 100644
+--- a/hw/mem/pc-dimm.c
++++ b/hw/mem/pc-dimm.c
+@@ -354,8 +354,9 @@ static void pc_dimm_get_size(Object *obj, Visitor *v, const char *name,
+     int64_t value;
+     MemoryRegion *mr;
+     PCDIMMDevice *dimm = PC_DIMM(obj);
++    PCDIMMDeviceClass *ddc = PC_DIMM_GET_CLASS(obj);
+ 
+-    mr = host_memory_backend_get_memory(dimm->hostmem, errp);
++    mr = ddc->get_memory_region(dimm);
+     value = memory_region_size(mr);
+ 
+     visit_type_int(v, name, &value, errp);
+diff --git a/include/hw/mem/pc-dimm.h b/include/hw/mem/pc-dimm.h
+index 218dfb0..827f1bc 100644
+--- a/include/hw/mem/pc-dimm.h
++++ b/include/hw/mem/pc-dimm.h
+@@ -60,7 +60,8 @@ typedef struct PCDIMMDevice {
+ 
+ /**
+  * PCDIMMDeviceClass:
+- * @get_memory_region: returns #MemoryRegion associated with @dimm
++ * @get_memory_region: returns #MemoryRegion associated with @dimm which
++ * is directly mapped into the physical address space of guest
+  */
+ typedef struct PCDIMMDeviceClass {
+     /* private */
+-- 
+1.8.3.1
+

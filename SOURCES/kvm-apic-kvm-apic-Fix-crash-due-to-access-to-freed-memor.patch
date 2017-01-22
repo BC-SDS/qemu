@@ -1,0 +1,53 @@
+From 75315eea123d27fb939190bba5d6de2e7c5e3e70 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:11 +0200
+Subject: [PATCH 71/99] apic: kvm-apic: Fix crash due to access to freed memory
+ region
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-67-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71682
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 66/78] apic: kvm-apic: Fix crash due to access to freed memory region
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+kvm-apic.io_memory memory region had its parent set to NULL at
+memory_region_init_io() time, so it ended up as a child in
+ /unattached contaner.
+As result when kvm-apic instance was deleted, the child property
+ /unattached/kvm-apic-msi[XXX] contained a reference to
+kvm-apic.io_memory address which was freed as part of kvm-apic.
+
+Do the same as 'apic' and make kvm-apic instance the owner
+of the memory region so that it won't end up in /unattached
+and gets cleanly released along with related kvm-apic instance.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 365aa1131fa61815eb1d672df6ba451bfe7f2cea)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/kvm/apic.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/hw/i386/kvm/apic.c b/hw/i386/kvm/apic.c
+index 3c7c8fa..f74220e 100644
+--- a/hw/i386/kvm/apic.c
++++ b/hw/i386/kvm/apic.c
+@@ -182,8 +182,8 @@ static void kvm_apic_realize(DeviceState *dev, Error **errp)
+ {
+     APICCommonState *s = APIC_COMMON(dev);
+ 
+-    memory_region_init_io(&s->io_memory, NULL, &kvm_apic_io_ops, s, "kvm-apic-msi",
+-                          APIC_SPACE_SIZE);
++    memory_region_init_io(&s->io_memory, OBJECT(s), &kvm_apic_io_ops, s,
++                          "kvm-apic-msi", APIC_SPACE_SIZE);
+ 
+     if (kvm_has_gsi_routing()) {
+         msi_nonbroken = true;
+-- 
+1.8.3.1
+

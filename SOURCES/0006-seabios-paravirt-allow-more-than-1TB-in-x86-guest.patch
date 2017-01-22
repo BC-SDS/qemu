@@ -1,0 +1,38 @@
+From 3c823c7e5c7d14e88957aeb4264ba4ab9c546d1f Mon Sep 17 00:00:00 2001
+From: Andrea Arcangeli <aarcange@redhat.com>
+Date: Tue, 8 Oct 2013 17:05:45 +0200
+Subject: seabios paravirt: allow more than 1TB in x86 guest
+
+RH-Author: Andrea Arcangeli <aarcange@redhat.com>
+Message-id: <1381251945-13402-2-git-send-email-aarcange@redhat.com>
+Patchwork-id: 54784
+O-Subject: [RHEL-7.0 qemu-kvm PATCH] seabios paravirt: allow more than 1TB in x86 guest
+Bugzilla: 989677
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Gleb Natapov <gleb@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+This patch should be applied to the qemu-kvm rpm package at the same
+time of the other one for seabios, so qemu will forward the ram_size
+bits over 40 to seabios without losing them.
+
+Signed-off-by: Andrea Arcangeli <aarcange@redhat.com>
+---
+ hw/i386/pc.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 7c57c8f..f75ea54 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -469,6 +469,7 @@ void pc_cmos_init(PCMachineState *pcms,
+     rtc_set_memory(s, 0x5b, val);
+     rtc_set_memory(s, 0x5c, val >> 8);
+     rtc_set_memory(s, 0x5d, val >> 16);
++    rtc_set_memory(s, 0x5e, val >> 24);
+ 
+     /* set the number of CPU */
+     rtc_set_memory(s, 0x5f, smp_cpus - 1);
+-- 
+2.5.5
+

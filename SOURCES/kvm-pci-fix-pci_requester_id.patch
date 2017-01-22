@@ -1,0 +1,221 @@
+From d2edbe57eadd96ee14135118916dbeafbfdf613a Mon Sep 17 00:00:00 2001
+From: Marcel Apfelbaum <marcel@redhat.com>
+Date: Sun, 24 Jul 2016 16:28:58 +0200
+Subject: [PATCH 18/35] pci: fix pci_requester_id()
+
+RH-Author: Marcel Apfelbaum <marcel@redhat.com>
+Message-id: <1469377743-9714-9-git-send-email-marcel@redhat.com>
+Patchwork-id: 71375
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 08/13] pci: fix pci_requester_id()
+Bugzilla: 1350196
+RH-Acked-by: Auger Eric <eric.auger@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Peter Xu <peterx@redhat.com>
+
+From: Peter Xu <peterx@redhat.com>
+
+This fix SID verification failure when IOMMU IR is enabled with PCI
+bridges. Existing pci_requester_id() is more like getting BDF info
+only. Renaming it to pci_get_bdf(). Meanwhile, we provide the correct
+implementation to get requester ID. VT-d spec 5.1.1 is a good reference
+to go, though it talks only about interrupt delivery, the rule works
+exactly the same for non-interrupt cases.
+
+Currently, there are three use cases for pci_requester_id():
+
+- PCIX status bits: here we need BDF only, not requester ID. Replacing
+  with pci_get_bdf().
+- PCIe Error injection and MSI delivery: for both these cases, we are
+  looking for requester IDs. Here we should use the new impl.
+
+To avoid a PCI walk every time we send MSI message, one requester_id
+cache field is added to PCIDevice to cache the result when initialize
+PCI device.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Acked-by: Michael S. Tsirkin <mst@redhat.com>
+Tested-by: Michael S. Tsirkin <mst@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 4a94b3aa6d97dfa67a20c7a0315c9773352f0e8e)
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/kvm/pci-assign.c |  2 +-
+ hw/pci/pci.c             | 76 ++++++++++++++++++++++++++++++++++++++++++++++++
+ include/hw/pci/pci.h     | 26 +++++++++++++++--
+ 3 files changed, 101 insertions(+), 3 deletions(-)
+
+diff --git a/hw/i386/kvm/pci-assign.c b/hw/i386/kvm/pci-assign.c
+index bc4c539..866e437 100644
+--- a/hw/i386/kvm/pci-assign.c
++++ b/hw/i386/kvm/pci-assign.c
+@@ -1485,7 +1485,7 @@ static int assigned_device_pci_cap_init(PCIDevice *pci_dev, Error **errp)
+          * error bits, leave the rest. */
+         status = pci_get_long(pci_dev->config + pos + PCI_X_STATUS);
+         status &= ~(PCI_X_STATUS_BUS | PCI_X_STATUS_DEVFN);
+-        status |= pci_requester_id(pci_dev);
++        status |= pci_get_bdf(pci_dev);
+         status &= ~(PCI_X_STATUS_SPL_DISC | PCI_X_STATUS_UNX_SPL |
+                     PCI_X_STATUS_SPL_ERR);
+         pci_set_long(pci_dev->config + pos + PCI_X_STATUS, status);
+diff --git a/hw/pci/pci.c b/hw/pci/pci.c
+index bb605ef..87bea47 100644
+--- a/hw/pci/pci.c
++++ b/hw/pci/pci.c
+@@ -836,6 +836,81 @@ static void do_pci_unregister_device(PCIDevice *pci_dev)
+     address_space_destroy(&pci_dev->bus_master_as);
+ }
+ 
++/* Extract PCIReqIDCache into BDF format */
++static uint16_t pci_req_id_cache_extract(PCIReqIDCache *cache)
++{
++    uint8_t bus_n;
++    uint16_t result;
++
++    switch (cache->type) {
++    case PCI_REQ_ID_BDF:
++        result = pci_get_bdf(cache->dev);
++        break;
++    case PCI_REQ_ID_SECONDARY_BUS:
++        bus_n = pci_bus_num(cache->dev->bus);
++        result = PCI_BUILD_BDF(bus_n, 0);
++        break;
++    default:
++        error_printf("Invalid PCI requester ID cache type: %d\n",
++                     cache->type);
++        exit(1);
++        break;
++    }
++
++    return result;
++}
++
++/* Parse bridges up to the root complex and return requester ID
++ * cache for specific device.  For full PCIe topology, the cache
++ * result would be exactly the same as getting BDF of the device.
++ * However, several tricks are required when system mixed up with
++ * legacy PCI devices and PCIe-to-PCI bridges.
++ *
++ * Here we cache the proxy device (and type) not requester ID since
++ * bus number might change from time to time.
++ */
++static PCIReqIDCache pci_req_id_cache_get(PCIDevice *dev)
++{
++    PCIDevice *parent;
++    PCIReqIDCache cache = {
++        .dev = dev,
++        .type = PCI_REQ_ID_BDF,
++    };
++
++    while (!pci_bus_is_root(dev->bus)) {
++        /* We are under PCI/PCIe bridges */
++        parent = dev->bus->parent_dev;
++        if (pci_is_express(parent)) {
++            if (pcie_cap_get_type(parent) == PCI_EXP_TYPE_PCI_BRIDGE) {
++                /* When we pass through PCIe-to-PCI/PCIX bridges, we
++                 * override the requester ID using secondary bus
++                 * number of parent bridge with zeroed devfn
++                 * (pcie-to-pci bridge spec chap 2.3). */
++                cache.type = PCI_REQ_ID_SECONDARY_BUS;
++                cache.dev = dev;
++            }
++        } else {
++            /* Legacy PCI, override requester ID with the bridge's
++             * BDF upstream.  When the root complex connects to
++             * legacy PCI devices (including buses), it can only
++             * obtain requester ID info from directly attached
++             * devices.  If devices are attached under bridges, only
++             * the requester ID of the bridge that is directly
++             * attached to the root complex can be recognized. */
++            cache.type = PCI_REQ_ID_BDF;
++            cache.dev = parent;
++        }
++        dev = parent;
++    }
++
++    return cache;
++}
++
++uint16_t pci_requester_id(PCIDevice *dev)
++{
++    return pci_req_id_cache_extract(&dev->requester_id_cache);
++}
++
+ /* -1 for devfn means auto assign */
+ static PCIDevice *do_pci_register_device(PCIDevice *pci_dev, PCIBus *bus,
+                                          const char *name, int devfn,
+@@ -885,6 +960,7 @@ static PCIDevice *do_pci_register_device(PCIDevice *pci_dev, PCIBus *bus,
+     }
+ 
+     pci_dev->devfn = devfn;
++    pci_dev->requester_id_cache = pci_req_id_cache_get(pci_dev);
+     dma_as = pci_device_iommu_address_space(pci_dev);
+ 
+     memory_region_init_alias(&pci_dev->bus_master_enable_region,
+diff --git a/include/hw/pci/pci.h b/include/hw/pci/pci.h
+index 4420f47..9ed1624 100644
+--- a/include/hw/pci/pci.h
++++ b/include/hw/pci/pci.h
+@@ -15,6 +15,7 @@
+ #define PCI_DEVFN(slot, func)   ((((slot) & 0x1f) << 3) | ((func) & 0x07))
+ #define PCI_SLOT(devfn)         (((devfn) >> 3) & 0x1f)
+ #define PCI_FUNC(devfn)         ((devfn) & 0x07)
++#define PCI_BUILD_BDF(bus, devfn)     ((bus << 8) | (devfn))
+ #define PCI_SLOT_MAX            32
+ #define PCI_FUNC_MAX            8
+ 
+@@ -230,6 +231,20 @@ typedef void (*MSIVectorPollNotifier)(PCIDevice *dev,
+                                       unsigned int vector_start,
+                                       unsigned int vector_end);
+ 
++enum PCIReqIDType {
++    PCI_REQ_ID_INVALID = 0,
++    PCI_REQ_ID_BDF,
++    PCI_REQ_ID_SECONDARY_BUS,
++    PCI_REQ_ID_MAX,
++};
++typedef enum PCIReqIDType PCIReqIDType;
++
++struct PCIReqIDCache {
++    PCIDevice *dev;
++    PCIReqIDType type;
++};
++typedef struct PCIReqIDCache PCIReqIDCache;
++
+ struct PCIDevice {
+     DeviceState qdev;
+ 
+@@ -252,6 +267,11 @@ struct PCIDevice {
+     /* the following fields are read only */
+     PCIBus *bus;
+     int32_t devfn;
++    /* Cached device to fetch requester ID from, to avoid the PCI
++     * tree walking every time we invoke PCI request (e.g.,
++     * MSI). For conventional PCI root complex, this field is
++     * meaningless. */
++    PCIReqIDCache requester_id_cache;
+     char name[64];
+     PCIIORegion io_regions[PCI_NUM_REGIONS];
+     AddressSpace bus_master_as;
+@@ -692,11 +712,13 @@ static inline uint32_t pci_config_size(const PCIDevice *d)
+     return pci_is_express(d) ? PCIE_CONFIG_SPACE_SIZE : PCI_CONFIG_SPACE_SIZE;
+ }
+ 
+-static inline uint16_t pci_requester_id(PCIDevice *dev)
++static inline uint16_t pci_get_bdf(PCIDevice *dev)
+ {
+-    return (pci_bus_num(dev->bus) << 8) | dev->devfn;
++    return PCI_BUILD_BDF(pci_bus_num(dev->bus), dev->devfn);
+ }
+ 
++uint16_t pci_requester_id(PCIDevice *dev);
++
+ /* DMA access functions */
+ static inline AddressSpace *pci_get_address_space(PCIDevice *dev)
+ {
+-- 
+1.8.3.1
+

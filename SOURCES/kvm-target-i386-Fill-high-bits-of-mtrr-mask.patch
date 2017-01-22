@@ -1,0 +1,143 @@
+From 910cf4a5d20bd880d7578d8675520694eb02e74a Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Fri, 29 Jul 2016 12:01:26 +0200
+Subject: [PATCH 32/35] target-i386: Fill high bits of mtrr mask
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1469793688-10313-6-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 71524
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH v5 5/7] target-i386: Fill high bits of mtrr mask
+Bugzilla: 1339196
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+RH-Acked-by: Andrea Arcangeli <aarcange@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+Fill the bits between 51..number-of-physical-address-bits in the
+MTRR_PHYSMASKn variable range mtrr masks so that they're consistent
+in the migration stream irrespective of the physical address space
+of the source VM in a migration.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Suggested-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit fcc35e7ccaed771790940524f3b0eef7aebfc9b1)
+
+ Conflicts:
+	include/hw/i386/pc.h
+        target-i386/cpu.h
+	target-i386/kvm.c
+
+   Added the fill-mtrr-mask=off to the RHEL7_2 compat
+
+   Flags in cpu-qom + other churn
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/i386/pc.h  |  5 +++++
+ target-i386/cpu-qom.h |  3 +++
+ target-i386/cpu.c     |  1 +
+ target-i386/kvm.c     | 28 +++++++++++++++++++++++++++-
+ 4 files changed, 36 insertions(+), 1 deletion(-)
+
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index d13b7ce..dac0980 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -943,6 +943,11 @@ extern void igd_passthrough_isa_bridge_create(PCIBus *bus, uint16_t gpu_dev_id);
+             .driver   = "usb-redir",\
+             .property = "streams",\
+             .value    = "off",\
++        },\
++        { /* PC_RHEL7_2_COMPAT */ \
++            .driver = TYPE_X86_CPU,\
++            .property = "fill-mtrr-mask",\
++            .value = "off",\
+         },
+ 
+ 
+diff --git a/target-i386/cpu-qom.h b/target-i386/cpu-qom.h
+index ccbf8e7..65bbd4e 100644
+--- a/target-i386/cpu-qom.h
++++ b/target-i386/cpu-qom.h
+@@ -111,6 +111,9 @@ typedef struct X86CPU {
+     /* Number of physical address bits supported */
+     uint32_t phys_bits;
+ 
++    /* if true fill the top bits of the MTRR_PHYSMASKn variable range */
++    bool fill_mtrr_mask;
++
+     /* Enable PMU CPUID bits. This can't be enabled by default yet because
+      * it doesn't have ABI stability guarantees, as it passes all PMU CPUID
+      * bits returned by GET_SUPPORTED_CPUID (that depend on host CPU and kernel
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 4da1523..9c1ee92 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -3344,6 +3344,7 @@ static Property x86_cpu_properties[] = {
+     DEFINE_PROP_BOOL("enforce", X86CPU, enforce_cpuid, false),
+     DEFINE_PROP_BOOL("kvm", X86CPU, expose_kvm, true),
+     DEFINE_PROP_UINT32("phys-bits", X86CPU, phys_bits, 0),
++    DEFINE_PROP_BOOL("fill-mtrr-mask", X86CPU, fill_mtrr_mask, true),
+     DEFINE_PROP_UINT32("level", X86CPU, env.cpuid_level, 0),
+     DEFINE_PROP_UINT32("xlevel", X86CPU, env.cpuid_xlevel, 0),
+     DEFINE_PROP_UINT32("xlevel2", X86CPU, env.cpuid_xlevel2, 0),
+diff --git a/target-i386/kvm.c b/target-i386/kvm.c
+index cf8634c..b93fc92 100644
+--- a/target-i386/kvm.c
++++ b/target-i386/kvm.c
+@@ -1939,6 +1939,7 @@ static int kvm_get_msrs(X86CPU *cpu)
+     } msr_data;
+     struct kvm_msr_entry *msrs = msr_data.entries;
+     int ret, i, n;
++    uint64_t mtrr_top_bits;
+ 
+     n = 0;
+     msrs[n++].index = MSR_IA32_SYSENTER_CS;
+@@ -2091,6 +2092,30 @@ static int kvm_get_msrs(X86CPU *cpu)
+     }
+ 
+     assert(ret == n);
++    /*
++     * MTRR masks: Each mask consists of 5 parts
++     * a  10..0: must be zero
++     * b  11   : valid bit
++     * c n-1.12: actual mask bits
++     * d  51..n: reserved must be zero
++     * e  63.52: reserved must be zero
++     *
++     * 'n' is the number of physical bits supported by the CPU and is
++     * apparently always <= 52.   We know our 'n' but don't know what
++     * the destinations 'n' is; it might be smaller, in which case
++     * it masks (c) on loading. It might be larger, in which case
++     * we fill 'd' so that d..c is consistent irrespetive of the 'n'
++     * we're migrating to.
++     */
++
++    if (cpu->fill_mtrr_mask) {
++        QEMU_BUILD_BUG_ON(TARGET_PHYS_ADDR_SPACE_BITS > 52);
++        assert(cpu->phys_bits <= TARGET_PHYS_ADDR_SPACE_BITS);
++        mtrr_top_bits = MAKE_64BIT_MASK(cpu->phys_bits, 52 - cpu->phys_bits);
++    } else {
++        mtrr_top_bits = 0;
++    }
++
+     for (i = 0; i < ret; i++) {
+         uint32_t index = msrs[i].index;
+         switch (index) {
+@@ -2286,7 +2311,8 @@ static int kvm_get_msrs(X86CPU *cpu)
+             break;
+         case MSR_MTRRphysBase(0) ... MSR_MTRRphysMask(MSR_MTRRcap_VCNT - 1):
+             if (index & 1) {
+-                env->mtrr_var[MSR_MTRRphysIndex(index)].mask = msrs[i].data;
++                env->mtrr_var[MSR_MTRRphysIndex(index)].mask = msrs[i].data |
++                                                               mtrr_top_bits;
+             } else {
+                 env->mtrr_var[MSR_MTRRphysIndex(index)].base = msrs[i].data;
+             }
+-- 
+1.8.3.1
+

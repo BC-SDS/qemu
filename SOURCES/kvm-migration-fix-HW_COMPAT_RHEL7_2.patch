@@ -1,0 +1,66 @@
+From c5d5910dd823670726ec231024604b4ca9d52808 Mon Sep 17 00:00:00 2001
+From: Laurent Vivier <lvivier@redhat.com>
+Date: Fri, 13 May 2016 11:45:08 +0200
+Subject: [PATCH 02/24] migration: fix HW_COMPAT_RHEL7_2
+
+RH-Author: Laurent Vivier <lvivier@redhat.com>
+Message-id: <1463139908-2374-3-git-send-email-lvivier@redhat.com>
+Patchwork-id: 70401
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH v2 2/2] migration: fix HW_COMPAT_RHEL7_2
+Bugzilla: 1316303
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+
+BREW: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11026308
+BZ:   https://bugzilla.redhat.com/show_bug.cgi?id=1316303
+Upstream: Downstream only
+
+During the rebase on qemu-2.6.0 some entries have been copied from
+HW_COMPAT_RHEL7_1 into HW_COMPAT_RHEL7_2.
+
+Hopefully, this breaks VGA migration:
+
+get_pci_config_device: Bad config data: i=0x8 read: 0 device: 2 cmask: ff wmask: 0 w1cmask:0
+error while loading state for instance 0x0 of device 'pci@800000020000000:00.0/vga'
+load of migration failed: Invalid argument
+
+This patch removes the two duplicate entries:
+
+intel-hda-generic.old_msi_addr and
+VGA.qemu-extended-regs
+
+Signed-off-by: Laurent Vivier <lvivier@redhat.com>
+---
+v2: Fix PATCH 2/2 that was not removing the good entries in HW_COMPAT_RHEL7_2
+
+ include/hw/compat.h | 8 --------
+ 1 file changed, 8 deletions(-)
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/compat.h | 8 --------
+ 1 file changed, 8 deletions(-)
+
+diff --git a/include/hw/compat.h b/include/hw/compat.h
+index 87c4089..147244d 100644
+--- a/include/hw/compat.h
++++ b/include/hw/compat.h
+@@ -169,14 +169,6 @@
+             .property = "scsi",\
+             .value    = "true",\
+         },{\
+-            .driver   = "intel-hda-generic",\
+-            .property = "old_msi_addr",\
+-            .value    = "on",\
+-        },{\
+-            .driver   = "VGA",\
+-            .property = "qemu-extended-regs",\
+-            .value    = "off",\
+-        },{\
+             .driver   = "e1000",\
+             .property = "extra_mac_registers",\
+             .value    = "off",\
+-- 
+1.8.3.1
+

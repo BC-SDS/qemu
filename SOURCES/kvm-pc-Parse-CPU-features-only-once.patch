@@ -1,0 +1,208 @@
+From cf05052b04ebb27e6ab6c2edb52ab836d617461b Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:53 +0200
+Subject: [PATCH 53/99] pc: Parse CPU features only once
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-49-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71664
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 48/78] pc: Parse CPU features only once
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Considering that features are converted to global properties and
+global properties are automatically applied to every new instance
+of created CPU (at object_new() time), there is no point in
+parsing cpu_model string every time a CPU created. So move
+parsing outside CPU creation loop and do it only once.
+
+Parsing also should be done before any CPU is created so that
+features would affect the first CPU a well.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 6aff24c6a61c6fec31e555c7748ba6085b7b2c06)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc.c      | 37 ++++++++++++++++++++++++++++---------
+ qom/cpu.c         |  1 -
+ target-i386/cpu.c | 44 --------------------------------------------
+ target-i386/cpu.h |  1 -
+ 4 files changed, 28 insertions(+), 55 deletions(-)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 6cf147b..5c2784d 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1042,21 +1042,17 @@ void pc_acpi_smi_interrupt(void *opaque, int irq, int level)
+     }
+ }
+ 
+-static X86CPU *pc_new_cpu(const char *cpu_model, int64_t apic_id,
++static X86CPU *pc_new_cpu(const char *typename, int64_t apic_id,
+                           Error **errp)
+ {
+     X86CPU *cpu = NULL;
+     Error *local_err = NULL;
+ 
+-    cpu = cpu_x86_create(cpu_model, &local_err);
+-    if (local_err != NULL) {
+-        goto out;
+-    }
++    cpu = X86_CPU(object_new(typename));
+ 
+     object_property_set_int(OBJECT(cpu), apic_id, "apic-id", &local_err);
+     object_property_set_bool(OBJECT(cpu), true, "realized", &local_err);
+ 
+-out:
+     if (local_err) {
+         error_propagate(errp, local_err);
+         object_unref(OBJECT(cpu));
+@@ -1068,7 +1064,8 @@ out:
+ void pc_hot_add_cpu(const int64_t id, Error **errp)
+ {
+     X86CPU *cpu;
+-    MachineState *machine = MACHINE(qdev_get_machine());
++    ObjectClass *oc;
++    PCMachineState *pcms = PC_MACHINE(qdev_get_machine());
+     int64_t apic_id = x86_cpu_apic_id_from_index(id);
+     Error *local_err = NULL;
+ 
+@@ -1096,7 +1093,9 @@ void pc_hot_add_cpu(const int64_t id, Error **errp)
+         return;
+     }
+ 
+-    cpu = pc_new_cpu(machine->cpu_model, apic_id, &local_err);
++    assert(pcms->possible_cpus->cpus[0].cpu); /* BSP is always present */
++    oc = OBJECT_CLASS(CPU_GET_CLASS(pcms->possible_cpus->cpus[0].cpu));
++    cpu = pc_new_cpu(object_class_get_name(oc), apic_id, &local_err);
+     if (local_err) {
+         error_propagate(errp, local_err);
+         return;
+@@ -1107,6 +1106,10 @@ void pc_hot_add_cpu(const int64_t id, Error **errp)
+ void pc_cpus_init(PCMachineState *pcms)
+ {
+     int i;
++    CPUClass *cc;
++    ObjectClass *oc;
++    const char *typename;
++    gchar **model_pieces;
+     X86CPU *cpu = NULL;
+     MachineState *machine = MACHINE(pcms);
+ 
+@@ -1119,6 +1122,22 @@ void pc_cpus_init(PCMachineState *pcms)
+ #endif
+     }
+ 
++    model_pieces = g_strsplit(machine->cpu_model, ",", 2);
++    if (!model_pieces[0]) {
++        error_report("Invalid/empty CPU model name");
++        exit(1);
++    }
++
++    oc = cpu_class_by_name(TYPE_X86_CPU, model_pieces[0]);
++    if (oc == NULL) {
++        error_report("Unable to find CPU definition: %s", model_pieces[0]);
++        exit(1);
++    }
++    typename = object_class_get_name(oc);
++    cc = CPU_CLASS(oc);
++    cc->parse_features(typename, model_pieces[1], &error_fatal);
++    g_strfreev(model_pieces);
++
+     /* Calculates the limit to CPU APIC ID values
+      *
+      * Limit for the APIC ID value, so that all
+@@ -1139,7 +1158,7 @@ void pc_cpus_init(PCMachineState *pcms)
+         pcms->possible_cpus->cpus[i].arch_id = x86_cpu_apic_id_from_index(i);
+         pcms->possible_cpus->len++;
+         if (i < smp_cpus) {
+-            cpu = pc_new_cpu(machine->cpu_model, x86_cpu_apic_id_from_index(i),
++            cpu = pc_new_cpu(typename, x86_cpu_apic_id_from_index(i),
+                              &error_fatal);
+             pcms->possible_cpus->cpus[i].cpu = CPU(cpu);
+             object_unref(OBJECT(cpu));
+diff --git a/qom/cpu.c b/qom/cpu.c
+index ffd269f..4b067ad 100644
+--- a/qom/cpu.c
++++ b/qom/cpu.c
+@@ -298,7 +298,6 @@ static void cpu_common_parse_features(const char *typename, char *features,
+      * to assert(!cpu_globals_initialized).
+      * Current callers of ->parse_features() are:
+      * - cpu_generic_init()
+-     * - cpu_x86_create()
+      */
+     if (cpu_globals_initialized) {
+         return;
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 1692964..2d74e9e 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -2231,50 +2231,6 @@ static void x86_cpu_load_def(X86CPU *cpu, X86CPUDefinition *def, Error **errp)
+ 
+ }
+ 
+-X86CPU *cpu_x86_create(const char *cpu_model, Error **errp)
+-{
+-    X86CPU *cpu = NULL;
+-    ObjectClass *oc;
+-    CPUClass *cc;
+-    gchar **model_pieces;
+-    char *name, *features;
+-    Error *error = NULL;
+-    const char *typename;
+-
+-    model_pieces = g_strsplit(cpu_model, ",", 2);
+-    if (!model_pieces[0]) {
+-        error_setg(&error, "Invalid/empty CPU model name");
+-        goto out;
+-    }
+-    name = model_pieces[0];
+-    features = model_pieces[1];
+-
+-    oc = x86_cpu_class_by_name(name);
+-    if (oc == NULL) {
+-        error_setg(&error, "Unable to find CPU definition: %s", name);
+-        goto out;
+-    }
+-    cc = CPU_CLASS(oc);
+-    typename = object_class_get_name(oc);
+-
+-    cc->parse_features(typename, features, &error);
+-    cpu = X86_CPU(object_new(typename));
+-    if (error) {
+-        goto out;
+-    }
+-
+-out:
+-    if (error != NULL) {
+-        error_propagate(errp, error);
+-        if (cpu) {
+-            object_unref(OBJECT(cpu));
+-            cpu = NULL;
+-        }
+-    }
+-    g_strfreev(model_pieces);
+-    return cpu;
+-}
+-
+ X86CPU *cpu_x86_init(const char *cpu_model)
+ {
+     return X86_CPU(cpu_generic_init(TYPE_X86_CPU, cpu_model));
+diff --git a/target-i386/cpu.h b/target-i386/cpu.h
+index b2a1429..d512c00 100644
+--- a/target-i386/cpu.h
++++ b/target-i386/cpu.h
+@@ -1135,7 +1135,6 @@ void x86_cpu_exec_enter(CPUState *cpu);
+ void x86_cpu_exec_exit(CPUState *cpu);
+ 
+ X86CPU *cpu_x86_init(const char *cpu_model);
+-X86CPU *cpu_x86_create(const char *cpu_model, Error **errp);
+ void x86_cpu_list(FILE *f, fprintf_function cpu_fprintf);
+ void x86_cpudef_setup(void);
+ int cpu_x86_support_mca_broadcast(CPUX86State *env);
+-- 
+1.8.3.1
+

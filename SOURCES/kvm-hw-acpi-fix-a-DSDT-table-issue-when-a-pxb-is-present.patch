@@ -1,0 +1,51 @@
+From 0c7c9e8ab378dd755506b496b0eaf890cd2f7039 Mon Sep 17 00:00:00 2001
+From: Marcel Apfelbaum <marcel@redhat.com>
+Date: Sun, 31 Jul 2016 18:03:05 +0200
+Subject: [PATCH 03/99] hw/acpi: fix a DSDT table issue when a pxb is present.
+
+RH-Author: Marcel Apfelbaum <marcel@redhat.com>
+Message-id: <1469988187-20816-4-git-send-email-marcel@redhat.com>
+Patchwork-id: 71530
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 3/5] hw/acpi: fix a DSDT table issue when a pxb is present.
+Bugzilla: 1323976
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+
+PXBs do not support hotplug so they don't have a PCNT function.
+Since the PXB's PCI root-bus is a child bus of bus 0, the
+build_dsdt code will add a call to the corresponding PCNT function.
+
+Fix this by skipping the PCNT call for the above case.
+While at it skip also PCIe child buses.
+
+Reported-by: Igor Mammedov <imammedo@redhat.com>
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Tested-by: Laszlo Ersek <lersek@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit c99cb18eeb8bca145ee260a507ccce6775a6d260)
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/acpi-build.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index e2f3d8f..e09154d 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -586,6 +586,10 @@ static void build_append_pci_bus_devices(Aml *parent_scope, PCIBus *bus,
+         QLIST_FOREACH(sec, &bus->child, sibling) {
+             int32_t devfn = sec->parent_dev->devfn;
+ 
++            if (pci_bus_is_root(sec) || pci_bus_is_express(sec)) {
++                continue;
++            }
++
+             aml_append(method, aml_name("^S%.02X.PCNT", devfn));
+         }
+     }
+-- 
+1.8.3.1
+

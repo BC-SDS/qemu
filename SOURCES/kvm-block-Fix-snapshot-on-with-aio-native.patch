@@ -1,0 +1,51 @@
+From 9c8c33d0074c782431e5c2a198a8c3fa07906326 Mon Sep 17 00:00:00 2001
+From: Kevin Wolf <kwolf@redhat.com>
+Date: Tue, 21 Jun 2016 15:19:56 +0200
+Subject: [PATCH 21/25] block: Fix snapshot=on with aio=native
+
+RH-Author: Kevin Wolf <kwolf@redhat.com>
+Message-id: <1466522396-14857-2-git-send-email-kwolf@redhat.com>
+Patchwork-id: 70728
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 1/1] block: Fix snapshot=on with aio=native
+Bugzilla: 1336649
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+
+snapshot=on creates a temporary overlay that is always opened with
+cache=unsafe (the cache mode specified by the user is only for the
+actual image file and its children). This means that we must not inherit
+the BDRV_O_NATIVE_AIO flag for the temporary overlay because trying to
+use Linux AIO with cache=unsafe results in an error.
+
+Reproducer without this patch:
+
+$ x86_64-softmmu/qemu-system-x86_64 -drive file=/tmp/test.qcow2,cache=none,aio=native,snapshot=on
+qemu-system-x86_64: -drive file=/tmp/test.qcow2,cache=none,aio=native,snapshot=on: aio=native was
+specified, but it requires cache.direct=on, which was not specified.
+
+Signed-off-by: Kevin Wolf <kwolf@redhat.com>
+(cherry picked from commit 418690447a5340050e64efc3c811fd30d9e96e5b)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ block.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/block.c b/block.c
+index 4387ccb..65ee043 100644
+--- a/block.c
++++ b/block.c
+@@ -682,6 +682,10 @@ static void bdrv_temp_snapshot_options(int *child_flags, QDict *child_options,
+     /* For temporary files, unconditional cache=unsafe is fine */
+     qdict_set_default_str(child_options, BDRV_OPT_CACHE_DIRECT, "off");
+     qdict_set_default_str(child_options, BDRV_OPT_CACHE_NO_FLUSH, "on");
++
++    /* aio=native doesn't work for cache.direct=off, so disable it for the
++     * temporary snapshot */
++    *child_flags &= ~BDRV_O_NATIVE_AIO;
+ }
+ 
+ /*
+-- 
+1.8.3.1
+

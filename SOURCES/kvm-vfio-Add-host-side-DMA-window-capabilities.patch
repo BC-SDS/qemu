@@ -1,0 +1,186 @@
+From 0715b83074d7389ed2d9f36833886d19e5009cf7 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:21 +0200
+Subject: [PATCH 14/27] vfio: Add host side DMA window capabilities
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-15-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71101
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 14/16] vfio: Add host side DMA window capabilities
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Alex Williamson <alex.williamson@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Alexey Kardashevskiy <aik@ozlabs.ru>
+
+There are going to be multiple IOMMUs per a container. This moves
+the single host IOMMU parameter set to a list of VFIOHostDMAWindow.
+
+This should cause no behavioral change and will be used later by
+the SPAPR TCE IOMMU v2 which will also add a vfio_host_win_del() helper.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit f4ec5e26edbd4c7509623ec882c344dc334bc1b2)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/vfio/common.c              | 60 +++++++++++++++++++++++++++++++------------
+ include/hw/vfio/vfio-common.h | 10 ++++++--
+ 2 files changed, 52 insertions(+), 18 deletions(-)
+
+diff --git a/hw/vfio/common.c b/hw/vfio/common.c
+index 17c9c33..c7f7180 100644
+--- a/hw/vfio/common.c
++++ b/hw/vfio/common.c
+@@ -29,6 +29,7 @@
+ #include "exec/memory.h"
+ #include "hw/hw.h"
+ #include "qemu/error-report.h"
++#include "qemu/range.h"
+ #include "sysemu/kvm.h"
+ #include "trace.h"
+ 
+@@ -239,6 +240,29 @@ static int vfio_dma_map(VFIOContainer *container, hwaddr iova,
+     return -errno;
+ }
+ 
++static void vfio_host_win_add(VFIOContainer *container,
++                              hwaddr min_iova, hwaddr max_iova,
++                              uint64_t iova_pgsizes)
++{
++    VFIOHostDMAWindow *hostwin;
++
++    QLIST_FOREACH(hostwin, &container->hostwin_list, hostwin_next) {
++        if (ranges_overlap(hostwin->min_iova,
++                           hostwin->max_iova - hostwin->min_iova + 1,
++                           min_iova,
++                           max_iova - min_iova + 1)) {
++            hw_error("%s: Overlapped IOMMU are not enabled", __func__);
++        }
++    }
++
++    hostwin = g_malloc0(sizeof(*hostwin));
++
++    hostwin->min_iova = min_iova;
++    hostwin->max_iova = max_iova;
++    hostwin->iova_pgsizes = iova_pgsizes;
++    QLIST_INSERT_HEAD(&container->hostwin_list, hostwin, hostwin_next);
++}
++
+ static bool vfio_listener_skipped_section(MemoryRegionSection *section)
+ {
+     return (!memory_region_is_ram(section->mr) &&
+@@ -321,6 +345,8 @@ static void vfio_listener_region_add(MemoryListener *listener,
+     Int128 llend, llsize;
+     void *vaddr;
+     int ret;
++    VFIOHostDMAWindow *hostwin;
++    bool hostwin_found;
+ 
+     if (vfio_listener_skipped_section(section)) {
+         trace_vfio_listener_region_add_skip(
+@@ -346,7 +372,15 @@ static void vfio_listener_region_add(MemoryListener *listener,
+     }
+     end = int128_get64(int128_sub(llend, int128_one()));
+ 
+-    if ((iova < container->min_iova) || (end > container->max_iova)) {
++    hostwin_found = false;
++    QLIST_FOREACH(hostwin, &container->hostwin_list, hostwin_next) {
++        if (hostwin->min_iova <= iova && end <= hostwin->max_iova) {
++            hostwin_found = true;
++            break;
++        }
++    }
++
++    if (!hostwin_found) {
+         error_report("vfio: IOMMU container %p can't map guest IOVA region"
+                      " 0x%"HWADDR_PRIx"..0x%"HWADDR_PRIx,
+                      container, iova, end);
+@@ -361,10 +395,6 @@ static void vfio_listener_region_add(MemoryListener *listener,
+ 
+         trace_vfio_listener_region_add_iommu(iova, end);
+         /*
+-         * FIXME: We should do some checking to see if the
+-         * capabilities of the host VFIO IOMMU are adequate to model
+-         * the guest IOMMU
+-         *
+          * FIXME: For VFIO iommu types which have KVM acceleration to
+          * avoid bouncing all map/unmaps through qemu this way, this
+          * would be the right place to wire that up (tell the KVM
+@@ -821,17 +851,14 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as)
+          * existing Type1 IOMMUs generally support any IOVA we're
+          * going to actually try in practice.
+          */
+-        container->min_iova = 0;
+-        container->max_iova = (hwaddr)-1;
+-
+-        /* Assume just 4K IOVA page size */
+-        container->iova_pgsizes = 0x1000;
+         info.argsz = sizeof(info);
+         ret = ioctl(fd, VFIO_IOMMU_GET_INFO, &info);
+         /* Ignore errors */
+-        if ((ret == 0) && (info.flags & VFIO_IOMMU_INFO_PGSIZES)) {
+-            container->iova_pgsizes = info.iova_pgsizes;
++        if (ret || !(info.flags & VFIO_IOMMU_INFO_PGSIZES)) {
++            /* Assume 4k IOVA page size */
++            info.iova_pgsizes = 4096;
+         }
++        vfio_host_win_add(container, 0, (hwaddr)-1, info.iova_pgsizes);
+     } else if (ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_SPAPR_TCE_IOMMU) ||
+                ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_SPAPR_TCE_v2_IOMMU)) {
+         struct vfio_iommu_spapr_tce_info info;
+@@ -891,11 +918,12 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as)
+             }
+             goto free_container_exit;
+         }
+-        container->min_iova = info.dma32_window_start;
+-        container->max_iova = container->min_iova + info.dma32_window_size - 1;
+ 
+-        /* Assume just 4K IOVA pages for now */
+-        container->iova_pgsizes = 0x1000;
++        /* The default table uses 4K pages */
++        vfio_host_win_add(container, info.dma32_window_start,
++                          info.dma32_window_start +
++                          info.dma32_window_size - 1,
++                          0x1000);
+     } else {
+         error_report("vfio: No available IOMMU models");
+         ret = -EINVAL;
+diff --git a/include/hw/vfio/vfio-common.h b/include/hw/vfio/vfio-common.h
+index 6562b7e..74ad6f0 100644
+--- a/include/hw/vfio/vfio-common.h
++++ b/include/hw/vfio/vfio-common.h
+@@ -82,9 +82,8 @@ typedef struct VFIOContainer {
+      * contiguous IOVA window.  We may need to generalize that in
+      * future
+      */
+-    hwaddr min_iova, max_iova;
+-    uint64_t iova_pgsizes;
+     QLIST_HEAD(, VFIOGuestIOMMU) giommu_list;
++    QLIST_HEAD(, VFIOHostDMAWindow) hostwin_list;
+     QLIST_HEAD(, VFIOGroup) group_list;
+     QLIST_ENTRY(VFIOContainer) next;
+ } VFIOContainer;
+@@ -96,6 +95,13 @@ typedef struct VFIOGuestIOMMU {
+     QLIST_ENTRY(VFIOGuestIOMMU) giommu_next;
+ } VFIOGuestIOMMU;
+ 
++typedef struct VFIOHostDMAWindow {
++    hwaddr min_iova;
++    hwaddr max_iova;
++    uint64_t iova_pgsizes;
++    QLIST_ENTRY(VFIOHostDMAWindow) hostwin_next;
++} VFIOHostDMAWindow;
++
+ typedef struct VFIODeviceOps VFIODeviceOps;
+ 
+ typedef struct VFIODevice {
+-- 
+1.8.3.1
+

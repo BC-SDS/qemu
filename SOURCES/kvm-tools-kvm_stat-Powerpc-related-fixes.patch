@@ -1,0 +1,83 @@
+From e13359308422e7bfe1267565869ffb0df11c5f1e Mon Sep 17 00:00:00 2001
+From: Laurent Vivier <lvivier@redhat.com>
+Date: Wed, 1 Jun 2016 17:08:21 +0200
+Subject: [PATCH 18/24] tools: kvm_stat: Powerpc related fixes
+
+RH-Author: Laurent Vivier <lvivier@redhat.com>
+Message-id: <1464800901-12761-1-git-send-email-lvivier@redhat.com>
+Patchwork-id: 70525
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH] tools: kvm_stat: Powerpc related fixes
+Bugzilla: 1337033
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Hemant Kumar <hemant@linux.vnet.ibm.com>
+
+kvm_stat script is failing to execute on powerpc :
+ # ./kvm_stat
+Traceback (most recent call last):
+  File "./kvm_stat", line 825, in <module>
+    main()
+  File "./kvm_stat", line 813, in main
+    providers = get_providers(options)
+  File "./kvm_stat", line 778, in get_providers
+    providers.append(TracepointProvider())
+  File "./kvm_stat", line 416, in __init__
+    self.filters = get_filters()
+  File "./kvm_stat", line 315, in get_filters
+    if ARCH.exit_reasons:
+AttributeError: 'ArchPPC' object has no attribute 'exit_reasons'
+
+This is because, its trying to access a non-defined attribute.
+
+Also, the IOCTL number of RESET is incorrect for powerpc. The correct
+number has been added.
+
+Signed-off-by: Hemant Kumar <hemant@linux.vnet.ibm.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+
+This patch is an upstream commit in the kernel repo, but applied
+downstream only in the qemu repo.
+
+kvm_stat has moved to the kernel repo since:
+
+    [qemu]  60b412d kvm_stat: Remove
+    [linux] f9bc9e6 tools: Add kvm_stat vm monitor script
+
+This patch is a backport of the patch applied to the kernel repo to
+the qemu repo:
+
+    [linux] c7d4fb5 tools: kvm_stat: Powerpc related fixes
+
+The original patch was also posted on the qemu-devel ML:
+
+    http://patchwork.ozlabs.org/patch/611965/
+
+Signed-off-by: Laurent Vivier <lvivier@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ scripts/kvm/kvm_stat | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/scripts/kvm/kvm_stat b/scripts/kvm/kvm_stat
+index 769d884..27d217a 100755
+--- a/scripts/kvm/kvm_stat
++++ b/scripts/kvm/kvm_stat
+@@ -256,11 +256,13 @@ class ArchPPC(Arch):
+         self.ioctl_numbers = IOCTL_NUMBERS
+         self.ioctl_numbers['ENABLE'] = 0x20002400
+         self.ioctl_numbers['DISABLE'] = 0x20002401
++        self.ioctl_numbers['RESET'] = 0x20002403
+ 
+         # PPC comes in 32 and 64 bit and some generated ioctl
+         # numbers depend on the wordsize.
+         char_ptr_size = ctypes.sizeof(ctypes.c_char_p)
+         self.ioctl_numbers['SET_FILTER'] = 0x80002406 | char_ptr_size << 16
++        self.exit_reasons = {}
+ 
+ class ArchA64(Arch):
+     def __init__(self):
+-- 
+1.8.3.1
+

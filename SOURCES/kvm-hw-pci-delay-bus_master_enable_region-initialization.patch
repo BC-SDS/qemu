@@ -1,0 +1,153 @@
+From c2496b293bb914478980b6d9cc8bfd0438e88efe Mon Sep 17 00:00:00 2001
+From: Marcel Apfelbaum <marcel@redhat.com>
+Date: Sun, 24 Jul 2016 16:28:59 +0200
+Subject: [PATCH 19/35] hw/pci: delay bus_master_enable_region initialization
+
+RH-Author: Marcel Apfelbaum <marcel@redhat.com>
+Message-id: <1469377743-9714-10-git-send-email-marcel@redhat.com>
+Patchwork-id: 71376
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 09/13] hw/pci: delay bus_master_enable_region initialization
+Bugzilla: 1350196
+RH-Acked-by: Auger Eric <eric.auger@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Peter Xu <peterx@redhat.com>
+
+Skip bus_master_enable region creation on PCI device init
+in order to be sure the IOMMU device (if present) would
+be created in advance. Add this memory region at machine_done time.
+
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit b86eacb804bdb92acc48cab8cd2a465714a829ab)
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/pci/pci.c             | 41 ++++++++++++++++++++++++++++++++---------
+ include/hw/pci/pci_bus.h |  2 ++
+ include/sysemu/sysemu.h  |  1 +
+ vl.c                     |  5 +++++
+ 4 files changed, 40 insertions(+), 9 deletions(-)
+
+diff --git a/hw/pci/pci.c b/hw/pci/pci.c
+index 87bea47..b06e26f 100644
+--- a/hw/pci/pci.c
++++ b/hw/pci/pci.c
+@@ -78,10 +78,37 @@ static const VMStateDescription vmstate_pcibus = {
+     }
+ };
+ 
++static void pci_init_bus_master(PCIDevice *pci_dev)
++{
++    AddressSpace *dma_as = pci_device_iommu_address_space(pci_dev);
++
++    memory_region_init_alias(&pci_dev->bus_master_enable_region,
++                             OBJECT(pci_dev), "bus master",
++                             dma_as->root, 0, memory_region_size(dma_as->root));
++    memory_region_set_enabled(&pci_dev->bus_master_enable_region, false);
++    address_space_init(&pci_dev->bus_master_as,
++                       &pci_dev->bus_master_enable_region, pci_dev->name);
++}
++
++static void pcibus_machine_done(Notifier *notifier, void *data)
++{
++    PCIBus *bus = container_of(notifier, PCIBus, machine_done);
++    int i;
++
++    for (i = 0; i < ARRAY_SIZE(bus->devices); ++i) {
++        if (bus->devices[i]) {
++            pci_init_bus_master(bus->devices[i]);
++        }
++    }
++}
++
+ static void pci_bus_realize(BusState *qbus, Error **errp)
+ {
+     PCIBus *bus = PCI_BUS(qbus);
+ 
++    bus->machine_done.notify = pcibus_machine_done;
++    qemu_add_machine_init_done_notifier(&bus->machine_done);
++
+     vmstate_register(NULL, -1, &vmstate_pcibus, bus);
+ }
+ 
+@@ -89,6 +116,8 @@ static void pci_bus_unrealize(BusState *qbus, Error **errp)
+ {
+     PCIBus *bus = PCI_BUS(qbus);
+ 
++    qemu_remove_machine_init_done_notifier(&bus->machine_done);
++
+     vmstate_unregister(NULL, &vmstate_pcibus, bus);
+ }
+ 
+@@ -920,7 +949,6 @@ static PCIDevice *do_pci_register_device(PCIDevice *pci_dev, PCIBus *bus,
+     PCIConfigReadFunc *config_read = pc->config_read;
+     PCIConfigWriteFunc *config_write = pc->config_write;
+     Error *local_err = NULL;
+-    AddressSpace *dma_as;
+     DeviceState *dev = DEVICE(pci_dev);
+ 
+     pci_dev->bus = bus;
+@@ -961,15 +989,10 @@ static PCIDevice *do_pci_register_device(PCIDevice *pci_dev, PCIBus *bus,
+ 
+     pci_dev->devfn = devfn;
+     pci_dev->requester_id_cache = pci_req_id_cache_get(pci_dev);
+-    dma_as = pci_device_iommu_address_space(pci_dev);
+-
+-    memory_region_init_alias(&pci_dev->bus_master_enable_region,
+-                             OBJECT(pci_dev), "bus master",
+-                             dma_as->root, 0, memory_region_size(dma_as->root));
+-    memory_region_set_enabled(&pci_dev->bus_master_enable_region, false);
+-    address_space_init(&pci_dev->bus_master_as, &pci_dev->bus_master_enable_region,
+-                       name);
+ 
++    if (qdev_hotplug) {
++        pci_init_bus_master(pci_dev);
++    }
+     pstrcpy(pci_dev->name, sizeof(pci_dev->name), name);
+     pci_dev->irq_state = 0;
+     pci_config_alloc(pci_dev);
+diff --git a/include/hw/pci/pci_bus.h b/include/hw/pci/pci_bus.h
+index 403fec6..5484a9b 100644
+--- a/include/hw/pci/pci_bus.h
++++ b/include/hw/pci/pci_bus.h
+@@ -39,6 +39,8 @@ struct PCIBus {
+        Keep a count of the number of devices with raised IRQs.  */
+     int nirq;
+     int *irq_count;
++
++    Notifier machine_done;
+ };
+ 
+ typedef struct PCIBridgeWindows PCIBridgeWindows;
+diff --git a/include/sysemu/sysemu.h b/include/sysemu/sysemu.h
+index 19c4cca..b64f728 100644
+--- a/include/sysemu/sysemu.h
++++ b/include/sysemu/sysemu.h
+@@ -75,6 +75,7 @@ void qemu_add_exit_notifier(Notifier *notify);
+ void qemu_remove_exit_notifier(Notifier *notify);
+ 
+ void qemu_add_machine_init_done_notifier(Notifier *notify);
++void qemu_remove_machine_init_done_notifier(Notifier *notify);
+ 
+ void hmp_savevm(Monitor *mon, const QDict *qdict);
+ int load_vmstate(const char *name);
+diff --git a/vl.c b/vl.c
+index 4efc01c..3a25b48 100644
+--- a/vl.c
++++ b/vl.c
+@@ -2736,6 +2736,11 @@ void qemu_add_machine_init_done_notifier(Notifier *notify)
+     }
+ }
+ 
++void qemu_remove_machine_init_done_notifier(Notifier *notify)
++{
++    notifier_remove(notify);
++}
++
+ static void qemu_run_machine_init_done_notifiers(void)
+ {
+     notifier_list_notify(&machine_init_done_notifiers, NULL);
+-- 
+1.8.3.1
+

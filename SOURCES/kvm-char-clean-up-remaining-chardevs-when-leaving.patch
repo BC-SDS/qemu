@@ -1,0 +1,65 @@
+From 8e54755e1abdcd59d3b4d83a41936ef9173b3d44 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Mon, 4 Jul 2016 20:57:29 +0200
+Subject: [PATCH 09/16] char: clean up remaining chardevs when leaving
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160704205732.27022-3-marcandre.lureau@redhat.com>
+Patchwork-id: 70939
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 2/5] char: clean up remaining chardevs when leaving
+Bugzilla: 1347077
+RH-Acked-by: Xiao Wang <jasowang@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: Marc-André Lureau <marcandre.lureau@redhat.com>
+
+This helps to remove various chardev resources leaks when leaving qemu.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-Id: <1466105332-10285-2-git-send-email-marcandre.lureau@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+
+(cherry picked from commit c1111a24a3358ecd2f17be7c8b117cfe8bc5e5f8)
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ qemu-char.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/qemu-char.c b/qemu-char.c
+index 6efbc0d..87212b8 100644
+--- a/qemu-char.c
++++ b/qemu-char.c
+@@ -4566,6 +4566,15 @@ void qmp_chardev_remove(const char *id, Error **errp)
+     qemu_chr_delete(chr);
+ }
+ 
++static void qemu_chr_cleanup(void)
++{
++    CharDriverState *chr, *tmp;
++
++    QTAILQ_FOREACH_SAFE(chr, &chardevs, next, tmp) {
++        qemu_chr_delete(chr);
++    }
++}
++
+ static void register_types(void)
+ {
+     register_char_driver("null", CHARDEV_BACKEND_KIND_NULL, NULL,
+@@ -4612,6 +4621,8 @@ static void register_types(void)
+      * is specified
+      */
+     qemu_add_machine_init_done_notifier(&muxes_realize_notify);
++
++    atexit(qemu_chr_cleanup);
+ }
+ 
+ type_init(register_types);
+-- 
+1.8.3.1
+

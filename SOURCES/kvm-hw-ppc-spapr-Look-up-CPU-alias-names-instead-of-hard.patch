@@ -1,0 +1,135 @@
+From 24ec4d6021441151a7aef09d4bb6162b11550787 Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Tue, 16 Aug 2016 12:09:37 +0200
+Subject: [PATCH 04/17] hw/ppc/spapr: Look up CPU alias names instead of
+ hard-coding the aliases
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1470816895-17800-4-git-send-email-thuth@redhat.com>
+Patchwork-id: 71895
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 3/5] hw/ppc/spapr: Look up CPU alias names instead of hard-coding the aliases
+Bugzilla: 1363812
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Hard-coding the CPU alias names in the spapr_cores[] array has
+two big disadvantages:
+
+1) We register a real type with the CPU alias name in
+   spapr_cpu_core_register_types() - this prevents us from registering
+   a CPU family name in kvm_ppc_register_host_cpu_type() with the same
+   name (as we do it for the non-hotpluggable CPU types).
+
+2) It's quite cumbersome to maintain the aliases here in sync with the
+   ppc_cpu_aliases list from target-ppc/cpu-models.c.
+
+So let's simply add proper alias lookup to the spapr cpu core code,
+too (by checking whether the given model can be used directly, and
+if not by trying to look up the given model as an alias name instead).
+
+Signed-off-by: Thomas Huth <thuth@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 4babfaf05d020eab7d6469d12ce77cc142d22276)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	hw/ppc/spapr_cpu_core.c
+	Simple conflict in context because we've disabled some
+	CPU types in downstream.
+---
+ hw/ppc/spapr.c          |  2 +-
+ hw/ppc/spapr_cpu_core.c | 38 +++++++++++++++++++++-----------------
+ 2 files changed, 22 insertions(+), 18 deletions(-)
+
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index 7d107b7..51915f8 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -1786,7 +1786,7 @@ static void ppc_spapr_init(MachineState *machine)
+     if (mc->query_hotpluggable_cpus) {
+         char *type = spapr_get_cpu_core_type(machine->cpu_model);
+ 
+-        if (!object_class_by_name(type)) {
++        if (type == NULL) {
+             error_report("Unable to find sPAPR CPU Core definition");
+             exit(1);
+         }
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index ab392e4..2d1bb4e 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -93,6 +93,19 @@ char *spapr_get_cpu_core_type(const char *model)
+ 
+     core_type = g_strdup_printf("%s-%s", model_pieces[0], TYPE_SPAPR_CPU_CORE);
+     g_strfreev(model_pieces);
++
++    /* Check whether it exists or whether we have to look up an alias name */
++    if (!object_class_by_name(core_type)) {
++        const char *realmodel;
++
++        g_free(core_type);
++        realmodel = ppc_cpu_lookup_alias(model);
++        if (realmodel) {
++            return spapr_get_cpu_core_type(realmodel);
++        }
++        return NULL;
++    }
++
+     return core_type;
+ }
+ 
+@@ -357,42 +370,33 @@ typedef struct SPAPRCoreInfo {
+ 
+ static const SPAPRCoreInfo spapr_cores[] = {
+ #if 0 /* Disabled for Red Hat Enterprise Linux */
+-    /* 970 and aliaes */
++    /* 970 */
+     { .name = "970_v2.2", .initfn = spapr_cpu_core_970_initfn },
+-    { .name = "970", .initfn = spapr_cpu_core_970_initfn },
+ 
+-    /* 970MP variants and aliases */
++    /* 970MP variants */
+     { .name = "970MP_v1.0", .initfn = spapr_cpu_core_970MP_v10_initfn },
+     { .name = "970mp_v1.0", .initfn = spapr_cpu_core_970MP_v10_initfn },
+     { .name = "970MP_v1.1", .initfn = spapr_cpu_core_970MP_v11_initfn },
+     { .name = "970mp_v1.1", .initfn = spapr_cpu_core_970MP_v11_initfn },
+-    { .name = "970mp", .initfn = spapr_cpu_core_970MP_v11_initfn },
+ 
+-    /* POWER5 and aliases */
++    /* POWER5+ */
+     { .name = "POWER5+_v2.1", .initfn = spapr_cpu_core_POWER5plus_initfn },
+-    { .name = "POWER5+", .initfn = spapr_cpu_core_POWER5plus_initfn },
+ #endif
+ 
+-    /* POWER7 and aliases */
++    /* POWER7 */
+     { .name = "POWER7_v2.3", .initfn = spapr_cpu_core_POWER7_initfn },
+-    { .name = "POWER7", .initfn = spapr_cpu_core_POWER7_initfn },
+ 
+-    /* POWER7+ and aliases */
++    /* POWER7+ */
+     { .name = "POWER7+_v2.1", .initfn = spapr_cpu_core_POWER7plus_initfn },
+-    { .name = "POWER7+", .initfn = spapr_cpu_core_POWER7plus_initfn },
+ 
+-    /* POWER8 and aliases */
++    /* POWER8 */
+     { .name = "POWER8_v2.0", .initfn = spapr_cpu_core_POWER8_initfn },
+-    { .name = "POWER8", .initfn = spapr_cpu_core_POWER8_initfn },
+-    { .name = "power8", .initfn = spapr_cpu_core_POWER8_initfn },
+ 
+-    /* POWER8E and aliases */
++    /* POWER8E */
+     { .name = "POWER8E_v2.1", .initfn = spapr_cpu_core_POWER8E_initfn },
+-    { .name = "POWER8E", .initfn = spapr_cpu_core_POWER8E_initfn },
+ 
+-    /* POWER8NVL and aliases */
++    /* POWER8NVL */
+     { .name = "POWER8NVL_v1.0", .initfn = spapr_cpu_core_POWER8NVL_initfn },
+-    { .name = "POWER8NVL", .initfn = spapr_cpu_core_POWER8NVL_initfn },
+ 
+     { .name = NULL }
+ };
+-- 
+1.8.3.1
+

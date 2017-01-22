@@ -1,0 +1,87 @@
+From 27b7b97bf1670a099dc0f9e1c050c6633b531e5d Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Tue, 21 Jun 2016 13:34:16 +0200
+Subject: [PATCH 14/25] blockjob: rename block_job_is_paused()
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466516062-20048-4-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70720
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 3/9] blockjob: rename block_job_is_paused()
+Bugzilla: 1265179
+RH-Acked-by: Jeffrey Cody <jcody@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+The block_job_is_paused() function name is not great because callers
+only use it to determine whether pausing has been requested.  Rename it
+to highlight those semantics and remove it from the public header file
+as there are no external callers.
+
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Message-id: 1466096189-6477-3-git-send-email-stefanha@redhat.com
+(cherry picked from commit a7f3b7ff03a4712b9fc1089cc568eea7296af069)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+  blockjob.c
+
+  Upstream uses BlockBackend, downstream uses BlockDriverState.
+
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+---
+ blockjob.c               | 6 +++---
+ include/block/blockjob.h | 9 ---------
+ 2 files changed, 3 insertions(+), 12 deletions(-)
+
+diff --git a/blockjob.c b/blockjob.c
+index e3384c9..afca775 100644
+--- a/blockjob.c
++++ b/blockjob.c
+@@ -236,7 +236,7 @@ void block_job_pause(BlockJob *job)
+     job->pause_count++;
+ }
+ 
+-bool block_job_is_paused(BlockJob *job)
++static bool block_job_should_pause(BlockJob *job)
+ {
+     return job->pause_count > 0;
+ }
+@@ -333,11 +333,11 @@ void block_job_sleep_ns(BlockJob *job, QEMUClockType type, int64_t ns)
+     }
+ 
+     job->busy = false;
+-    if (!block_job_is_paused(job)) {
++    if (!block_job_should_pause(job)) {
+         co_aio_sleep_ns(bdrv_get_aio_context(job->bs), type, ns);
+     }
+     /* The job can be paused while sleeping, so check this again */
+-    if (block_job_is_paused(job)) {
++    if (block_job_should_pause(job)) {
+         qemu_coroutine_yield();
+     }
+     job->busy = true;
+diff --git a/include/block/blockjob.h b/include/block/blockjob.h
+index 8bedc49..691abfe 100644
+--- a/include/block/blockjob.h
++++ b/include/block/blockjob.h
+@@ -334,15 +334,6 @@ void block_job_event_completed(BlockJob *job, const char *msg);
+ void block_job_event_ready(BlockJob *job);
+ 
+ /**
+- * block_job_is_paused:
+- * @job: The job being queried.
+- *
+- * Returns whether the job is currently paused, or will pause
+- * as soon as it reaches a sleeping point.
+- */
+-bool block_job_is_paused(BlockJob *job);
+-
+-/**
+  * block_job_cancel_sync:
+  * @job: The job to be canceled.
+  *
+-- 
+1.8.3.1
+

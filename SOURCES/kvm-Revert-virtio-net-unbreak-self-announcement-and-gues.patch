@@ -1,0 +1,101 @@
+From 1a261d8dc6205bfd88ab45a906691e0a3819c0cb Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Mon, 15 Aug 2016 10:40:18 +0200
+Subject: [PATCH 17/17] Revert "virtio-net: unbreak self announcement and guest
+ offloads after migration"
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1471257618-19311-3-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 71958
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/2] Revert "virtio-net: unbreak self announcement and guest offloads after migration"
+Bugzilla: 1365747
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Xiao Wang <jasowang@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: "Michael S. Tsirkin" <mst@redhat.com>
+
+This reverts commit 1f8828ef573c83365b4a87a776daf8bcef1caa21.
+
+Cc: qemu-stable@nongnu.org
+Reported-by: Robin Geuze <robing@transip.nl>
+Tested-by: Robin Geuze <robing@transip.nl>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 6c6668232e71b7cf7ff39fa1a7abf660c40f9cea)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/virtio-net.c | 40 +++++++++++++++++-----------------------
+ 1 file changed, 17 insertions(+), 23 deletions(-)
+
+diff --git a/hw/net/virtio-net.c b/hw/net/virtio-net.c
+index 13ab491..e6606d8 100644
+--- a/hw/net/virtio-net.c
++++ b/hw/net/virtio-net.c
+@@ -1548,33 +1548,11 @@ static int virtio_net_load(QEMUFile *f, void *opaque, int version_id)
+ {
+     VirtIONet *n = opaque;
+     VirtIODevice *vdev = VIRTIO_DEVICE(n);
+-    int ret;
+ 
+     if (version_id < 2 || version_id > VIRTIO_NET_VM_VERSION)
+         return -EINVAL;
+ 
+-    ret = virtio_load(vdev, f, version_id);
+-    if (ret) {
+-        return ret;
+-    }
+-
+-    if (virtio_vdev_has_feature(vdev, VIRTIO_NET_F_CTRL_GUEST_OFFLOADS)) {
+-        n->curr_guest_offloads = qemu_get_be64(f);
+-    } else {
+-        n->curr_guest_offloads = virtio_net_supported_guest_offloads(n);
+-    }
+-
+-    if (peer_has_vnet_hdr(n)) {
+-        virtio_net_apply_guest_offloads(n);
+-    }
+-
+-    if (virtio_vdev_has_feature(vdev, VIRTIO_NET_F_GUEST_ANNOUNCE) &&
+-        virtio_vdev_has_feature(vdev, VIRTIO_NET_F_CTRL_VQ)) {
+-        n->announce_counter = SELF_ANNOUNCE_ROUNDS;
+-        timer_mod(n->announce_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL));
+-    }
+-
+-    return 0;
++    return virtio_load(vdev, f, version_id);
+ }
+ 
+ static int virtio_net_load_device(VirtIODevice *vdev, QEMUFile *f,
+@@ -1671,6 +1649,16 @@ static int virtio_net_load_device(VirtIODevice *vdev, QEMUFile *f,
+         }
+     }
+ 
++    if (virtio_vdev_has_feature(vdev, VIRTIO_NET_F_CTRL_GUEST_OFFLOADS)) {
++        n->curr_guest_offloads = qemu_get_be64(f);
++    } else {
++        n->curr_guest_offloads = virtio_net_supported_guest_offloads(n);
++    }
++
++    if (peer_has_vnet_hdr(n)) {
++        virtio_net_apply_guest_offloads(n);
++    }
++
+     virtio_net_set_queues(n);
+ 
+     /* Find the first multicast entry in the saved MAC filter */
+@@ -1688,6 +1676,12 @@ static int virtio_net_load_device(VirtIODevice *vdev, QEMUFile *f,
+         qemu_get_subqueue(n->nic, i)->link_down = link_down;
+     }
+ 
++    if (virtio_vdev_has_feature(vdev, VIRTIO_NET_F_GUEST_ANNOUNCE) &&
++        virtio_vdev_has_feature(vdev, VIRTIO_NET_F_CTRL_VQ)) {
++        n->announce_counter = SELF_ANNOUNCE_ROUNDS;
++        timer_mod(n->announce_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL));
++    }
++
+     return 0;
+ }
+ 
+-- 
+1.8.3.1
+

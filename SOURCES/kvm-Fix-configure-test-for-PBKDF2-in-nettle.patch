@@ -1,0 +1,45 @@
+From bb2445923816a5da7bfdb85ac9b3ec832fd2164e Mon Sep 17 00:00:00 2001
+From: "Daniel P. Berrange" <berrange@redhat.com>
+Date: Sat, 27 Aug 2016 15:36:31 +0200
+Subject: [PATCH 1/8] Fix configure test for PBKDF2 in nettle
+
+RH-Author: Daniel P. Berrange <berrange@redhat.com>
+Message-id: <1472312195-23794-2-git-send-email-berrange@redhat.com>
+Patchwork-id: 72098
+O-Subject: [PATCH qemu-kvm-rhev 7.3 1/5] Fix configure test for PBKDF2 in nettle
+Bugzilla: 1301019
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+From: Steven Luo <steven+qemu@steven676.net>
+
+On my Debian jessie system, including nettle/pbkdf2.h does not cause
+NULL to be defined, which causes the test to fail to compile.  Include
+stddef.h to bring in a definition of NULL.
+
+Cc: qemu-trivial@nongnu.org
+Cc: qemu-stable@nongnu.org
+Signed-off-by: Steven Luo <steven+qemu@steven676.net>
+Signed-off-by: Michael Tokarev <mjt@tls.msk.ru>
+(cherry picked from commit 9e87a691bd46846e2232f8c30605c491c85ac987)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ configure | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/configure b/configure
+index 9a105cd..6c10f0e 100755
+--- a/configure
++++ b/configure
+@@ -2357,6 +2357,7 @@ if test "$nettle" != "no"; then
+         nettle="yes"
+ 
+         cat > $TMPC << EOF
++#include <stddef.h>
+ #include <nettle/pbkdf2.h>
+ int main(void) {
+      pbkdf2_hmac_sha256(8, NULL, 1000, 8, NULL, 8, NULL);
+-- 
+1.8.3.1
+

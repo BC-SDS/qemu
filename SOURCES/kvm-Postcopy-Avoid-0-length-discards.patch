@@ -1,0 +1,49 @@
+From 86be843cee1157f605820fc02a8cad8a00fe09e9 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Fri, 17 Jun 2016 14:39:22 +0200
+Subject: [PATCH 01/33] Postcopy: Avoid 0 length discards
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1466174367-11047-2-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70659
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/6] Postcopy: Avoid 0 length discards
+Bugzilla: 1347256
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+RH-Acked-by: John Snow <jsnow@redhat.com>
+RH-Acked-by: Amit Shah <amit.shah@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+The discard code in migration/ram.c would send request for
+zero length discards in the case where no discards were needed.
+It doesn't appear to have had any bad effect.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Reviewed-by: Denis V. Lunev <den@openvz.org>
+Message-id: 1465816605-29488-2-git-send-email-dgilbert@redhat.com
+Message-Id: <1465816605-29488-2-git-send-email-dgilbert@redhat.com>
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+(cherry picked from commit d688c62d0928c46437b6b95848922398674538c8)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ migration/ram.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/migration/ram.c b/migration/ram.c
+index 3f05738..e96c2af 100644
+--- a/migration/ram.c
++++ b/migration/ram.c
+@@ -1557,7 +1557,9 @@ static int postcopy_send_discard_bm_ram(MigrationState *ms,
+             } else {
+                 discard_length = zero - one;
+             }
+-            postcopy_discard_send_range(ms, pds, one, discard_length);
++            if (discard_length) {
++                postcopy_discard_send_range(ms, pds, one, discard_length);
++            }
+             current = one + discard_length;
+         } else {
+             current = one;
+-- 
+1.8.3.1
+

@@ -1,0 +1,305 @@
+From a1e2047b872ccdac115269f637fc651701f3dcb3 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:36 +0200
+Subject: [PATCH 03/34] cpu: Reclaim vCPU objects
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-4-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71123
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 03/27] cpu: Reclaim vCPU objects
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Gu Zheng <guz.fnst@cn.fujitsu.com>
+
+In order to deal well with the kvm vcpus (which can not be removed without any
+protection), we do not close KVM vcpu fd, just record and mark it as stopped
+into a list, so that we can reuse it for the appending cpu hot-add request if
+possible. It is also the approach that kvm guys suggested:
+https://www.mail-archive.com/kvm@vger.kernel.org/msg102839.html
+
+Signed-off-by: Chen Fan <chen.fan.fnst@cn.fujitsu.com>
+Signed-off-by: Gu Zheng <guz.fnst@cn.fujitsu.com>
+Signed-off-by: Zhu Guihua <zhugh.fnst@cn.fujitsu.com>
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+               [- Explicit CPU_REMOVE() from qemu_kvm/tcg_destroy_vcpu()
+                  isn't needed as it is done from cpu_exec_exit()
+                - Use iothread mutex instead of global mutex during
+                  destroy
+                - Don't cleanup vCPU object from vCPU thread context
+                  but leave it to the callers (device_add/device_del)]
+Reviewed-by: Thomas Huth <thuth@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+
+(cherry picked from commit 4c055ab54fae39b6329c57bcb5334d59b920463e)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ cpus.c               | 39 +++++++++++++++++++++++++++++++++--
+ include/qom/cpu.h    | 10 +++++++++
+ include/sysemu/kvm.h |  1 +
+ kvm-all.c            | 57 +++++++++++++++++++++++++++++++++++++++++++++++++++-
+ kvm-stub.c           |  5 +++++
+ 5 files changed, 109 insertions(+), 3 deletions(-)
+
+diff --git a/cpus.c b/cpus.c
+index 4fccbde..25ecf3d 100644
+--- a/cpus.c
++++ b/cpus.c
+@@ -970,6 +970,18 @@ void async_run_on_cpu(CPUState *cpu, void (*func)(void *data), void *data)
+     qemu_cpu_kick(cpu);
+ }
+ 
++static void qemu_kvm_destroy_vcpu(CPUState *cpu)
++{
++    if (kvm_destroy_vcpu(cpu) < 0) {
++        error_report("kvm_destroy_vcpu failed");
++        exit(EXIT_FAILURE);
++    }
++}
++
++static void qemu_tcg_destroy_vcpu(CPUState *cpu)
++{
++}
++
+ static void flush_queued_work(CPUState *cpu)
+ {
+     struct qemu_work_item *wi;
+@@ -1059,7 +1071,7 @@ static void *qemu_kvm_cpu_thread_fn(void *arg)
+     cpu->created = true;
+     qemu_cond_signal(&qemu_cpu_cond);
+ 
+-    while (1) {
++    do {
+         if (cpu_can_run(cpu)) {
+             r = kvm_cpu_exec(cpu);
+             if (r == EXCP_DEBUG) {
+@@ -1067,8 +1079,10 @@ static void *qemu_kvm_cpu_thread_fn(void *arg)
+             }
+         }
+         qemu_kvm_wait_io_event(cpu);
+-    }
++    } while (!cpu->unplug || cpu_can_run(cpu));
+ 
++    qemu_kvm_destroy_vcpu(cpu);
++    qemu_mutex_unlock_iothread();
+     return NULL;
+ }
+ 
+@@ -1122,6 +1136,7 @@ static void tcg_exec_all(void);
+ static void *qemu_tcg_cpu_thread_fn(void *arg)
+ {
+     CPUState *cpu = arg;
++    CPUState *remove_cpu = NULL;
+ 
+     rcu_register_thread();
+ 
+@@ -1159,6 +1174,16 @@ static void *qemu_tcg_cpu_thread_fn(void *arg)
+             }
+         }
+         qemu_tcg_wait_io_event(QTAILQ_FIRST(&cpus));
++        CPU_FOREACH(cpu) {
++            if (cpu->unplug && !cpu_can_run(cpu)) {
++                remove_cpu = cpu;
++                break;
++            }
++        }
++        if (remove_cpu) {
++            qemu_tcg_destroy_vcpu(remove_cpu);
++            remove_cpu = NULL;
++        }
+     }
+ 
+     return NULL;
+@@ -1315,6 +1340,13 @@ void resume_all_vcpus(void)
+     }
+ }
+ 
++void cpu_remove(CPUState *cpu)
++{
++    cpu->stop = true;
++    cpu->unplug = true;
++    qemu_cpu_kick(cpu);
++}
++
+ /* For temporary buffers for forming a name */
+ #define VCPU_THREAD_NAME_SIZE 16
+ 
+@@ -1531,6 +1563,9 @@ static void tcg_exec_all(void)
+                 break;
+             }
+         } else if (cpu->stop || cpu->stopped) {
++            if (cpu->unplug) {
++                next_cpu = CPU_NEXT(cpu);
++            }
+             break;
+         }
+     }
+diff --git a/include/qom/cpu.h b/include/qom/cpu.h
+index b7a10f7..911bc9f 100644
+--- a/include/qom/cpu.h
++++ b/include/qom/cpu.h
+@@ -235,6 +235,7 @@ struct kvm_run;
+  * @halted: Nonzero if the CPU is in suspended state.
+  * @stop: Indicates a pending stop request.
+  * @stopped: Indicates the CPU has been artificially stopped.
++ * @unplug: Indicates a pending CPU unplug request.
+  * @crash_occurred: Indicates the OS reported a crash (panic) for this CPU
+  * @tcg_exit_req: Set to force TCG to stop executing linked TBs for this
+  *           CPU and return to its top level loop.
+@@ -287,6 +288,7 @@ struct CPUState {
+     bool created;
+     bool stop;
+     bool stopped;
++    bool unplug;
+     bool crash_occurred;
+     bool exit_request;
+     uint32_t interrupt_request;
+@@ -754,6 +756,14 @@ void cpu_exit(CPUState *cpu);
+ void cpu_resume(CPUState *cpu);
+ 
+ /**
++ * cpu_remove:
++ * @cpu: The CPU to remove.
++ *
++ * Requests the CPU to be removed.
++ */
++void cpu_remove(CPUState *cpu);
++
++/**
+  * qemu_init_vcpu:
+  * @cpu: The vCPU to initialize.
+  *
+diff --git a/include/sysemu/kvm.h b/include/sysemu/kvm.h
+index 0e18f15..4706c37 100644
+--- a/include/sysemu/kvm.h
++++ b/include/sysemu/kvm.h
+@@ -216,6 +216,7 @@ int kvm_has_intx_set_mask(void);
+ 
+ int kvm_init_vcpu(CPUState *cpu);
+ int kvm_cpu_exec(CPUState *cpu);
++int kvm_destroy_vcpu(CPUState *cpu);
+ 
+ #ifdef NEED_CPU_H
+ 
+diff --git a/kvm-all.c b/kvm-all.c
+index db57ebd..0a3a7ec 100644
+--- a/kvm-all.c
++++ b/kvm-all.c
+@@ -61,6 +61,12 @@
+ 
+ #define KVM_MSI_HASHTAB_SIZE    256
+ 
++struct KVMParkedVcpu {
++    unsigned long vcpu_id;
++    int kvm_fd;
++    QLIST_ENTRY(KVMParkedVcpu) node;
++};
++
+ struct KVMState
+ {
+     AccelState parent_obj;
+@@ -94,6 +100,7 @@ struct KVMState
+     QTAILQ_HEAD(msi_hashtab, KVMMSIRoute) msi_hashtab[KVM_MSI_HASHTAB_SIZE];
+ #endif
+     KVMMemoryListener memory_listener;
++    QLIST_HEAD(, KVMParkedVcpu) kvm_parked_vcpus;
+ };
+ 
+ KVMState *kvm_state;
+@@ -237,6 +244,53 @@ static int kvm_set_user_memory_region(KVMMemoryListener *kml, KVMSlot *slot)
+     return kvm_vm_ioctl(s, KVM_SET_USER_MEMORY_REGION, &mem);
+ }
+ 
++int kvm_destroy_vcpu(CPUState *cpu)
++{
++    KVMState *s = kvm_state;
++    long mmap_size;
++    struct KVMParkedVcpu *vcpu = NULL;
++    int ret = 0;
++
++    DPRINTF("kvm_destroy_vcpu\n");
++
++    mmap_size = kvm_ioctl(s, KVM_GET_VCPU_MMAP_SIZE, 0);
++    if (mmap_size < 0) {
++        ret = mmap_size;
++        DPRINTF("KVM_GET_VCPU_MMAP_SIZE failed\n");
++        goto err;
++    }
++
++    ret = munmap(cpu->kvm_run, mmap_size);
++    if (ret < 0) {
++        goto err;
++    }
++
++    vcpu = g_malloc0(sizeof(*vcpu));
++    vcpu->vcpu_id = kvm_arch_vcpu_id(cpu);
++    vcpu->kvm_fd = cpu->kvm_fd;
++    QLIST_INSERT_HEAD(&kvm_state->kvm_parked_vcpus, vcpu, node);
++err:
++    return ret;
++}
++
++static int kvm_get_vcpu(KVMState *s, unsigned long vcpu_id)
++{
++    struct KVMParkedVcpu *cpu;
++
++    QLIST_FOREACH(cpu, &s->kvm_parked_vcpus, node) {
++        if (cpu->vcpu_id == vcpu_id) {
++            int kvm_fd;
++
++            QLIST_REMOVE(cpu, node);
++            kvm_fd = cpu->kvm_fd;
++            g_free(cpu);
++            return kvm_fd;
++        }
++    }
++
++    return kvm_vm_ioctl(s, KVM_CREATE_VCPU, (void *)vcpu_id);
++}
++
+ int kvm_init_vcpu(CPUState *cpu)
+ {
+     KVMState *s = kvm_state;
+@@ -245,7 +299,7 @@ int kvm_init_vcpu(CPUState *cpu)
+ 
+     DPRINTF("kvm_init_vcpu\n");
+ 
+-    ret = kvm_vm_ioctl(s, KVM_CREATE_VCPU, (void *)kvm_arch_vcpu_id(cpu));
++    ret = kvm_get_vcpu(s, kvm_arch_vcpu_id(cpu));
+     if (ret < 0) {
+         DPRINTF("kvm_create_vcpu failed\n");
+         goto err;
+@@ -1495,6 +1549,7 @@ static int kvm_init(MachineState *ms)
+ #ifdef KVM_CAP_SET_GUEST_DEBUG
+     QTAILQ_INIT(&s->kvm_sw_breakpoints);
+ #endif
++    QLIST_INIT(&s->kvm_parked_vcpus);
+     s->vmfd = -1;
+     s->fd = qemu_open("/dev/kvm", O_RDWR);
+     if (s->fd == -1) {
+diff --git a/kvm-stub.c b/kvm-stub.c
+index b962b24..61f9d5c 100644
+--- a/kvm-stub.c
++++ b/kvm-stub.c
+@@ -33,6 +33,11 @@ bool kvm_allowed;
+ bool kvm_readonly_mem_allowed;
+ bool kvm_ioeventfd_any_length_allowed;
+ 
++int kvm_destroy_vcpu(CPUState *cpu)
++{
++    return -ENOSYS;
++}
++
+ int kvm_init_vcpu(CPUState *cpu)
+ {
+     return -ENOSYS;
+-- 
+1.8.3.1
+

@@ -1,0 +1,92 @@
+From 60a78bc11038b44194f96670b37dfaf2b4df3b18 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Tue, 31 May 2016 14:45:44 +0200
+Subject: [PATCH 15/24] scsi-disk: add need_fua_emulation to SCSIDiskClass
+
+RH-Author: Paolo Bonzini <pbonzini@redhat.com>
+Message-id: <1464705946-20914-6-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 70507
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 5/7] scsi-disk: add need_fua_emulation to SCSIDiskClass
+Bugzilla: 1338043
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+
+scsi-block will be able to do FUA just by passing the request through
+to the LUN (which is also more efficient); there is no need to emulate
+it like we do for scsi-disk.
+
+Add a new method to distinguish this.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit 94f8ba1125ee7dfc7aa46166c8e3312e5ad949df)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/scsi/scsi-disk.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/hw/scsi/scsi-disk.c b/hw/scsi/scsi-disk.c
+index 80e5ee3..23d1957 100644
+--- a/hw/scsi/scsi-disk.c
++++ b/hw/scsi/scsi-disk.c
+@@ -66,6 +66,7 @@ typedef struct SCSIDiskClass {
+     SCSIDeviceClass parent_class;
+     DMAIOFunc       *dma_readv;
+     DMAIOFunc       *dma_writev;
++    bool            (*need_fua_emulation)(SCSICommand *cmd);
+ } SCSIDiskClass;
+ 
+ typedef struct SCSIDiskReq {
+@@ -75,6 +76,7 @@ typedef struct SCSIDiskReq {
+     uint32_t sector_count;
+     uint32_t buflen;
+     bool started;
++    bool need_fua_emulation;
+     struct iovec iov;
+     QEMUIOVector qiov;
+     BlockAcctCookie acct;
+@@ -237,7 +239,7 @@ static void scsi_write_do_fua(SCSIDiskReq *r)
+         goto done;
+     }
+ 
+-    if (scsi_is_cmd_fua(&r->req.cmd)) {
++    if (r->need_fua_emulation) {
+         block_acct_start(blk_get_stats(s->qdev.conf.blk), &r->acct, 0,
+                          BLOCK_ACCT_FLUSH);
+         r->req.aiocb = blk_aio_flush(s->qdev.conf.blk, scsi_aio_complete, r);
+@@ -415,7 +417,7 @@ static void scsi_read_data(SCSIRequest *req)
+ 
+     first = !r->started;
+     r->started = true;
+-    if (first && scsi_is_cmd_fua(&r->req.cmd)) {
++    if (first && r->need_fua_emulation) {
+         block_acct_start(blk_get_stats(s->qdev.conf.blk), &r->acct, 0,
+                          BLOCK_ACCT_FLUSH);
+         r->req.aiocb = blk_aio_flush(s->qdev.conf.blk, scsi_do_read_cb, r);
+@@ -2156,6 +2158,7 @@ static int32_t scsi_disk_dma_command(SCSIRequest *req, uint8_t *buf)
+ {
+     SCSIDiskReq *r = DO_UPCAST(SCSIDiskReq, req, req);
+     SCSIDiskState *s = DO_UPCAST(SCSIDiskState, qdev, req->dev);
++    SCSIDiskClass *sdc = (SCSIDiskClass *) object_get_class(OBJECT(s));
+     uint32_t len;
+     uint8_t command;
+ 
+@@ -2214,6 +2217,7 @@ static int32_t scsi_disk_dma_command(SCSIRequest *req, uint8_t *buf)
+         scsi_check_condition(r, SENSE_CODE(LBA_OUT_OF_RANGE));
+         return 0;
+     }
++    r->need_fua_emulation = sdc->need_fua_emulation(&r->req.cmd);
+     if (r->sector_count == 0) {
+         scsi_req_complete(&r->req, GOOD);
+     }
+@@ -2707,6 +2711,7 @@ static void scsi_disk_base_class_initfn(ObjectClass *klass, void *data)
+     dc->reset = scsi_disk_reset;
+     sdc->dma_readv = scsi_dma_readv;
+     sdc->dma_writev = scsi_dma_writev;
++    sdc->need_fua_emulation = scsi_is_cmd_fua;
+ }
+ 
+ static const TypeInfo scsi_disk_base_info = {
+-- 
+1.8.3.1
+

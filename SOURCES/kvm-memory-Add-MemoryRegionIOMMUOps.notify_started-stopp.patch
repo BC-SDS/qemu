@@ -1,0 +1,125 @@
+From db365afd7dde5656b4c3135a7f0c486ab9f77e3d Mon Sep 17 00:00:00 2001
+From: Alex Williamson <alex.williamson@redhat.com>
+Date: Tue, 5 Jul 2016 20:55:28 +0200
+Subject: [PATCH 15/16] memory: Add MemoryRegionIOMMUOps.notify_started/stopped
+ callbacks
+
+RH-Author: Alex Williamson <alex.williamson@redhat.com>
+Message-id: <20160705205528.29877.56165.stgit@gimli.home>
+Patchwork-id: 70947
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 1/2] memory: Add MemoryRegionIOMMUOps.notify_started/stopped callbacks
+Bugzilla: 1346920
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Peter Xu <peterx@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+
+From: Alexey Kardashevskiy <aik@ozlabs.ru>
+
+Bugzilla: 1346920
+Upstream: d22d8956b185c002b50a4d0883aff61f857347ef
+
+The IOMMU driver may change behavior depending on whether a notifier
+client is present.  In the case of POWER, this represents a change in
+the visibility of the IOTLB, for other drivers such as intel-iommu and
+future AMD-Vi emulation, notifier support is not yet enabled and this
+provides the opportunity to flag that incompatibility.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Reviewed-by: Peter Xu <peterx@redhat.com>
+Tested-by: Peter Xu <peterx@redhat.com>
+Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+[new log & extracted from [PATCH qemu v17 12/12] spapr_iommu, vfio, memory: Notify IOMMU about starting/stopping listening]
+Signed-off-by: Alex Williamson <alex.williamson@redhat.com>
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/vfio/common.c      |  5 +++--
+ include/exec/memory.h |  8 +++++++-
+ memory.c              | 10 +++++++++-
+ 3 files changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/hw/vfio/common.c b/hw/vfio/common.c
+index 1551c77..a098ea0 100644
+--- a/hw/vfio/common.c
++++ b/hw/vfio/common.c
+@@ -451,7 +451,8 @@ static void vfio_listener_region_del(MemoryListener *listener,
+ 
+         QLIST_FOREACH(giommu, &container->giommu_list, giommu_next) {
+             if (giommu->iommu == section->mr) {
+-                memory_region_unregister_iommu_notifier(&giommu->n);
++                memory_region_unregister_iommu_notifier(giommu->iommu,
++                                                        &giommu->n);
+                 QLIST_REMOVE(giommu, giommu_next);
+                 g_free(giommu);
+                 break;
+@@ -940,7 +941,7 @@ static void vfio_disconnect_container(VFIOGroup *group)
+         QLIST_REMOVE(container, next);
+ 
+         QLIST_FOREACH_SAFE(giommu, &container->giommu_list, giommu_next, tmp) {
+-            memory_region_unregister_iommu_notifier(&giommu->n);
++            memory_region_unregister_iommu_notifier(giommu->iommu, &giommu->n);
+             QLIST_REMOVE(giommu, giommu_next);
+             g_free(giommu);
+         }
+diff --git a/include/exec/memory.h b/include/exec/memory.h
+index e2a3e99..e4d0331 100644
+--- a/include/exec/memory.h
++++ b/include/exec/memory.h
+@@ -149,6 +149,10 @@ typedef struct MemoryRegionIOMMUOps MemoryRegionIOMMUOps;
+ struct MemoryRegionIOMMUOps {
+     /* Return a TLB entry that contains a given address. */
+     IOMMUTLBEntry (*translate)(MemoryRegion *iommu, hwaddr addr, bool is_write);
++    /* Called when the first notifier is set */
++    void (*notify_started)(MemoryRegion *iommu);
++    /* Called when the last notifier is removed */
++    void (*notify_stopped)(MemoryRegion *iommu);
+ };
+ 
+ typedef struct CoalescedMemoryRange CoalescedMemoryRange;
+@@ -610,9 +614,11 @@ void memory_region_iommu_replay(MemoryRegion *mr, Notifier *n,
+  * memory_region_unregister_iommu_notifier: unregister a notifier for
+  * changes to IOMMU translation entries.
+  *
++ * @mr: the memory region which was observed and for which notity_stopped()
++ *      needs to be called
+  * @n: the notifier to be removed.
+  */
+-void memory_region_unregister_iommu_notifier(Notifier *n);
++void memory_region_unregister_iommu_notifier(MemoryRegion *mr, Notifier *n);
+ 
+ /**
+  * memory_region_name: get a memory region's name
+diff --git a/memory.c b/memory.c
+index f76f85d..7f452da 100644
+--- a/memory.c
++++ b/memory.c
+@@ -1510,6 +1510,10 @@ bool memory_region_is_logging(MemoryRegion *mr, uint8_t client)
+ 
+ void memory_region_register_iommu_notifier(MemoryRegion *mr, Notifier *n)
+ {
++    if (mr->iommu_ops->notify_started &&
++        QLIST_EMPTY(&mr->iommu_notify.notifiers)) {
++        mr->iommu_ops->notify_started(mr);
++    }
+     notifier_list_add(&mr->iommu_notify, n);
+ }
+ 
+@@ -1533,9 +1537,13 @@ void memory_region_iommu_replay(MemoryRegion *mr, Notifier *n,
+     }
+ }
+ 
+-void memory_region_unregister_iommu_notifier(Notifier *n)
++void memory_region_unregister_iommu_notifier(MemoryRegion *mr, Notifier *n)
+ {
+     notifier_remove(n);
++    if (mr->iommu_ops->notify_stopped &&
++        QLIST_EMPTY(&mr->iommu_notify.notifiers)) {
++        mr->iommu_ops->notify_stopped(mr);
++    }
+ }
+ 
+ void memory_region_notify_iommu(MemoryRegion *mr,
+-- 
+1.8.3.1
+

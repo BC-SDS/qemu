@@ -1,0 +1,100 @@
+From 298e4016f0c6c69b74ee57f616f7e7c4dbf29393 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:34 +0200
+Subject: [PATCH 01/34] exec: Remove cpu from cpus list during cpu_exec_exit()
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-2-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71121
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 01/27] exec: Remove cpu from cpus list during cpu_exec_exit()
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+CPUState *cpu gets added to the cpus list during cpu_exec_init(). It
+should be removed from cpu_exec_exit().
+
+cpu_exec_exit() is called from generic CPU::instance_finalize and some
+archs like PowerPC call it from CPU unrealizefn. So ensure that we
+dequeue the cpu only once.
+
+Now -1 value for cpu->cpu_index indicates that we have already dequeued
+the cpu for CONFIG_USER_ONLY case also.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Reviewed-by: Thomas Huth <thuth@redhat.com>
+Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 1c59eb39cf75e660b1ac4ea95ef789c84021a1c4)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ exec.c | 32 ++++++++++++++++++++++++--------
+ 1 file changed, 24 insertions(+), 8 deletions(-)
+
+diff --git a/exec.c b/exec.c
+index c4f9036..da1f09a 100644
+--- a/exec.c
++++ b/exec.c
+@@ -610,15 +610,9 @@ static int cpu_get_free_index(Error **errp)
+     return cpu;
+ }
+ 
+-void cpu_exec_exit(CPUState *cpu)
++static void cpu_release_index(CPUState *cpu)
+ {
+-    if (cpu->cpu_index == -1) {
+-        /* cpu_index was never allocated by this @cpu or was already freed. */
+-        return;
+-    }
+-
+     bitmap_clear(cpu_index_map, cpu->cpu_index, 1);
+-    cpu->cpu_index = -1;
+ }
+ #else
+ 
+@@ -633,11 +627,33 @@ static int cpu_get_free_index(Error **errp)
+     return cpu_index;
+ }
+ 
+-void cpu_exec_exit(CPUState *cpu)
++static void cpu_release_index(CPUState *cpu)
+ {
++    return;
+ }
+ #endif
+ 
++void cpu_exec_exit(CPUState *cpu)
++{
++#if defined(CONFIG_USER_ONLY)
++    cpu_list_lock();
++#endif
++    if (cpu->cpu_index == -1) {
++        /* cpu_index was never allocated by this @cpu or was already freed. */
++#if defined(CONFIG_USER_ONLY)
++        cpu_list_unlock();
++#endif
++        return;
++    }
++
++    QTAILQ_REMOVE(&cpus, cpu, node);
++    cpu_release_index(cpu);
++    cpu->cpu_index = -1;
++#if defined(CONFIG_USER_ONLY)
++    cpu_list_unlock();
++#endif
++}
++
+ void cpu_exec_init(CPUState *cpu, Error **errp)
+ {
+     CPUClass *cc = CPU_GET_CLASS(cpu);
+-- 
+1.8.3.1
+

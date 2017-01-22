@@ -1,0 +1,71 @@
+From 0591f5d4ebc9fdbc8aacf55ea0ebd5f053ea6d6a Mon Sep 17 00:00:00 2001
+From: Alex Williamson <alex.williamson@redhat.com>
+Date: Tue, 5 Jul 2016 20:55:34 +0200
+Subject: [PATCH 16/16] intel_iommu: Throw hw_error on notify_started
+
+RH-Author: Alex Williamson <alex.williamson@redhat.com>
+Message-id: <20160705205533.29877.66653.stgit@gimli.home>
+Patchwork-id: 70948
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 2/2] intel_iommu: Throw hw_error on notify_started
+Bugzilla: 1346920
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Peter Xu <peterx@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+
+Bugzilla: 1346920
+Upstream: 3cb3b1549f5401dc3a5e1d073e34063dc274136f
+
+We don't currently support the MemoryRegionIOMMUOps notifier, so throw
+an error should a device require it.
+
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Reviewed-by: Peter Xu <peterx@redhat.com>
+Tested-by: Peter Xu <peterx@redhat.com>
+Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+Signed-off-by: Alex Williamson <alex.williamson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/intel_iommu.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index 347718f..5eba704 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -24,6 +24,7 @@
+ #include "exec/address-spaces.h"
+ #include "intel_iommu_internal.h"
+ #include "hw/pci/pci.h"
++#include "hw/pci/pci_bus.h"
+ 
+ /*#define DEBUG_INTEL_IOMMU*/
+ #ifdef DEBUG_INTEL_IOMMU
+@@ -1871,6 +1872,16 @@ static IOMMUTLBEntry vtd_iommu_translate(MemoryRegion *iommu, hwaddr addr,
+     return ret;
+ }
+ 
++static void vtd_iommu_notify_started(MemoryRegion *iommu)
++{
++    VTDAddressSpace *vtd_as = container_of(iommu, VTDAddressSpace, iommu);
++
++    hw_error("Device at bus %s addr %02x.%d requires iommu notifier which "
++             "is currently not supported by intel-iommu emulation",
++             vtd_as->bus->qbus.name, PCI_SLOT(vtd_as->devfn),
++             PCI_FUNC(vtd_as->devfn));
++}
++
+ static const VMStateDescription vtd_vmstate = {
+     .name = "iommu-intel",
+     .unmigratable = 1,
+@@ -1938,6 +1949,7 @@ static void vtd_init(IntelIOMMUState *s)
+     memset(s->womask, 0, DMAR_REG_SIZE);
+ 
+     s->iommu_ops.translate = vtd_iommu_translate;
++    s->iommu_ops.notify_started = vtd_iommu_notify_started;
+     s->root = 0;
+     s->root_extended = false;
+     s->dmar_enabled = false;
+-- 
+1.8.3.1
+

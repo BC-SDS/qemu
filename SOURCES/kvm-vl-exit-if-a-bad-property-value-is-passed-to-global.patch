@@ -1,0 +1,60 @@
+From 72cc624678f1409941576b03c33bfb007c9ecbf4 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:23 +0200
+Subject: [PATCH 83/99] vl: exit if a bad property value is passed to -global
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-79-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71694
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 78/78] vl: exit if a bad property value is passed to -global
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Greg Kurz <groug@kaod.org>
+
+When passing '-global driver=host-powerpc64-cpu,property=compat,value=foo'
+on the command line, without this patch, we get the following warning per
+device (which means many lines if the guests has many cpus):
+
+qemu-system-ppc64: Warning: can't apply global host-powerpc64-cpu.compat=foo:
+    Invalid compatibility mode "foo"
+
+... and QEMU continues execution, ignoring the property.
+
+With this patch, we get a single line:
+
+qemu-system-ppc64: can't apply global host-powerpc64-cpu.compat=foo:
+    Invalid compatibility mode "foo"
+
+... and QEMU exits.
+
+The previous behavior is kept for hotplugged devices since we don't want
+QEMU to exit when doing device_add.
+
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Greg Kurz <groug@kaod.org>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 03f28efbbb0ee521611e0eb28b45096b3598fb34)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ vl.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/vl.c b/vl.c
+index 35ad32f..56b05c6 100644
+--- a/vl.c
++++ b/vl.c
+@@ -2981,6 +2981,7 @@ static int global_init_func(void *opaque, QemuOpts *opts, Error **errp)
+     g->property = qemu_opt_get(opts, "property");
+     g->value    = qemu_opt_get(opts, "value");
+     g->user_provided = true;
++    g->errp = &error_fatal;
+     qdev_prop_register_global(g);
+     return 0;
+ }
+-- 
+1.8.3.1
+

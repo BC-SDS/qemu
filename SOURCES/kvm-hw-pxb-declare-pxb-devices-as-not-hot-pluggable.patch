@@ -1,0 +1,52 @@
+From e2ccd2f1edccac1aa8551c8e8d368144b4d80b50 Mon Sep 17 00:00:00 2001
+From: Marcel Apfelbaum <marcel@redhat.com>
+Date: Sun, 31 Jul 2016 18:03:04 +0200
+Subject: [PATCH 02/99] hw/pxb: declare pxb devices as not hot-pluggable
+
+RH-Author: Marcel Apfelbaum <marcel@redhat.com>
+Message-id: <1469988187-20816-3-git-send-email-marcel@redhat.com>
+Patchwork-id: 71529
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/5] hw/pxb: declare pxb devices as not hot-pluggable
+Bugzilla: 1323976
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+
+Prevent future issues when hotplug will work for devices
+attached to pxbs.
+
+Suggested-by: Igor Mammedov <imammedo@redhat.com>
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Tested-by: Laszlo Ersek <lersek@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 7b346c742cd95816c1d5badcc88e18bb95ace08c)
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/pci-bridge/pci_expander_bridge.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/hw/pci-bridge/pci_expander_bridge.c b/hw/pci-bridge/pci_expander_bridge.c
+index ab86121..b4f8ca2 100644
+--- a/hw/pci-bridge/pci_expander_bridge.c
++++ b/hw/pci-bridge/pci_expander_bridge.c
+@@ -310,6 +310,7 @@ static void pxb_dev_class_init(ObjectClass *klass, void *data)
+ 
+     dc->desc = "PCI Expander Bridge";
+     dc->props = pxb_dev_properties;
++    dc->hotpluggable = false;
+     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
+ }
+ 
+@@ -343,6 +344,7 @@ static void pxb_pcie_dev_class_init(ObjectClass *klass, void *data)
+ 
+     dc->desc = "PCI Express Expander Bridge";
+     dc->props = pxb_dev_properties;
++    dc->hotpluggable = false;
+     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
+ }
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,92 @@
+From 5067c8ec4dcc40fa496916b0cf674294794ca220 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 24 Jun 2016 18:55:41 +0200
+Subject: [PATCH 12/33] acpi: cleanup bios_linker_loader_cleanup()
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466794559-27963-5-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70771
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 04/22] acpi: cleanup bios_linker_loader_cleanup()
+Bugzilla: 1270345
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Igor Mammedov <imammedo@redhat.com>
+
+bios_linker_loader_cleanup() is called only from one place
+and returned value is immediately freed wich makes returning
+pointer from bios_linker_loader_cleanup() useless.
+
+Cleanup bios_linker_loader_cleanup() by freeing
+data there so that caller won't have to free it.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 8cc87c3179f3988cf870ae4e637123770bdf82f1)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/aml-build.c                  | 3 +--
+ hw/acpi/bios-linker-loader.c         | 8 ++++----
+ include/hw/acpi/bios-linker-loader.h | 2 +-
+ 3 files changed, 6 insertions(+), 7 deletions(-)
+
+diff --git a/hw/acpi/aml-build.c b/hw/acpi/aml-build.c
+index 60fc43c..ee7da5a 100644
+--- a/hw/acpi/aml-build.c
++++ b/hw/acpi/aml-build.c
+@@ -1531,8 +1531,7 @@ void acpi_build_tables_init(AcpiBuildTables *tables)
+ 
+ void acpi_build_tables_cleanup(AcpiBuildTables *tables, bool mfre)
+ {
+-    void *linker_data = bios_linker_loader_cleanup(tables->linker);
+-    g_free(linker_data);
++    bios_linker_loader_cleanup(tables->linker);
+     g_array_free(tables->rsdp, true);
+     g_array_free(tables->table_data, true);
+     g_array_free(tables->tcpalog, mfre);
+diff --git a/hw/acpi/bios-linker-loader.c b/hw/acpi/bios-linker-loader.c
+index 8e3f30d..b67da68 100644
+--- a/hw/acpi/bios-linker-loader.c
++++ b/hw/acpi/bios-linker-loader.c
+@@ -121,12 +121,13 @@ BIOSLinker *bios_linker_loader_init(void)
+     return linker;
+ }
+ 
+-/* Free linker wrapper and return the linker commands array. */
+-void *bios_linker_loader_cleanup(BIOSLinker *linker)
++/* Free linker wrapper */
++void bios_linker_loader_cleanup(BIOSLinker *linker)
+ {
+     int i;
+     BiosLinkerFileEntry *entry;
+-    void *cmd_blob = g_array_free(linker->cmd_blob, false);
++
++    g_array_free(linker->cmd_blob, true);
+ 
+     for (i = 0; i < linker->file_list->len; i++) {
+         entry = &g_array_index(linker->file_list, BiosLinkerFileEntry, i);
+@@ -134,7 +135,6 @@ void *bios_linker_loader_cleanup(BIOSLinker *linker)
+     }
+     g_array_free(linker->file_list, true);
+     g_free(linker);
+-    return cmd_blob;
+ }
+ 
+ static const BiosLinkerFileEntry *
+diff --git a/include/hw/acpi/bios-linker-loader.h b/include/hw/acpi/bios-linker-loader.h
+index bee6dee..564e192 100644
+--- a/include/hw/acpi/bios-linker-loader.h
++++ b/include/hw/acpi/bios-linker-loader.h
+@@ -26,5 +26,5 @@ void bios_linker_loader_add_pointer(BIOSLinker *linker,
+                                     void *pointer,
+                                     uint8_t pointer_size);
+ 
+-void *bios_linker_loader_cleanup(BIOSLinker *linker);
++void bios_linker_loader_cleanup(BIOSLinker *linker);
+ #endif
+-- 
+1.8.3.1
+

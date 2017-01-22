@@ -1,0 +1,73 @@
+From 76a1796c6c1879092a80ba141e8a2cb125b28069 Mon Sep 17 00:00:00 2001
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Mon, 4 Jul 2016 00:19:59 +0200
+Subject: [PATCH 05/16] target-i386: Remove ABM from qemu64 CPU model
+
+RH-Author: Eduardo Habkost <ehabkost@redhat.com>
+Message-id: <1467591601-12091-3-git-send-email-ehabkost@redhat.com>
+Patchwork-id: 70927
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 2/4] target-i386: Remove ABM from qemu64 CPU model
+Bugzilla: 1318386 1321139
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1321139
+Upstream: commit 711956722c6764336f8b78a2106e57c55f02f36d
+
+(The upstream commit was already in QEMU 2.6.0, but the change
+was overwritten by the rebased RHEL-7 code.)
+
+ABM is not available on Sandy Bridge and older, and we want to make the
+default CPU runnable in most hosts, so it won't be enabled by default in
+KVM mode.
+
+We should eventually have all features supported by TCG enabled by
+default in TCG mode, but as we don't have a good mechanism today to
+ensure we have different defaults in KVM and TCG mode, disable ABM in
+the qemu64 CPU model entirely.
+
+(cherry picked from commit 711956722c6764336f8b78a2106e57c55f02f36d)
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/i386/pc.h | 6 ++++++
+ target-i386/cpu.c    | 2 +-
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index c86c826..fa08528 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -893,9 +893,15 @@ extern void igd_passthrough_isa_bridge_create(PCIBus *bus, uint16_t gpu_dev_id);
+             .driver   = "qemu64" "-" TYPE_X86_CPU,\
+             .property = "sse4a",\
+             .value    = "on",\
++        },\
++        { /* PC_RHEL7_2_COMPAT */ \
++            .driver   = "qemu64" "-" TYPE_X86_CPU,\
++            .property = "abm",\
++            .value    = "on",\
+         },
+ 
+ 
++
+ #define PC_RHEL7_1_COMPAT \
+         PC_RHEL7_2_COMPAT \
+         HW_COMPAT_RHEL7_1 \
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 6bcbf9b..894387a 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -708,7 +708,7 @@ static X86CPUDefinition builtin_x86_defs[] = {
+              CPUID_EXT2_PGE | CPUID_EXT2_SYSCALL | CPUID_EXT2_APIC |
+              CPUID_EXT2_CX8 | CPUID_EXT2_MCE | CPUID_EXT2_PAE | CPUID_EXT2_MSR | CPUID_EXT2_TSC |
+              CPUID_EXT2_PSE | CPUID_EXT2_DE | CPUID_EXT2_FPU,
+-        .features[FEAT_8000_0001_ECX] = CPUID_EXT3_ABM |
++        .features[FEAT_8000_0001_ECX] =
+              CPUID_EXT3_SVM | CPUID_EXT3_LAHF_LM,
+         .xlevel = 0x8000000A,
+     },
+-- 
+1.8.3.1
+

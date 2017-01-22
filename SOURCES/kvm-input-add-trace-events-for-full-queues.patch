@@ -1,0 +1,96 @@
+From a5bf3756b35f9c7de26f12d82006a2d8a3fd83b6 Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Fri, 12 Aug 2016 07:01:47 +0200
+Subject: [PATCH 15/17] input: add trace events for full queues
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1470985307-30017-2-git-send-email-thuth@redhat.com>
+Patchwork-id: 71955
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/1] input: add trace events for full queues
+Bugzilla: 1366471
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+
+From: Gerd Hoffmann <kraxel@redhat.com>
+
+It isn't unusual to happen, for example during reboot when the guest
+doesn't reveice events for a while.  So better don't flood stderr
+with alarming messages.  Turn them into tracepoints instead so they
+can be enabled in case they are needed for trouble-shooting.
+
+Signed-off-by: Gerd Hoffmann <kraxel@redhat.com>
+Message-id: 1466675495-28797-1-git-send-email-kraxel@redhat.com
+(cherry picked from commit c80276b4206d534daaaf87305df5805db1b8db02)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	hw/input/trace-events
+	File does not exists in downstream, so the hunk has been
+	applied to the global trace-events file instead
+---
+ hw/input/hid.c          | 3 ++-
+ hw/input/virtio-input.c | 3 ++-
+ trace-events            | 6 ++++++
+ 3 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/hw/input/hid.c b/hw/input/hid.c
+index d92c746..5e2850e 100644
+--- a/hw/input/hid.c
++++ b/hw/input/hid.c
+@@ -27,6 +27,7 @@
+ #include "ui/console.h"
+ #include "qemu/timer.h"
+ #include "hw/input/hid.h"
++#include "trace.h"
+ 
+ #define HID_USAGE_ERROR_ROLLOVER        0x01
+ #define HID_USAGE_POSTFAIL              0x02
+@@ -234,7 +235,7 @@ static void hid_keyboard_event(DeviceState *dev, QemuConsole *src,
+                                              key->down,
+                                              scancodes);
+     if (hs->n + count > QUEUE_LENGTH) {
+-        fprintf(stderr, "usb-kbd: warning: key event queue full\n");
++        trace_hid_kbd_queue_full();
+         return;
+     }
+     for (i = 0; i < count; i++) {
+diff --git a/hw/input/virtio-input.c b/hw/input/virtio-input.c
+index f59749a..edf6990 100644
+--- a/hw/input/virtio-input.c
++++ b/hw/input/virtio-input.c
+@@ -7,6 +7,7 @@
+ #include "qemu/osdep.h"
+ #include "qapi/error.h"
+ #include "qemu/iov.h"
++#include "trace.h"
+ 
+ #include "hw/qdev.h"
+ #include "hw/virtio/virtio.h"
+@@ -47,7 +48,7 @@ void virtio_input_send(VirtIOInput *vinput, virtio_input_event *event)
+     virtqueue_get_avail_bytes(vinput->evt, &have, NULL, need, 0);
+     if (have < need) {
+         vinput->qindex = 0;
+-        fprintf(stderr, "%s: ENOSPC in vq, dropping events\n", __func__);
++        trace_virtio_input_queue_full();
+         return;
+     }
+ 
+diff --git a/trace-events b/trace-events
+index 6c45297..e002e51 100644
+--- a/trace-events
++++ b/trace-events
+@@ -2150,3 +2150,9 @@ e1000e_cfg_support_virtio(bool support) "Virtio header supported: %d"
+ 
+ e1000e_vm_state_running(void) "VM state is running"
+ e1000e_vm_state_stopped(void) "VM state is stopped"
++
++# hw/input/hid.c
++hid_kbd_queue_full(void) "queue full"
++
++# hw/input/virtio
++virtio_input_queue_full(void) "queue full"
+-- 
+1.8.3.1
+

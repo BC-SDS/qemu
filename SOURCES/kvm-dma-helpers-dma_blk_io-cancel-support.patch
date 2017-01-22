@@ -1,0 +1,73 @@
+From 32acd3a57286deef49613452cef4b990b88a8750 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Wed, 29 Jun 2016 13:01:58 +0200
+Subject: [PATCH 33/33] dma-helpers: dma_blk_io() cancel support
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1467205318-14008-2-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70828
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 1/1] dma-helpers: dma_blk_io() cancel support
+Bugzilla: 1346237
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: John Snow <jsnow@redhat.com>
+
+Attempting to cancel a dma_blk_io() request causes an abort(3):
+
+  void bdrv_aio_cancel(BlockAIOCB *acb)
+  {
+      ...
+      while (acb->refcnt > 1) {
+          if (acb->aiocb_info->get_aio_context) {
+              aio_poll(acb->aiocb_info->get_aio_context(acb), true);
+          } else if (acb->bs) {
+              aio_poll(bdrv_get_aio_context(acb->bs), true);
+          } else {
+              abort();
+          }
+      }
+      ...
+  }
+
+This happens because DMAAIOCB->bs is NULL and
+dma_aiocb_info.get_aio_context() is also NULL.
+
+This patch trivially implements dma_aiocb_info.get_aio_context() by
+fetching the DMAAIOCB->ctx field.
+
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Message-id: 1466451417-27988-1-git-send-email-stefanha@redhat.com
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+(cherry picked from commit 5fa78b2a1ca228255cb4a492ebf16cbb8d80c111)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ dma-helpers.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/dma-helpers.c b/dma-helpers.c
+index 000620e..dc4832f 100644
+--- a/dma-helpers.c
++++ b/dma-helpers.c
+@@ -186,10 +186,17 @@ static void dma_aio_cancel(BlockAIOCB *acb)
+     }
+ }
+ 
++static AioContext *dma_get_aio_context(BlockAIOCB *acb)
++{
++    DMAAIOCB *dbs = container_of(acb, DMAAIOCB, common);
++
++    return dbs->ctx;
++}
+ 
+ static const AIOCBInfo dma_aiocb_info = {
+     .aiocb_size         = sizeof(DMAAIOCB),
+     .cancel_async       = dma_aio_cancel,
++    .get_aio_context    = dma_get_aio_context,
+ };
+ 
+ BlockAIOCB *dma_blk_io(AioContext *ctx,
+-- 
+1.8.3.1
+

@@ -1,0 +1,252 @@
+From eca64aee65e32ed710af1185cefda038f599c86c Mon Sep 17 00:00:00 2001
+From: Marcel Apfelbaum <marcel@redhat.com>
+Date: Wed, 3 Aug 2016 08:36:43 +0200
+Subject: [PATCH 94/99] hw/virtio-pci: fix virtio behaviour
+
+RH-Author: Marcel Apfelbaum <marcel@redhat.com>
+Message-id: <1470213403-20506-3-git-send-email-marcel@redhat.com>
+Patchwork-id: 71803
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH V2 2/2] hw/virtio-pci: fix virtio behaviour
+Bugzilla: 1360664
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+Enable transitional virtio devices by default.
+Enable virtio-1.0 for devices plugged into
+PCIe ports (Root ports or Downstream ports).
+
+Using the virtio-1 mode will remove the limitation
+of the number of devices that can be attached to a machine
+by removing the need for the IO BAR.
+
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Reviewed-by: Cornelia Huck <cornelia.huck@de.ibm.com>
+(cherry picked from commit 9a4c0e220d8a4f82b5665d0ee95ef94d8e1509d5)
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+
+ Conflicts:
+     hw/virtio/virtio-pci.c
+     - minor extra line because of missing
+       'virtio-pci: convert to ioeventfd callbacks' patch
+     include/hw/compat.h
+     - Do not add HW_COMPAT_2_6
+     - Added RHEL 7.2 compat corresponding properties
+
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/display/virtio-gpu-pci.c |  4 +---
+ hw/display/virtio-vga.c     |  4 +---
+ hw/virtio/virtio-pci.c      | 34 ++++++++++++++++++----------------
+ hw/virtio/virtio-pci.h      | 21 +++++++++++++++++----
+ include/hw/compat.h         |  8 ++++++++
+ 5 files changed, 45 insertions(+), 26 deletions(-)
+
+diff --git a/hw/display/virtio-gpu-pci.c b/hw/display/virtio-gpu-pci.c
+index a71b230..34a724c 100644
+--- a/hw/display/virtio-gpu-pci.c
++++ b/hw/display/virtio-gpu-pci.c
+@@ -30,9 +30,7 @@ static void virtio_gpu_pci_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
+     int i;
+ 
+     qdev_set_parent_bus(vdev, BUS(&vpci_dev->bus));
+-    /* force virtio-1.0 */
+-    vpci_dev->flags &= ~VIRTIO_PCI_FLAG_DISABLE_MODERN;
+-    vpci_dev->flags |= VIRTIO_PCI_FLAG_DISABLE_LEGACY;
++    virtio_pci_force_virtio_1(vpci_dev);
+     object_property_set_bool(OBJECT(vdev), true, "realized", errp);
+ 
+     for (i = 0; i < g->conf.max_outputs; i++) {
+diff --git a/hw/display/virtio-vga.c b/hw/display/virtio-vga.c
+index f49f8de..8b3f46f 100644
+--- a/hw/display/virtio-vga.c
++++ b/hw/display/virtio-vga.c
+@@ -123,9 +123,7 @@ static void virtio_vga_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
+ 
+     /* init virtio bits */
+     qdev_set_parent_bus(DEVICE(g), BUS(&vpci_dev->bus));
+-    /* force virtio-1.0 */
+-    vpci_dev->flags &= ~VIRTIO_PCI_FLAG_DISABLE_MODERN;
+-    vpci_dev->flags |= VIRTIO_PCI_FLAG_DISABLE_LEGACY;
++    virtio_pci_force_virtio_1(vpci_dev);
+     object_property_set_bool(OBJECT(g), true, "realized", &err);
+     if (err) {
+         error_propagate(errp, err);
+diff --git a/hw/virtio/virtio-pci.c b/hw/virtio/virtio-pci.c
+index 5fb8655..dad2dc7 100644
+--- a/hw/virtio/virtio-pci.c
++++ b/hw/virtio/virtio-pci.c
+@@ -161,7 +161,7 @@ static bool virtio_pci_modern_state_needed(void *opaque)
+ {
+     VirtIOPCIProxy *proxy = opaque;
+ 
+-    return !(proxy->flags & VIRTIO_PCI_FLAG_DISABLE_MODERN);
++    return virtio_pci_modern(proxy);
+ }
+ 
+ static const VMStateDescription vmstate_virtio_pci_modern_state = {
+@@ -270,8 +270,8 @@ static int virtio_pci_set_host_notifier_internal(VirtIOPCIProxy *proxy,
+     VirtIODevice *vdev = virtio_bus_get_device(&proxy->bus);
+     VirtQueue *vq = virtio_get_queue(vdev, n);
+     EventNotifier *notifier = virtio_queue_get_host_notifier(vq);
+-    bool legacy = !(proxy->flags & VIRTIO_PCI_FLAG_DISABLE_LEGACY);
+-    bool modern = !(proxy->flags & VIRTIO_PCI_FLAG_DISABLE_MODERN);
++    bool legacy = virtio_pci_legacy(proxy);
++    bool modern = virtio_pci_modern(proxy);
+     bool fast_mmio = kvm_ioeventfd_any_length_enabled();
+     bool modern_pio = proxy->flags & VIRTIO_PCI_FLAG_MODERN_PIO_NOTIFY;
+     MemoryRegion *modern_mr = &proxy->notify.mr;
+@@ -1624,8 +1624,8 @@ static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
+ {
+     VirtIOPCIProxy *proxy = VIRTIO_PCI(d);
+     VirtioBusState *bus = &proxy->bus;
+-    bool legacy = !(proxy->flags & VIRTIO_PCI_FLAG_DISABLE_LEGACY);
+-    bool modern = !(proxy->flags & VIRTIO_PCI_FLAG_DISABLE_MODERN);
++    bool legacy = virtio_pci_legacy(proxy);
++    bool modern = virtio_pci_modern(proxy);
+     bool modern_pio = proxy->flags & VIRTIO_PCI_FLAG_MODERN_PIO_NOTIFY;
+     uint8_t *config;
+     uint32_t size;
+@@ -1744,7 +1744,7 @@ static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
+ static void virtio_pci_device_unplugged(DeviceState *d)
+ {
+     VirtIOPCIProxy *proxy = VIRTIO_PCI(d);
+-    bool modern = !(proxy->flags & VIRTIO_PCI_FLAG_DISABLE_MODERN);
++    bool modern = virtio_pci_modern(proxy);
+     bool modern_pio = proxy->flags & VIRTIO_PCI_FLAG_MODERN_PIO_NOTIFY;
+ 
+     virtio_pci_stop_ioeventfd(proxy);
+@@ -1764,6 +1764,8 @@ static void virtio_pci_realize(PCIDevice *pci_dev, Error **errp)
+ {
+     VirtIOPCIProxy *proxy = VIRTIO_PCI(pci_dev);
+     VirtioPCIClass *k = VIRTIO_PCI_GET_CLASS(pci_dev);
++    bool pcie_port = pci_bus_is_express(pci_dev->bus) &&
++                     !pci_bus_is_root(pci_dev->bus);
+ 
+     /*
+      * virtio pci bar layout used by default.
+@@ -1814,8 +1816,11 @@ static void virtio_pci_realize(PCIDevice *pci_dev, Error **errp)
+ 
+     address_space_init(&proxy->modern_as, &proxy->modern_cfg, "virtio-pci-cfg-as");
+ 
+-    if (pci_is_express(pci_dev) && pci_bus_is_express(pci_dev->bus) &&
+-        !pci_bus_is_root(pci_dev->bus)) {
++    if (proxy->disable_legacy == ON_OFF_AUTO_AUTO) {
++        proxy->disable_legacy = pcie_port ? ON_OFF_AUTO_ON : ON_OFF_AUTO_OFF;
++    }
++
++    if (pcie_port && pci_is_express(pci_dev)) {
+         int pos;
+ 
+         pos = pcie_endpoint_cap_init(pci_dev, 0);
+@@ -1869,10 +1874,9 @@ static void virtio_pci_reset(DeviceState *qdev)
+ static Property virtio_pci_properties[] = {
+     DEFINE_PROP_BIT("virtio-pci-bus-master-bug-migration", VirtIOPCIProxy, flags,
+                     VIRTIO_PCI_FLAG_BUS_MASTER_BUG_MIGRATION_BIT, false),
+-    DEFINE_PROP_BIT("disable-legacy", VirtIOPCIProxy, flags,
+-                    VIRTIO_PCI_FLAG_DISABLE_LEGACY_BIT, false),
+-    DEFINE_PROP_BIT("disable-modern", VirtIOPCIProxy, flags,
+-                    VIRTIO_PCI_FLAG_DISABLE_MODERN_BIT, true),
++    DEFINE_PROP_ON_OFF_AUTO("disable-legacy", VirtIOPCIProxy, disable_legacy,
++                            ON_OFF_AUTO_AUTO),
++    DEFINE_PROP_BOOL("disable-modern", VirtIOPCIProxy, disable_modern, false),
+     DEFINE_PROP_BIT("migrate-extra", VirtIOPCIProxy, flags,
+                     VIRTIO_PCI_FLAG_MIGRATE_EXTRA_BIT, true),
+     DEFINE_PROP_BIT("modern-pio-notify", VirtIOPCIProxy, flags,
+@@ -1889,7 +1893,7 @@ static void virtio_pci_dc_realize(DeviceState *qdev, Error **errp)
+     PCIDevice *pci_dev = &proxy->pci_dev;
+ 
+     if (!(proxy->flags & VIRTIO_PCI_FLAG_DISABLE_PCIE) &&
+-        !(proxy->flags & VIRTIO_PCI_FLAG_DISABLE_MODERN)) {
++        virtio_pci_modern(proxy)) {
+         pci_dev->cap_present |= QEMU_PCI_CAP_EXPRESS;
+     }
+ 
+@@ -2351,9 +2355,7 @@ static void virtio_input_pci_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
+     DeviceState *vdev = DEVICE(&vinput->vdev);
+ 
+     qdev_set_parent_bus(vdev, BUS(&vpci_dev->bus));
+-    /* force virtio-1.0 */
+-    vpci_dev->flags &= ~VIRTIO_PCI_FLAG_DISABLE_MODERN;
+-    vpci_dev->flags |= VIRTIO_PCI_FLAG_DISABLE_LEGACY;
++    virtio_pci_force_virtio_1(vpci_dev);
+     object_property_set_bool(OBJECT(vdev), true, "realized", errp);
+ }
+ 
+diff --git a/hw/virtio/virtio-pci.h b/hw/virtio/virtio-pci.h
+index e4548c2..25fbf8a 100644
+--- a/hw/virtio/virtio-pci.h
++++ b/hw/virtio/virtio-pci.h
+@@ -61,8 +61,6 @@ typedef struct VirtioBusClass VirtioPCIBusClass;
+ enum {
+     VIRTIO_PCI_FLAG_BUS_MASTER_BUG_MIGRATION_BIT,
+     VIRTIO_PCI_FLAG_USE_IOEVENTFD_BIT,
+-    VIRTIO_PCI_FLAG_DISABLE_LEGACY_BIT,
+-    VIRTIO_PCI_FLAG_DISABLE_MODERN_BIT,
+     VIRTIO_PCI_FLAG_MIGRATE_EXTRA_BIT,
+     VIRTIO_PCI_FLAG_MODERN_PIO_NOTIFY_BIT,
+     VIRTIO_PCI_FLAG_DISABLE_PCIE_BIT,
+@@ -77,8 +75,6 @@ enum {
+ #define VIRTIO_PCI_FLAG_USE_IOEVENTFD   (1 << VIRTIO_PCI_FLAG_USE_IOEVENTFD_BIT)
+ 
+ /* virtio version flags */
+-#define VIRTIO_PCI_FLAG_DISABLE_LEGACY (1 << VIRTIO_PCI_FLAG_DISABLE_LEGACY_BIT)
+-#define VIRTIO_PCI_FLAG_DISABLE_MODERN (1 << VIRTIO_PCI_FLAG_DISABLE_MODERN_BIT)
+ #define VIRTIO_PCI_FLAG_DISABLE_PCIE (1 << VIRTIO_PCI_FLAG_DISABLE_PCIE_BIT)
+ 
+ /* migrate extra state */
+@@ -144,6 +140,8 @@ struct VirtIOPCIProxy {
+     uint32_t modern_mem_bar;
+     int config_cap;
+     uint32_t flags;
++    bool disable_modern;
++    OnOffAuto disable_legacy;
+     uint32_t class_code;
+     uint32_t nvectors;
+     uint32_t dfselect;
+@@ -158,6 +156,21 @@ struct VirtIOPCIProxy {
+     VirtioBusState bus;
+ };
+ 
++static inline bool virtio_pci_modern(VirtIOPCIProxy *proxy)
++{
++    return !proxy->disable_modern;
++}
++
++static inline bool virtio_pci_legacy(VirtIOPCIProxy *proxy)
++{
++    return proxy->disable_legacy == ON_OFF_AUTO_OFF;
++}
++
++static inline void virtio_pci_force_virtio_1(VirtIOPCIProxy *proxy)
++{
++    proxy->disable_modern = false;
++    proxy->disable_legacy = ON_OFF_AUTO_ON;
++}
+ 
+ /*
+  * virtio-scsi-pci: This extends VirtioPCIProxy.
+diff --git a/include/hw/compat.h b/include/hw/compat.h
+index 13b4b20..c2089e4 100644
+--- a/include/hw/compat.h
++++ b/include/hw/compat.h
+@@ -192,5 +192,13 @@
+             .driver   = "isa-fdc",\
+             .property = "fallback",\
+             .value    = "144",\
++        },{ /* HW_COMPAT_RHEL7_2 */ \
++            .driver   = "virtio-pci",\
++            .property = "disable-modern",\
++            .value    = "on",\
++        },{ /* HW_COMPAT_RHEL7_2 */ \
++            .driver   = "virtio-pci",\
++            .property = "disable-legacy",\
++            .value    = "off",\
+         },
+ #endif /* HW_COMPAT_H */
+-- 
+1.8.3.1
+

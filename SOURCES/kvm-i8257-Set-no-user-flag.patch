@@ -1,0 +1,44 @@
+From 2158ca15b63452359912c5504703be1b9131cd55 Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Fri, 29 Jul 2016 17:54:55 +0200
+Subject: [PATCH 27/35] i8257: Set no-user flag
+
+RH-Author: Miroslav Rezanina <mrezanin@redhat.com>
+Message-id: <1469814895-12602-1-git-send-email-mrezanin@redhat.com>
+Patchwork-id: 71526
+O-Subject: [RHEV-7 qemu-kvm-rhev PATCH] i8257: Set no-user flag
+Bugzilla: 1337457
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: John Snow <jsnow@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+
+From: Miroslav Rezanina <mrezanin@redhat.com>
+
+We don't want users to add additional ISA DMA controllers. Adding
+no-user flag to prevent this.
+
+Note: This change should be probably done upstream too. However,
+this will probably take some time to discuss it. As we are close to
+beta release we can't wait for committing upstream.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/dma/i8257.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/hw/dma/i8257.c b/hw/dma/i8257.c
+index f345c54..4b9ed59 100644
+--- a/hw/dma/i8257.c
++++ b/hw/dma/i8257.c
+@@ -589,6 +589,8 @@ static void i8257_class_init(ObjectClass *klass, void *data)
+     dc->reset = i8257_reset;
+     dc->vmsd = &vmstate_i8257;
+     dc->props = i8257_properties;
++    /* Disabled for Red Hat Enterprise Linux: */
++    dc->cannot_instantiate_with_device_add_yet = true;
+ 
+     idc->get_transfer_mode = i8257_dma_get_transfer_mode;
+     idc->has_autoinitialization = i8257_dma_has_autoinitialization;
+-- 
+1.8.3.1
+

@@ -1,0 +1,53 @@
+From 99caa7ad6cb7d3fbbf394ce012683db48d5ec576 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Wed, 3 Aug 2016 07:13:41 +0200
+Subject: [PATCH 92/99] spapr: Prevent boot CPU core removal
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1470208421-7353-6-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71792
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCHv2 5/5] spapr: Prevent boot CPU core removal
+Bugzilla: 1361443
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+Boot CPU is assumed to be always present in QEMU code. So
+until that assumptions are gone, deny removal request.
+In another words, QEMU won't support boot CPU core hot-unplug.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+[dwg: Tweaked error message for clarity]
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+
+(cherry picked from commit 62be8b044adf47327ebefdefb25f28a40316ebd0)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1361443
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_cpu_core.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index 9f37b07..cd06b66 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -133,6 +133,11 @@ void spapr_core_unplug(HotplugHandler *hotplug_dev, DeviceState *dev,
+     sPAPRDRConnectorClass *drck;
+     Error *local_err = NULL;
+ 
++    if (index == 0) {
++        error_setg(errp, "Boot CPU core may not be unplugged");
++        return;
++    }
++
+     g_assert(drc);
+ 
+     drck = SPAPR_DR_CONNECTOR_GET_CLASS(drc);
+-- 
+1.8.3.1
+

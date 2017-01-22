@@ -1,0 +1,124 @@
+From 2f2f1ff2f6aaf30e8da1122dedd685756fada456 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:12 +0200
+Subject: [PATCH 72/99] (kvm)apic: Add unrealize callbacks
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-68-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71683
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 67/78] (kvm)apic: Add unrealize callbacks
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Callbacks will do necessary cleanups before APIC device is deleted
+
+Signed-off-by: Chen Fan <chen.fan.fnst@cn.fujitsu.com>
+Signed-off-by: Gu Zheng <guz.fnst@cn.fujitsu.com>
+Signed-off-by: Zhu Guihua <zhugh.fnst@cn.fujitsu.com>
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 9c156f9de52b75510d3951dfede2cf96773b6626)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/kvm/apic.c              |  5 +++++
+ hw/intc/apic.c                  | 10 ++++++++++
+ hw/intc/apic_common.c           | 13 +++++++++++++
+ include/hw/i386/apic_internal.h |  1 +
+ 4 files changed, 29 insertions(+)
+
+diff --git a/hw/i386/kvm/apic.c b/hw/i386/kvm/apic.c
+index f74220e..fd2bed6 100644
+--- a/hw/i386/kvm/apic.c
++++ b/hw/i386/kvm/apic.c
+@@ -190,11 +190,16 @@ static void kvm_apic_realize(DeviceState *dev, Error **errp)
+     }
+ }
+ 
++static void kvm_apic_unrealize(DeviceState *dev, Error **errp)
++{
++}
++
+ static void kvm_apic_class_init(ObjectClass *klass, void *data)
+ {
+     APICCommonClass *k = APIC_COMMON_CLASS(klass);
+ 
+     k->realize = kvm_apic_realize;
++    k->unrealize = kvm_apic_unrealize;
+     k->reset = kvm_apic_reset;
+     k->set_base = kvm_apic_set_base;
+     k->set_tpr = kvm_apic_set_tpr;
+diff --git a/hw/intc/apic.c b/hw/intc/apic.c
+index 8005c2b..fc2825b 100644
+--- a/hw/intc/apic.c
++++ b/hw/intc/apic.c
+@@ -885,11 +885,21 @@ static void apic_realize(DeviceState *dev, Error **errp)
+     msi_nonbroken = true;
+ }
+ 
++static void apic_unrealize(DeviceState *dev, Error **errp)
++{
++    APICCommonState *s = APIC_COMMON(dev);
++
++    timer_del(s->timer);
++    timer_free(s->timer);
++    local_apics[s->id] = NULL;
++}
++
+ static void apic_class_init(ObjectClass *klass, void *data)
+ {
+     APICCommonClass *k = APIC_COMMON_CLASS(klass);
+ 
+     k->realize = apic_realize;
++    k->unrealize = apic_unrealize;
+     k->set_base = apic_set_base;
+     k->set_tpr = apic_set_tpr;
+     k->get_tpr = apic_get_tpr;
+diff --git a/hw/intc/apic_common.c b/hw/intc/apic_common.c
+index fb556cb..2038f1c 100644
+--- a/hw/intc/apic_common.c
++++ b/hw/intc/apic_common.c
+@@ -313,6 +313,18 @@ static void apic_common_realize(DeviceState *dev, Error **errp)
+ 
+ }
+ 
++static void apic_common_unrealize(DeviceState *dev, Error **errp)
++{
++    APICCommonState *s = APIC_COMMON(dev);
++    APICCommonClass *info = APIC_COMMON_GET_CLASS(s);
++
++    info->unrealize(dev, errp);
++
++    if (apic_report_tpr_access && info->enable_tpr_reporting) {
++        info->enable_tpr_reporting(s, false);
++    }
++}
++
+ static int apic_pre_load(void *opaque)
+ {
+     APICCommonState *s = APIC_COMMON(opaque);
+@@ -419,6 +431,7 @@ static void apic_common_class_init(ObjectClass *klass, void *data)
+     dc->reset = apic_reset_common;
+     dc->props = apic_properties_common;
+     dc->realize = apic_common_realize;
++    dc->unrealize = apic_common_unrealize;
+     /*
+      * Reason: APIC and CPU need to be wired up by
+      * x86_cpu_apic_create()
+diff --git a/include/hw/i386/apic_internal.h b/include/hw/i386/apic_internal.h
+index e5d1550..52ca45d 100644
+--- a/include/hw/i386/apic_internal.h
++++ b/include/hw/i386/apic_internal.h
+@@ -135,6 +135,7 @@ typedef struct APICCommonClass
+     DeviceClass parent_class;
+ 
+     DeviceRealize realize;
++    DeviceUnrealize unrealize;
+     void (*set_base)(APICCommonState *s, uint64_t val);
+     void (*set_tpr)(APICCommonState *s, uint8_t val);
+     uint8_t (*get_tpr)(APICCommonState *s);
+-- 
+1.8.3.1
+

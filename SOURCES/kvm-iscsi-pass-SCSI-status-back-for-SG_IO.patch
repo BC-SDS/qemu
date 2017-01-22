@@ -1,0 +1,39 @@
+From f058ece341272ff08ebef87150cd6d3753e40e54 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Tue, 31 May 2016 14:45:40 +0200
+Subject: [PATCH 11/24] iscsi: pass SCSI status back for SG_IO
+
+RH-Author: Paolo Bonzini <pbonzini@redhat.com>
+Message-id: <1464705946-20914-2-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 70504
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 1/7] iscsi: pass SCSI status back for SG_IO
+Bugzilla: 1338043
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+
+From: Vadim Rozenfeld <vrozenfe@redhat.com>
+
+Signed-off-by: Vadim Rozenfeld <vrozenfe@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit 644c6869d335e10bc10b8399646f767763c4977f)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ block/iscsi.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/block/iscsi.c b/block/iscsi.c
+index 302baf8..1d470e2 100644
+--- a/block/iscsi.c
++++ b/block/iscsi.c
+@@ -766,6 +766,7 @@ iscsi_aio_ioctl_cb(struct iscsi_context *iscsi, int status,
+     acb->ioh->driver_status = 0;
+     acb->ioh->host_status   = 0;
+     acb->ioh->resid         = 0;
++    acb->ioh->status        = status;
+ 
+ #define SG_ERR_DRIVER_SENSE    0x08
+ 
+-- 
+1.8.3.1
+

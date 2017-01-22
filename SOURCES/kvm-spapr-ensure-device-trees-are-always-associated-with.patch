@@ -1,0 +1,96 @@
+From 40113c22a29c3c9d1f36fc43a3250c54b036eee7 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:18 +0200
+Subject: [PATCH 11/27] spapr: ensure device trees are always associated with
+ DRC
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-12-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71098
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 11/16] spapr: ensure device trees are always associated with DRC
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Jianjun Duan <duanj@linux.vnet.ibm.com>
+
+There are possible racing situations involving hotplug events and
+guest migration. For cases where a hotplug event is migrated, or
+the guest is in the process of fetching device tree at the time of
+migration, we need to ensure the device tree is created and
+associated with the corresponding DRC for devices that were
+hotplugged on the source, but 'coldplugged' on the target.
+
+Signed-off-by: Jianjun Duan <duanj@linux.vnet.ibm.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 5dd5238c0b5cc42d347128227f124fe31b05832d)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr.c     | 16 ++++++----------
+ hw/ppc/spapr_pci.c | 12 +++++-------
+ 2 files changed, 11 insertions(+), 17 deletions(-)
+
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index 0c69882..328b347 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -2131,15 +2131,6 @@ static void spapr_add_lmbs(DeviceState *dev, uint64_t addr, uint64_t size,
+     int i, fdt_offset, fdt_size;
+     void *fdt;
+ 
+-    /*
+-     * Check for DRC connectors and send hotplug notification to the
+-     * guest only in case of hotplugged memory. This allows cold plugged
+-     * memory to be specified at boot time.
+-     */
+-    if (!dev->hotplugged) {
+-        return;
+-    }
+-
+     for (i = 0; i < nr_lmbs; i++) {
+         drc = spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_LMB,
+                 addr/SPAPR_MEMORY_BLOCK_SIZE);
+@@ -2153,7 +2144,12 @@ static void spapr_add_lmbs(DeviceState *dev, uint64_t addr, uint64_t size,
+         drck->attach(drc, dev, fdt, fdt_offset, !dev->hotplugged, errp);
+         addr += SPAPR_MEMORY_BLOCK_SIZE;
+     }
+-    spapr_hotplug_req_add_by_count(SPAPR_DR_CONNECTOR_TYPE_LMB, nr_lmbs);
++    /* send hotplug notification to the
++     * guest only in case of hotplugged memory
++     */
++    if (dev->hotplugged) {
++       spapr_hotplug_req_add_by_count(SPAPR_DR_CONNECTOR_TYPE_LMB, nr_lmbs);
++    }
+ }
+ 
+ static void spapr_memory_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+diff --git a/hw/ppc/spapr_pci.c b/hw/ppc/spapr_pci.c
+index e4d2015..4a79ffe 100644
+--- a/hw/ppc/spapr_pci.c
++++ b/hw/ppc/spapr_pci.c
+@@ -1092,13 +1092,11 @@ static void spapr_phb_add_pci_device(sPAPRDRConnector *drc,
+         spapr_tce_set_need_vfio(tcet, true);
+     }
+ 
+-    if (dev->hotplugged) {
+-        fdt = create_device_tree(&fdt_size);
+-        fdt_start_offset = spapr_create_pci_child_dt(phb, pdev, fdt, 0);
+-        if (!fdt_start_offset) {
+-            error_setg(errp, "Failed to create pci child device tree node");
+-            goto out;
+-        }
++    fdt = create_device_tree(&fdt_size);
++    fdt_start_offset = spapr_create_pci_child_dt(phb, pdev, fdt, 0);
++    if (!fdt_start_offset) {
++        error_setg(errp, "Failed to create pci child device tree node");
++        goto out;
+     }
+ 
+     drck->attach(drc, DEVICE(pdev),
+-- 
+1.8.3.1
+

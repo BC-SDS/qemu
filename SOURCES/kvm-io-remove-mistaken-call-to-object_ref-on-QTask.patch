@@ -1,0 +1,59 @@
+From 33b7649429c763028f15a2f208ff2944362481a4 Mon Sep 17 00:00:00 2001
+From: "Daniel P. Berrange" <berrange@redhat.com>
+Date: Wed, 14 Sep 2016 10:54:27 +0200
+Subject: [PATCH 10/18] io: remove mistaken call to object_ref on QTask
+
+RH-Author: Daniel P. Berrange <berrange@redhat.com>
+Message-id: <1473850467-30763-1-git-send-email-berrange@redhat.com>
+Patchwork-id: 72315
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH] io: remove mistaken call to object_ref on QTask
+Bugzilla: 1375677
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Eric Blake <eblake@redhat.com>
+
+The QTask struct is just a standalone struct, not a QOM Object,
+so calling object_ref() on it is not appropriate. This results
+in mangling the 'destroy' field in the QTask struct, causing
+the later call to qtask_free() to try to call the function
+at address 0x1, with predictably segfault happy results.
+
+There is in fact no need for ref counting with QTask, as the
+call to qtask_abort() or qtask_complete() will automatically
+free associated memory.
+
+This fixes the crash shown in
+
+  https://bugs.launchpad.net/qemu/+bug/1589923
+
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Signed-off-by: Daniel P. Berrange <berrange@redhat.com>
+(cherry picked from commit bc35d51077b33e68a0ab10a057f352747214223f)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ io/channel-websock.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/io/channel-websock.c b/io/channel-websock.c
+index 7081787..d5a4ed3 100644
+--- a/io/channel-websock.c
++++ b/io/channel-websock.c
+@@ -316,14 +316,13 @@ static gboolean qio_channel_websock_handshake_io(QIOChannel *ioc,
+         return TRUE;
+     }
+ 
+-    object_ref(OBJECT(task));
+     trace_qio_channel_websock_handshake_reply(ioc);
+     qio_channel_add_watch(
+         wioc->master,
+         G_IO_OUT,
+         qio_channel_websock_handshake_send,
+         task,
+-        (GDestroyNotify)object_unref);
++        NULL);
+     return FALSE;
+ }
+ 
+-- 
+1.8.3.1
+

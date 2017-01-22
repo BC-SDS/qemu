@@ -1,0 +1,95 @@
+From 2007b6057d11fc91074987021a66129851fc71d9 Mon Sep 17 00:00:00 2001
+From: John Snow <jsnow@redhat.com>
+Date: Mon, 19 Sep 2016 18:16:10 +0200
+Subject: [PATCH 17/18] block: reintroduce bdrv_flush_all
+
+RH-Author: John Snow <jsnow@redhat.com>
+Message-id: <1474308971-28285-2-git-send-email-jsnow@redhat.com>
+Patchwork-id: 72379
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 1/2] block: reintroduce bdrv_flush_all
+Bugzilla: 1338638
+RH-Acked-by: Max Reitz <mreitz@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Kevin Wolf <kwolf@redhat.com>
+
+Commit fe1a9cbc moved the flush_all routine from the bdrv layer to the
+block-backend layer. In doing so, however, the semantics of the routine
+changed slightly such that flush_all now used blk_flush instead of
+bdrv_flush.
+
+blk_flush can fail if the attached device model reports that it is not
+"available," (i.e. the tray is open.) This changed the semantics of
+flush_all such that it can now fail for e.g. open CDROM drives.
+
+Reintroduce bdrv_flush_all to regain the old semantics without having to
+alter the behavior of blk_flush or blk_flush_all, which are already
+'doing the right thing.'
+
+Signed-off-by: John Snow <jsnow@redhat.com>
+Reviewed-by: Kevin Wolf <kwolf@redhat.com>
+(cherry picked from commit bfb91daf47982137d9dffe16658fbec3407c3fef)
+Signed-off-by: John Snow <jsnow@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+ qemu-kvm-rhev did not backport the conversion of bdrv_next to use
+ an iterator, so the bdrv_flush_all implementation here differs.
+
+Signed-off-by: John Snow <jsnow@redhat.com>
+
+Note: Commit hash can be incorrect due early commit (due to deadline)
+---
+ block/io.c            | 24 ++++++++++++++++++++++++
+ include/block/block.h |  1 +
+ 2 files changed, 25 insertions(+)
+
+diff --git a/block/io.c b/block/io.c
+index 83c4367..852f360 100644
+--- a/block/io.c
++++ b/block/io.c
+@@ -1481,6 +1481,30 @@ int coroutine_fn bdrv_co_write_zeroes(BlockDriverState *bs,
+                              BDRV_REQ_ZERO_WRITE | flags);
+ }
+ 
++/*
++ * Flush ALL BDSes regardless of if they are reachable via a BlkBackend or not.
++ */
++int bdrv_flush_all(void)
++{
++    BlockDriverState *bs = NULL;
++    int result = 0;
++
++    while ((bs = bdrv_next(bs))) {
++        AioContext *aio_context = bdrv_get_aio_context(bs);
++        int ret;
++
++        aio_context_acquire(aio_context);
++        ret = bdrv_flush(bs);
++        if (ret < 0 && !result) {
++            result = ret;
++        }
++        aio_context_release(aio_context);
++   }
++
++    return result;
++}
++
++
+ typedef struct BdrvCoGetBlockStatusData {
+     BlockDriverState *bs;
+     BlockDriverState *base;
+diff --git a/include/block/block.h b/include/block/block.h
+index 3a73137..a4e1833 100644
+--- a/include/block/block.h
++++ b/include/block/block.h
+@@ -370,6 +370,7 @@ int bdrv_inactivate_all(void);
+ /* Ensure contents are flushed to disk.  */
+ int bdrv_flush(BlockDriverState *bs);
+ int coroutine_fn bdrv_co_flush(BlockDriverState *bs);
++int bdrv_flush_all(void);
+ void bdrv_close_all(void);
+ void bdrv_drain(BlockDriverState *bs);
+ void coroutine_fn bdrv_co_drain(BlockDriverState *bs);
+-- 
+1.8.3.1
+

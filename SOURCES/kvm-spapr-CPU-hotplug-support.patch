@@ -1,0 +1,366 @@
+From 092e31486a8a2322db433563954b885f4063dabe Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:46 +0200
+Subject: [PATCH 13/34] spapr: CPU hotplug support
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-14-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71133
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 13/27] spapr: CPU hotplug support
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+Set up device tree entries for the hotplugged CPU core and use the
+exising RTAS event logging infrastructure to send CPU hotplug notification
+to the guest.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit af81cf323c17083a3e016f9556c521357b46ab40)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr.c                  | 78 +++++++++++++++++++++++++++++++++-------
+ hw/ppc/spapr_cpu_core.c         | 80 +++++++++++++++++++++++++++++++++++++++++
+ hw/ppc/spapr_events.c           |  3 ++
+ hw/ppc/spapr_rtas.c             | 24 +++++++++++++
+ include/hw/ppc/spapr.h          |  2 ++
+ include/hw/ppc/spapr_cpu_core.h |  2 ++
+ 6 files changed, 176 insertions(+), 13 deletions(-)
+
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index baf3f29..75543ae 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -604,6 +604,16 @@ static void spapr_populate_cpu_dt(CPUState *cs, void *fdt, int offset,
+     size_t page_sizes_prop_size;
+     uint32_t vcpus_per_socket = smp_threads * smp_cores;
+     uint32_t pft_size_prop[] = {0, cpu_to_be32(spapr->htab_shift)};
++    sPAPRDRConnector *drc;
++    sPAPRDRConnectorClass *drck;
++    int drc_index;
++
++    drc = spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, index);
++    if (drc) {
++        drck = SPAPR_DR_CONNECTOR_GET_CLASS(drc);
++        drc_index = drck->get_index(drc);
++        _FDT((fdt_setprop_cell(fdt, offset, "ibm,my-drc-index", drc_index)));
++    }
+ 
+     /* Note: we keep CI large pages off for now because a 64K capable guest
+      * provisioned with large pages might otherwise try to map a qemu
+@@ -987,6 +997,16 @@ static void spapr_finalize_fdt(sPAPRMachineState *spapr,
+         _FDT(spapr_drc_populate_dt(fdt, 0, NULL, SPAPR_DR_CONNECTOR_TYPE_LMB));
+     }
+ 
++    if (smc->dr_cpu_enabled) {
++        int offset = fdt_path_offset(fdt, "/cpus");
++        ret = spapr_drc_populate_dt(fdt, offset, NULL,
++                                    SPAPR_DR_CONNECTOR_TYPE_CPU);
++        if (ret < 0) {
++            error_report("Couldn't set up CPU DR device tree properties");
++            exit(1);
++        }
++    }
++
+     _FDT((fdt_pack(fdt)));
+ 
+     if (fdt_totalsize(fdt) > FDT_MAX_SIZE) {
+@@ -1757,21 +1777,30 @@ static void ppc_spapr_init(MachineState *machine)
+         char *type = spapr_get_cpu_core_type(machine->cpu_model);
+ 
+         spapr->cores = g_new0(Object *, spapr_max_cores);
+-        for (i = 0; i < spapr_cores; i++) {
++        for (i = 0; i < spapr_max_cores; i++) {
+             int core_dt_id = i * smt;
+-            Object *core;
+-
+-            if (!object_class_by_name(type)) {
+-                error_report("Unable to find sPAPR CPU Core definition");
+-                exit(1);
++            sPAPRDRConnector *drc =
++                spapr_dr_connector_new(OBJECT(spapr),
++                                       SPAPR_DR_CONNECTOR_TYPE_CPU, core_dt_id);
++
++            qemu_register_reset(spapr_drc_reset, drc);
++
++            if (i < spapr_cores) {
++                char *type = spapr_get_cpu_core_type(machine->cpu_model);
++                Object *core;
++
++                if (!object_class_by_name(type)) {
++                    error_report("Unable to find sPAPR CPU Core definition");
++                    exit(1);
++                }
++
++                core  = object_new(type);
++                object_property_set_int(core, smp_threads, "nr-threads",
++                                        &error_fatal);
++                object_property_set_int(core, core_dt_id, CPU_CORE_PROP_CORE_ID,
++                                        &error_fatal);
++                object_property_set_bool(core, true, "realized", &error_fatal);
+             }
+-
+-            core  = object_new(type);
+-            object_property_set_int(core, smp_threads, "nr-threads",
+-                                    &error_fatal);
+-            object_property_set_int(core, core_dt_id, CPU_CORE_PROP_CORE_ID,
+-                                    &error_fatal);
+-            object_property_set_bool(core, true, "realized", &error_fatal);
+         }
+         g_free(type);
+     } else {
+@@ -2179,6 +2208,27 @@ out:
+     error_propagate(errp, local_err);
+ }
+ 
++void *spapr_populate_hotplug_cpu_dt(CPUState *cs, int *fdt_offset,
++                                    sPAPRMachineState *spapr)
++{
++    PowerPCCPU *cpu = POWERPC_CPU(cs);
++    DeviceClass *dc = DEVICE_GET_CLASS(cs);
++    int id = ppc_get_vcpu_dt_id(cpu);
++    void *fdt;
++    int offset, fdt_size;
++    char *nodename;
++
++    fdt = create_device_tree(&fdt_size);
++    nodename = g_strdup_printf("%s@%x", dc->fw_name, id);
++    offset = fdt_add_subnode(fdt, 0, nodename);
++
++    spapr_populate_cpu_dt(cs, fdt, offset, spapr);
++    g_free(nodename);
++
++    *fdt_offset = offset;
++    return fdt;
++}
++
+ static void spapr_machine_device_plug(HotplugHandler *hotplug_dev,
+                                       DeviceState *dev, Error **errp)
+ {
+@@ -2223,6 +2273,8 @@ static void spapr_machine_device_plug(HotplugHandler *hotplug_dev,
+         }
+ 
+         spapr_memory_plug(hotplug_dev, dev, node, errp);
++    } else if (object_dynamic_cast(OBJECT(dev), TYPE_SPAPR_CPU_CORE)) {
++        spapr_core_plug(hotplug_dev, dev, errp);
+     }
+ }
+ 
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index d747c26..d5fa4e6 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -41,6 +41,8 @@ static void spapr_cpu_reset(void *opaque)
+ void spapr_cpu_init(sPAPRMachineState *spapr, PowerPCCPU *cpu, Error **errp)
+ {
+     CPUPPCState *env = &cpu->env;
++    CPUState *cs = CPU(cpu);
++    int i;
+ 
+     /* Set time-base frequency to 512 MHz */
+     cpu_ppc_tb_init(env, SPAPR_TIMEBASE_FREQ);
+@@ -58,9 +60,18 @@ void spapr_cpu_init(sPAPRMachineState *spapr, PowerPCCPU *cpu, Error **errp)
+         }
+     }
+ 
++    /* Set NUMA node for the added CPUs  */
++    for (i = 0; i < nb_numa_nodes; i++) {
++        if (test_bit(cs->cpu_index, numa_info[i].node_cpu)) {
++            cs->numa_node = i;
++            break;
++        }
++    }
++
+     xics_cpu_setup(spapr->icp, cpu);
+ 
+     qemu_register_reset(spapr_cpu_reset, cpu);
++    spapr_cpu_reset(cpu);
+ }
+ 
+ /*
+@@ -77,10 +88,74 @@ char *spapr_get_cpu_core_type(const char *model)
+     return core_type;
+ }
+ 
++void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
++                     Error **errp)
++{
++    sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(OBJECT(hotplug_dev));
++    sPAPRMachineState *spapr = SPAPR_MACHINE(OBJECT(hotplug_dev));
++    sPAPRCPUCore *core = SPAPR_CPU_CORE(OBJECT(dev));
++    CPUCore *cc = CPU_CORE(dev);
++    CPUState *cs = CPU(core->threads);
++    sPAPRDRConnector *drc;
++    sPAPRDRConnectorClass *drck;
++    Error *local_err = NULL;
++    void *fdt = NULL;
++    int fdt_offset = 0;
++    int index;
++    int smt = kvmppc_smt_threads();
++
++    drc = spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, cc->core_id);
++    index = cc->core_id / smt;
++    spapr->cores[index] = OBJECT(dev);
++
++    if (!smc->dr_cpu_enabled) {
++        /*
++         * This is a cold plugged CPU core but the machine doesn't support
++         * DR. So skip the hotplug path ensuring that the core is brought
++         * up online with out an associated DR connector.
++         */
++        return;
++    }
++
++    g_assert(drc);
++
++    /*
++     * Setup CPU DT entries only for hotplugged CPUs. For boot time or
++     * coldplugged CPUs DT entries are setup in spapr_finalize_fdt().
++     */
++    if (dev->hotplugged) {
++        fdt = spapr_populate_hotplug_cpu_dt(cs, &fdt_offset, spapr);
++    }
++
++    drck = SPAPR_DR_CONNECTOR_GET_CLASS(drc);
++    drck->attach(drc, dev, fdt, fdt_offset, !dev->hotplugged, &local_err);
++    if (local_err) {
++        g_free(fdt);
++        spapr->cores[index] = NULL;
++        error_propagate(errp, local_err);
++        return;
++    }
++
++    if (dev->hotplugged) {
++        /*
++         * Send hotplug notification interrupt to the guest only in case
++         * of hotplugged CPUs.
++         */
++        spapr_hotplug_req_add_by_index(drc);
++    } else {
++        /*
++         * Set the right DRC states for cold plugged CPU.
++         */
++        drck->set_allocation_state(drc, SPAPR_DR_ALLOCATION_STATE_USABLE);
++        drck->set_isolation_state(drc, SPAPR_DR_ISOLATION_STATE_UNISOLATED);
++    }
++}
++
+ void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+                          Error **errp)
+ {
+     MachineState *machine = MACHINE(OBJECT(hotplug_dev));
++    sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(OBJECT(hotplug_dev));
+     sPAPRMachineState *spapr = SPAPR_MACHINE(OBJECT(hotplug_dev));
+     int spapr_max_cores = max_cpus / smp_threads;
+     int index;
+@@ -95,6 +170,11 @@ void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+         goto out;
+     }
+ 
++    if (!smc->dr_cpu_enabled && dev->hotplugged) {
++        error_setg(&local_err, "CPU hotplug not supported for this machine");
++        goto out;
++    }
++
+     if (cc->nr_threads != smp_threads) {
+         error_setg(&local_err, "threads must be %d", smp_threads);
+         goto out;
+diff --git a/hw/ppc/spapr_events.c b/hw/ppc/spapr_events.c
+index 049fb1b..af80992 100644
+--- a/hw/ppc/spapr_events.c
++++ b/hw/ppc/spapr_events.c
+@@ -449,6 +449,9 @@ static void spapr_hotplug_req_event(uint8_t hp_id, uint8_t hp_action,
+     case SPAPR_DR_CONNECTOR_TYPE_LMB:
+         hp->hotplug_type = RTAS_LOG_V6_HP_TYPE_MEMORY;
+         break;
++    case SPAPR_DR_CONNECTOR_TYPE_CPU:
++        hp->hotplug_type = RTAS_LOG_V6_HP_TYPE_CPU;
++        break;
+     default:
+         /* we shouldn't be signaling hotplug events for resources
+          * that don't support them
+diff --git a/hw/ppc/spapr_rtas.c b/hw/ppc/spapr_rtas.c
+index f073258..e53ecc0 100644
+--- a/hw/ppc/spapr_rtas.c
++++ b/hw/ppc/spapr_rtas.c
+@@ -34,6 +34,7 @@
+ 
+ #include "hw/ppc/spapr.h"
+ #include "hw/ppc/spapr_vio.h"
++#include "hw/ppc/ppc.h"
+ #include "qapi-event.h"
+ #include "hw/boards.h"
+ 
+@@ -162,6 +163,27 @@ static void rtas_query_cpu_stopped_state(PowerPCCPU *cpu_,
+     rtas_st(rets, 0, RTAS_OUT_PARAM_ERROR);
+ }
+ 
++/*
++ * Set the timebase offset of the CPU to that of first CPU.
++ * This helps hotplugged CPU to have the correct timebase offset.
++ */
++static void spapr_cpu_update_tb_offset(PowerPCCPU *cpu)
++{
++    PowerPCCPU *fcpu = POWERPC_CPU(first_cpu);
++
++    cpu->env.tb_env->tb_offset = fcpu->env.tb_env->tb_offset;
++}
++
++static void spapr_cpu_set_endianness(PowerPCCPU *cpu)
++{
++    PowerPCCPU *fcpu = POWERPC_CPU(first_cpu);
++    PowerPCCPUClass *pcc = POWERPC_CPU_GET_CLASS(fcpu);
++
++    if (!pcc->interrupts_big_endian(fcpu)) {
++        cpu->env.spr[SPR_LPCR] |= LPCR_ILE;
++    }
++}
++
+ static void rtas_start_cpu(PowerPCCPU *cpu_, sPAPRMachineState *spapr,
+                            uint32_t token, uint32_t nargs,
+                            target_ulong args,
+@@ -198,6 +220,8 @@ static void rtas_start_cpu(PowerPCCPU *cpu_, sPAPRMachineState *spapr,
+         env->nip = start;
+         env->gpr[3] = r3;
+         cs->halted = 0;
++        spapr_cpu_set_endianness(cpu);
++        spapr_cpu_update_tb_offset(cpu);
+ 
+         qemu_cpu_kick(cs);
+ 
+diff --git a/include/hw/ppc/spapr.h b/include/hw/ppc/spapr.h
+index 3189332..3c910ba 100644
+--- a/include/hw/ppc/spapr.h
++++ b/include/hw/ppc/spapr.h
+@@ -601,6 +601,8 @@ void spapr_hotplug_req_add_by_count(sPAPRDRConnectorType drc_type,
+ void spapr_hotplug_req_remove_by_count(sPAPRDRConnectorType drc_type,
+                                           uint32_t count);
+ void spapr_cpu_init(sPAPRMachineState *spapr, PowerPCCPU *cpu, Error **errp);
++void *spapr_populate_hotplug_cpu_dt(CPUState *cs, int *fdt_offset,
++                                    sPAPRMachineState *spapr);
+ 
+ /* rtas-configure-connector state */
+ struct sPAPRConfigureConnectorState {
+diff --git a/include/hw/ppc/spapr_cpu_core.h b/include/hw/ppc/spapr_cpu_core.h
+index 401381b..7cb0515 100644
+--- a/include/hw/ppc/spapr_cpu_core.h
++++ b/include/hw/ppc/spapr_cpu_core.h
+@@ -29,4 +29,6 @@ typedef struct sPAPRCPUCore {
+ void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+                          Error **errp);
+ char *spapr_get_cpu_core_type(const char *model);
++void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
++                     Error **errp);
+ #endif
+-- 
+1.8.3.1
+

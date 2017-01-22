@@ -1,0 +1,66 @@
+From 523a7fad9be68e2335d89c9af1efff61d80c8bf0 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Tue, 21 Jun 2016 13:34:14 +0200
+Subject: [PATCH 12/25] block: Prevent sleeping jobs from resuming if they have
+ been paused
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466516062-20048-2-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70718
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 1/9] block: Prevent sleeping jobs from resuming if they have been paused
+Bugzilla: 1265179
+RH-Acked-by: Jeffrey Cody <jcody@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: Alberto Garcia <berto@igalia.com>
+
+If we pause a block job and drain its BlockDriverState we want that
+the job remains inactive until we call block_job_resume() again.
+
+However if we pause the job while it is sleeping then it will resume
+when the sleep timer fires.
+
+This patch prevents that from happening by checking if the job has
+been paused after it comes back from sleeping.
+
+Signed-off-by: Alberto Garcia <berto@igalia.com>
+Suggested-by: Kevin Wolf <kwolf@redhat.com>
+Message-id: 3d9011151512326b890d22bdab3530244ef349d7.1464346103.git.berto@igalia.com
+Reviewed-by: Max Reitz <mreitz@redhat.com>
+Signed-off-by: Max Reitz <mreitz@redhat.com>
+(cherry picked from commit 0824afda0cd20045ffe87d58e142774514b61026)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+  blockjob.c
+
+  Upstream uses BlockBackend, downstream uses BlockDriverState.
+
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+---
+ blockjob.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/blockjob.c b/blockjob.c
+index 9fc37ca..a68b6d3 100644
+--- a/blockjob.c
++++ b/blockjob.c
+@@ -333,10 +333,12 @@ void block_job_sleep_ns(BlockJob *job, QEMUClockType type, int64_t ns)
+     }
+ 
+     job->busy = false;
++    if (!block_job_is_paused(job)) {
++        co_aio_sleep_ns(bdrv_get_aio_context(job->bs), type, ns);
++    }
++    /* The job can be paused while sleeping, so check this again */
+     if (block_job_is_paused(job)) {
+         qemu_coroutine_yield();
+-    } else {
+-        co_aio_sleep_ns(bdrv_get_aio_context(job->bs), type, ns);
+     }
+     job->busy = true;
+ }
+-- 
+1.8.3.1
+

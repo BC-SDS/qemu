@@ -1,0 +1,328 @@
+From 8f869f1a32ca4836eebad8281d2333d91630cb23 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Fri, 5 Aug 2016 10:52:18 +0200
+Subject: [PATCH 35/99] pc: use new CPU hotplug interface since 2.7 machine
+ type
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470127078-75896-1-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71718
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 30/78] pc: use new CPU hotplug interface since 2.7 machine type
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+For compatibility reasons PC/Q35 will start with legacy
+CPU hotplug interface by default but with new CPU hotplug
+AML code since 2.7 machine type. That way legacy firmware
+that doesn't use QEMU generated ACPI tables will be
+able to continue using legacy CPU hotplug interface.
+
+While new machine type, with firmware supporting QEMU
+provided ACPI tables, will generate new CPU hotplug AML,
+which will switch to new CPU hotplug interface when
+guest OS executes its _INI method on ACPI tables
+loading.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 679dd1a957df418453efdd3ed2914dba5cd73773)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	hw/i386/pc_piix.c
+	hw/i386/pc_q35.c
+           - due to missing 2.7 machine type and need to force
+             legacy hotplug for rhel-7.2 machine type
+---
+ hw/acpi/cpu.c                 |  9 +++++++++
+ hw/acpi/cpu_hotplug.c         | 21 ++++++++++++++++++++-
+ hw/acpi/ich9.c                | 33 +++++++++++++++++++++++++++++++++
+ hw/acpi/piix4.c               | 32 ++++++++++++++++++++++++++++++++
+ hw/i386/acpi-build.c          | 12 +++++++++++-
+ hw/i386/pc_piix.c             |  2 ++
+ include/hw/acpi/cpu.h         |  1 +
+ include/hw/acpi/cpu_hotplug.h |  6 ++++++
+ include/hw/i386/pc.h          |  2 ++
+ 9 files changed, 116 insertions(+), 2 deletions(-)
+
+diff --git a/hw/acpi/cpu.c b/hw/acpi/cpu.c
+index 401ac0d..c13b65c 100644
+--- a/hw/acpi/cpu.c
++++ b/hw/acpi/cpu.c
+@@ -373,6 +373,15 @@ void build_cpus_aml(Aml *table, MachineState *machine, CPUHotplugFeatures opts,
+         aml_append(field, aml_named_field(CPU_DATA, 32));
+         aml_append(cpu_ctrl_dev, field);
+ 
++        if (opts.has_legacy_cphp) {
++            method = aml_method("_INI", 0, AML_SERIALIZED);
++            /* switch off legacy CPU hotplug HW and use new one,
++             * on reboot system is in new mode and writing 0
++             * in CPU_SELECTOR selects BSP, which is NOP at
++             * the time _INI is called */
++            aml_append(method, aml_store(zero, aml_name(CPU_SELECTOR)));
++            aml_append(cpu_ctrl_dev, method);
++        }
+     }
+     aml_append(sb_scope, cpu_ctrl_dev);
+ 
+diff --git a/hw/acpi/cpu_hotplug.c b/hw/acpi/cpu_hotplug.c
+index fe75bd9..e19d902 100644
+--- a/hw/acpi/cpu_hotplug.c
++++ b/hw/acpi/cpu_hotplug.c
+@@ -34,7 +34,15 @@ static uint64_t cpu_status_read(void *opaque, hwaddr addr, unsigned int size)
+ static void cpu_status_write(void *opaque, hwaddr addr, uint64_t data,
+                              unsigned int size)
+ {
+-    /* TODO: implement VCPU removal on guest signal that CPU can be removed */
++    /* firmware never used to write in CPU present bitmap so use
++       this fact as means to switch QEMU into modern CPU hotplug
++       mode by writing 0 at the beginning of legacy CPU bitmap
++     */
++    if (addr == 0 && data == 0) {
++        AcpiCpuHotplug *cpus = opaque;
++        object_property_set_bool(cpus->device, false, "cpu-hotplug-legacy",
++                                 &error_abort);
++    }
+ }
+ 
+ static const MemoryRegionOps AcpiCpuHotplug_ops = {
+@@ -83,6 +91,17 @@ void legacy_acpi_cpu_hotplug_init(MemoryRegion *parent, Object *owner,
+     memory_region_init_io(&gpe_cpu->io, owner, &AcpiCpuHotplug_ops,
+                           gpe_cpu, "acpi-cpu-hotplug", ACPI_GPE_PROC_LEN);
+     memory_region_add_subregion(parent, base, &gpe_cpu->io);
++    gpe_cpu->device = owner;
++}
++
++void acpi_switch_to_modern_cphp(AcpiCpuHotplug *gpe_cpu,
++                                CPUHotplugState *cpuhp_state,
++                                uint16_t io_port)
++{
++    MemoryRegion *parent = pci_address_space_io(PCI_DEVICE(gpe_cpu->device));
++
++    memory_region_del_subregion(parent, &gpe_cpu->io);
++    cpu_hotplug_hw_init(parent, gpe_cpu->device, cpuhp_state, io_port);
+ }
+ 
+ void build_legacy_cpu_hotplug_aml(Aml *ctx, MachineState *machine,
+diff --git a/hw/acpi/ich9.c b/hw/acpi/ich9.c
+index d12cc62..e5a3c18 100644
+--- a/hw/acpi/ich9.c
++++ b/hw/acpi/ich9.c
+@@ -189,6 +189,33 @@ static const VMStateDescription vmstate_tco_io_state = {
+     }
+ };
+ 
++static bool vmstate_test_use_cpuhp(void *opaque)
++{
++    ICH9LPCPMRegs *s = opaque;
++    return !s->cpu_hotplug_legacy;
++}
++
++static int vmstate_cpuhp_pre_load(void *opaque)
++{
++    ICH9LPCPMRegs *s = opaque;
++    Object *obj = OBJECT(s->gpe_cpu.device);
++    object_property_set_bool(obj, false, "cpu-hotplug-legacy", &error_abort);
++    return 0;
++}
++
++static const VMStateDescription vmstate_cpuhp_state = {
++    .name = "ich9_pm/cpuhp",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .minimum_version_id_old = 1,
++    .needed = vmstate_test_use_cpuhp,
++    .pre_load = vmstate_cpuhp_pre_load,
++    .fields      = (VMStateField[]) {
++        VMSTATE_CPU_HOTPLUG(cpuhp_state, ICH9LPCPMRegs),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
+ const VMStateDescription vmstate_ich9_pm = {
+     .name = "ich9_pm",
+     .version_id = 1,
+@@ -209,6 +236,7 @@ const VMStateDescription vmstate_ich9_pm = {
+     .subsections = (const VMStateDescription*[]) {
+         &vmstate_memhp_state,
+         &vmstate_tco_io_state,
++        &vmstate_cpuhp_state,
+         NULL
+     }
+ };
+@@ -318,6 +346,11 @@ static void ich9_pm_set_cpu_hotplug_legacy(Object *obj, bool value,
+ {
+     ICH9LPCState *s = ICH9_LPC_DEVICE(obj);
+ 
++    assert(!value);
++    if (s->pm.cpu_hotplug_legacy && value == false) {
++        acpi_switch_to_modern_cphp(&s->pm.gpe_cpu, &s->pm.cpuhp_state,
++                                   ICH9_CPU_HOTPLUG_IO_BASE);
++    }
+     s->pm.cpu_hotplug_legacy = value;
+ }
+ 
+diff --git a/hw/acpi/piix4.c b/hw/acpi/piix4.c
+index d9f1e9d..ec6a550 100644
+--- a/hw/acpi/piix4.c
++++ b/hw/acpi/piix4.c
+@@ -275,6 +275,32 @@ static const VMStateDescription vmstate_memhp_state = {
+     }
+ };
+ 
++static bool vmstate_test_use_cpuhp(void *opaque)
++{
++    PIIX4PMState *s = opaque;
++    return !s->cpu_hotplug_legacy;
++}
++
++static int vmstate_cpuhp_pre_load(void *opaque)
++{
++    Object *obj = OBJECT(opaque);
++    object_property_set_bool(obj, false, "cpu-hotplug-legacy", &error_abort);
++    return 0;
++}
++
++static const VMStateDescription vmstate_cpuhp_state = {
++    .name = "piix4_pm/cpuhp",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .minimum_version_id_old = 1,
++    .needed = vmstate_test_use_cpuhp,
++    .pre_load = vmstate_cpuhp_pre_load,
++    .fields      = (VMStateField[]) {
++        VMSTATE_CPU_HOTPLUG(cpuhp_state, PIIX4PMState),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
+ /* qemu-kvm 1.2 uses version 3 but advertised as 2
+  * To support incoming qemu-kvm 1.2 migration, change version_id
+  * and minimum_version_id to 2 below (which breaks migration from
+@@ -309,6 +335,7 @@ static const VMStateDescription vmstate_acpi = {
+     },
+     .subsections = (const VMStateDescription*[]) {
+          &vmstate_memhp_state,
++         &vmstate_cpuhp_state,
+          NULL
+     }
+ };
+@@ -584,6 +611,11 @@ static void piix4_set_cpu_hotplug_legacy(Object *obj, bool value, Error **errp)
+ {
+     PIIX4PMState *s = PIIX4_PM(obj);
+ 
++    assert(!value);
++    if (s->cpu_hotplug_legacy && value == false) {
++        acpi_switch_to_modern_cphp(&s->gpe_cpu, &s->cpuhp_state,
++                                   PIIX4_CPU_HOTPLUG_IO_BASE);
++    }
+     s->cpu_hotplug_legacy = value;
+ }
+ 
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index 9b1674b..f2dc493 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -34,6 +34,7 @@
+ #include "hw/timer/hpet.h"
+ #include "hw/acpi/acpi-defs.h"
+ #include "hw/acpi/acpi.h"
++#include "hw/acpi/cpu.h"
+ #include "hw/nvram/fw_cfg.h"
+ #include "hw/acpi/bios-linker-loader.h"
+ #include "hw/loader.h"
+@@ -1937,6 +1938,7 @@ build_dsdt(GArray *table_data, BIOSLinker *linker,
+     Aml *dsdt, *sb_scope, *scope, *dev, *method, *field, *pkg, *crs;
+     CrsRangeSet crs_range_set;
+     PCMachineState *pcms = PC_MACHINE(machine);
++    PCMachineClass *pcmc = PC_MACHINE_GET_CLASS(machine);
+     uint32_t nr_mem = machine->ram_slots;
+     int root_bus_limit = 0xFF;
+     PCIBus *bus = NULL;
+@@ -1992,7 +1994,15 @@ build_dsdt(GArray *table_data, BIOSLinker *linker,
+         build_q35_pci0_int(dsdt);
+     }
+ 
+-    build_legacy_cpu_hotplug_aml(dsdt, machine, pm->cpu_hp_io_base);
++    if (pcmc->legacy_cpu_hotplug) {
++        build_legacy_cpu_hotplug_aml(dsdt, machine, pm->cpu_hp_io_base);
++    } else {
++        CPUHotplugFeatures opts = {
++            .apci_1_compatible = true, .has_legacy_cphp = true
++        };
++        build_cpus_aml(dsdt, machine, opts, pm->cpu_hp_io_base,
++                       "\\_SB.PCI0", "\\_GPE._E02");
++    }
+     build_memory_hotplug_aml(dsdt, nr_mem, pm->mem_hp_io_base,
+                              pm->mem_hp_io_len);
+ 
+diff --git a/hw/i386/pc_piix.c b/hw/i386/pc_piix.c
+index 9101c1a..f926fd1 100644
+--- a/hw/i386/pc_piix.c
++++ b/hw/i386/pc_piix.c
+@@ -1130,6 +1130,8 @@ static void pc_machine_rhel720_options(MachineClass *m)
+     pcmc->save_tsc_khz = false;
+     m->legacy_fw_cfg_order = 1;
+     /* Note: broken_reserved_end was already in 7.2 */
++    /* From pc_i440fx_2_6_machine_options */
++    pcmc->legacy_cpu_hotplug = true;
+     SET_MACHINE_COMPAT(m, PC_RHEL7_2_COMPAT);
+ }
+ 
+diff --git a/include/hw/acpi/cpu.h b/include/hw/acpi/cpu.h
+index 980a83c..89ce172 100644
+--- a/include/hw/acpi/cpu.h
++++ b/include/hw/acpi/cpu.h
+@@ -49,6 +49,7 @@ void cpu_hotplug_hw_init(MemoryRegion *as, Object *owner,
+ 
+ typedef struct CPUHotplugFeatures {
+     bool apci_1_compatible;
++    bool has_legacy_cphp;
+ } CPUHotplugFeatures;
+ 
+ void build_cpus_aml(Aml *table, MachineState *machine, CPUHotplugFeatures opts,
+diff --git a/include/hw/acpi/cpu_hotplug.h b/include/hw/acpi/cpu_hotplug.h
+index 6fef67e..b995ef2 100644
+--- a/include/hw/acpi/cpu_hotplug.h
++++ b/include/hw/acpi/cpu_hotplug.h
+@@ -16,8 +16,10 @@
+ #include "hw/acpi/pc-hotplug.h"
+ #include "hw/acpi/aml-build.h"
+ #include "hw/hotplug.h"
++#include "hw/acpi/cpu.h"
+ 
+ typedef struct AcpiCpuHotplug {
++    Object *device;
+     MemoryRegion io;
+     uint8_t sts[ACPI_GPE_PROC_LEN];
+ } AcpiCpuHotplug;
+@@ -28,6 +30,10 @@ void legacy_acpi_cpu_plug_cb(HotplugHandler *hotplug_dev,
+ void legacy_acpi_cpu_hotplug_init(MemoryRegion *parent, Object *owner,
+                                   AcpiCpuHotplug *gpe_cpu, uint16_t base);
+ 
++void acpi_switch_to_modern_cphp(AcpiCpuHotplug *gpe_cpu,
++                                CPUHotplugState *cpuhp_state,
++                                uint16_t io_port);
++
+ void build_legacy_cpu_hotplug_aml(Aml *ctx, MachineState *machine,
+                                   uint16_t io_base);
+ #endif
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index 4b1189b..d779ca9 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -137,6 +137,8 @@ struct PCMachineClass {
+ 
+     /* TSC rate migration: */
+     bool save_tsc_khz;
++    /* generate legacy CPU hotplug AML */
++    bool legacy_cpu_hotplug;
+ };
+ 
+ #define TYPE_PC_MACHINE "generic-pc-machine"
+-- 
+1.8.3.1
+

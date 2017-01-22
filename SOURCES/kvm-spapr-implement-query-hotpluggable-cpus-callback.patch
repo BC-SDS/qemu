@@ -1,0 +1,108 @@
+From 9381a82a33bf738881e471470d07ea2c1370b735 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:50 +0200
+Subject: [PATCH 17/34] spapr: implement query-hotpluggable-cpus callback
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-18-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71137
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 17/27] spapr: implement query-hotpluggable-cpus callback
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Igor Mammedov <imammedo@redhat.com>
+
+It returns a list of present/possible to hotplug CPU
+objects with a list of properties to use with
+device_add.
+
+in spapr case returned list would looks like:
+-> { "execute": "query-hotpluggable-cpus" }
+<- {"return": [
+     { "props": { "core": 8 }, "type": "POWER8-spapr-cpu-core",
+       "vcpus-count": 2 },
+     { "props": { "core": 0 }, "type": "POWER8-spapr-cpu-core",
+       "vcpus-count": 2,
+       "qom-path": "/machine/unattached/device[0]"}
+   ]}'
+
+TODO:
+  add 'node' property for core <-> numa node mapping
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 2474bfd4603b2d354fdb4001b083b7c72bff627f)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr.c | 34 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index 9bfc94e..46d2cff 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -66,6 +66,7 @@
+ #include "hw/compat.h"
+ #include "qemu/cutils.h"
+ #include "hw/ppc/spapr_cpu_core.h"
++#include "qmp-commands.h"
+ 
+ #include <libfdt.h>
+ 
+@@ -2319,6 +2320,38 @@ static unsigned spapr_cpu_index_to_socket_id(unsigned cpu_index)
+     return cpu_index / smp_threads / smp_cores;
+ }
+ 
++static HotpluggableCPUList *spapr_query_hotpluggable_cpus(MachineState *machine)
++{
++    int i;
++    HotpluggableCPUList *head = NULL;
++    sPAPRMachineState *spapr = SPAPR_MACHINE(machine);
++    int spapr_max_cores = max_cpus / smp_threads;
++    int smt = kvmppc_smt_threads();
++
++    for (i = 0; i < spapr_max_cores; i++) {
++        HotpluggableCPUList *list_item = g_new0(typeof(*list_item), 1);
++        HotpluggableCPU *cpu_item = g_new0(typeof(*cpu_item), 1);
++        CpuInstanceProperties *cpu_props = g_new0(typeof(*cpu_props), 1);
++
++        cpu_item->type = spapr_get_cpu_core_type(machine->cpu_model);
++        cpu_item->vcpus_count = smp_threads;
++        cpu_props->has_core = true;
++        cpu_props->core = i * smt;
++        /* TODO: add 'has_node/node' here to describe
++           to which node core belongs */
++
++        cpu_item->props = cpu_props;
++        if (spapr->cores[i]) {
++            cpu_item->has_qom_path = true;
++            cpu_item->qom_path = object_get_canonical_path(spapr->cores[i]);
++        }
++        list_item->value = cpu_item;
++        list_item->next = head;
++        head = list_item;
++    }
++    return head;
++}
++
+ static void spapr_machine_class_init(ObjectClass *oc, void *data)
+ {
+     MachineClass *mc = MACHINE_CLASS(oc);
+@@ -2349,6 +2382,7 @@ static void spapr_machine_class_init(ObjectClass *oc, void *data)
+     hc->plug = spapr_machine_device_plug;
+     hc->unplug = spapr_machine_device_unplug;
+     mc->cpu_index_to_socket_id = spapr_cpu_index_to_socket_id;
++    mc->query_hotpluggable_cpus = spapr_query_hotpluggable_cpus;
+ 
+     smc->dr_lmb_enabled = true;
+     smc->dr_cpu_enabled = true;
+-- 
+1.8.3.1
+

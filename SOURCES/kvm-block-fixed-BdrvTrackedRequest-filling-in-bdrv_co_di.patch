@@ -1,0 +1,53 @@
+From f7ab17d68c35d24870781be58b1b9e2423e87c5e Mon Sep 17 00:00:00 2001
+From: Fam Zheng <famz@redhat.com>
+Date: Wed, 22 Jun 2016 03:07:55 +0200
+Subject: [PATCH 23/25] block: fixed BdrvTrackedRequest filling in
+ bdrv_co_discard
+
+RH-Author: Fam Zheng <famz@redhat.com>
+Message-id: <20160622030757.21852-2-famz@redhat.com>
+Patchwork-id: 70737
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/3] block: fixed BdrvTrackedRequest filling in bdrv_co_discard
+Bugzilla: 1348763
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+
+From: Denis V. Lunev <den@openvz.org>
+
+The request area is specified in bytes, not in sectors.
+
+Signed-off-by: Denis V. Lunev <den@openvz.org>
+Reviewed-by: Vladimir Sementsov-Ogievskiy<vsementsov@virtuozzo.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Message-id: 1466093381-6120-2-git-send-email-den@openvz.org
+CC: Stefan Hajnoczi <stefanha@redhat.com>
+CC: Kevin Wolf <kwolf@redhat.com>
+CC: Max Reitz <mreitz@redhat.com>
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+(cherry picked from commit 3a36e474f2ca74ebd4f36044823a625389dfef01)
+Signed-off-by: Fam Zheng <famz@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ block/io.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/block/io.c b/block/io.c
+index a7dbf85..f8a9ac2 100644
+--- a/block/io.c
++++ b/block/io.c
+@@ -2514,8 +2514,8 @@ int coroutine_fn bdrv_co_discard(BlockDriverState *bs, int64_t sector_num,
+         return 0;
+     }
+ 
+-    tracked_request_begin(&req, bs, sector_num, nb_sectors,
+-                          BDRV_TRACKED_DISCARD);
++    tracked_request_begin(&req, bs, sector_num << BDRV_SECTOR_BITS,
++                          nb_sectors << BDRV_SECTOR_BITS, BDRV_TRACKED_DISCARD);
+     bdrv_set_dirty(bs, sector_num, nb_sectors);
+ 
+     max_discard = MIN_NON_ZERO(bs->bl.max_discard, BDRV_REQUEST_MAX_SECTORS);
+-- 
+1.8.3.1
+

@@ -1,0 +1,82 @@
+From 78c8bd22f6cb05da2fc6e156033f2ccf337224dc Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:41 +0200
+Subject: [PATCH 41/99] qdev: GlobalProperty.errp field
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-37-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71651
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 36/78] qdev: GlobalProperty.errp field
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Eduardo Habkost <ehabkost@redhat.com>
+
+The new field will allow error handling to be configured by
+qdev_prop_register_global() callers: &error_fatal and
+&error_abort can be used to make QEMU exit or abort if any errors
+are reported when applying the properties.
+
+While doing it, change the error message from "global %s.%s=%s
+ignored" to "can't apply global %s.%s=%s".
+
+Suggested-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Markus Armbruster <armbru@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 77280adbdf308af855844d921e5f16a873840568)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/core/qdev-properties.c | 11 ++++++++---
+ include/hw/qdev-core.h    |  4 ++++
+ 2 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/hw/core/qdev-properties.c b/hw/core/qdev-properties.c
+index c10edee..3c20c8e 100644
+--- a/hw/core/qdev-properties.c
++++ b/hw/core/qdev-properties.c
+@@ -1085,9 +1085,14 @@ static void qdev_prop_set_globals_for_type(DeviceState *dev,
+         prop->used = true;
+         object_property_parse(OBJECT(dev), prop->value, prop->property, &err);
+         if (err != NULL) {
+-            assert(prop->user_provided);
+-            error_reportf_err(err, "Warning: global %s.%s=%s ignored: ",
+-                              prop->driver, prop->property, prop->value);
++            error_prepend(&err, "can't apply global %s.%s=%s: ",
++                          prop->driver, prop->property, prop->value);
++            if (prop->errp) {
++                error_propagate(prop->errp, err);
++            } else {
++                assert(prop->user_provided);
++                error_reportf_err(err, "Warning: ");
++            }
+         }
+     }
+ }
+diff --git a/include/hw/qdev-core.h b/include/hw/qdev-core.h
+index 24aa0a7..1d1f861 100644
+--- a/include/hw/qdev-core.h
++++ b/include/hw/qdev-core.h
+@@ -259,6 +259,9 @@ struct PropertyInfo {
+  * @user_provided: Set to true if property comes from user-provided config
+  * (command-line or config file).
+  * @used: Set to true if property was used when initializing a device.
++ * @errp: Error destination, used like first argument of error_setg()
++ *        in case property setting fails later. If @errp is NULL, we
++ *        print warnings instead of ignoring errors silently.
+  */
+ typedef struct GlobalProperty {
+     const char *driver;
+@@ -266,6 +269,7 @@ typedef struct GlobalProperty {
+     const char *value;
+     bool user_provided;
+     bool used;
++    Error **errp;
+ } GlobalProperty;
+ 
+ /*** Board API.  This should go away once we have a machine config file.  ***/
+-- 
+1.8.3.1
+

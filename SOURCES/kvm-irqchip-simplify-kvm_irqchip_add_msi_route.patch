@@ -1,0 +1,286 @@
+From 4f782685f835bf237c5c7671f2aef6bf6a015217 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:43 +0200
+Subject: [PATCH 25/37] kvm-irqchip: simplify kvm_irqchip_add_msi_route
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-25-git-send-email-peterx@redhat.com>
+Patchwork-id: 72009
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 24/34] kvm-irqchip: simplify kvm_irqchip_add_msi_route
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Changing the original MSIMessage parameter in kvm_irqchip_add_msi_route
+into the vector number. Vector index provides more information than the
+MSIMessage, we can retrieve the MSIMessage using the vector easily. This
+will avoid fetching MSIMessage every time before adding MSI routes.
+
+Meanwhile, the vector info will be used in the coming patches to further
+enable gsi route update notifications.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit d1f6af6a17a66f58c238e1c26b928cf71c0c11da)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/kvm/pci-assign.c |  8 ++------
+ hw/misc/ivshmem.c        |  3 +--
+ hw/vfio/pci.c            | 11 +++++------
+ hw/virtio/virtio-pci.c   |  9 +++------
+ include/sysemu/kvm.h     | 13 ++++++++++++-
+ kvm-all.c                | 18 ++++++++++++++++--
+ kvm-stub.c               |  2 +-
+ target-i386/kvm.c        |  3 +--
+ 8 files changed, 41 insertions(+), 26 deletions(-)
+
+diff --git a/hw/i386/kvm/pci-assign.c b/hw/i386/kvm/pci-assign.c
+index 866e437..630d355 100644
+--- a/hw/i386/kvm/pci-assign.c
++++ b/hw/i386/kvm/pci-assign.c
+@@ -978,10 +978,9 @@ static void assigned_dev_update_msi(PCIDevice *pci_dev)
+     }
+ 
+     if (ctrl_byte & PCI_MSI_FLAGS_ENABLE) {
+-        MSIMessage msg = msi_get_message(pci_dev, 0);
+         int virq;
+ 
+-        virq = kvm_irqchip_add_msi_route(kvm_state, msg, pci_dev);
++        virq = kvm_irqchip_add_msi_route(kvm_state, 0, pci_dev);
+         if (virq < 0) {
+             perror("assigned_dev_update_msi: kvm_irqchip_add_msi_route");
+             return;
+@@ -1046,7 +1045,6 @@ static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
+     uint16_t entries_nr = 0;
+     int i, r = 0;
+     MSIXTableEntry *entry = adev->msix_table;
+-    MSIMessage msg;
+ 
+     /* Get the usable entry number for allocating */
+     for (i = 0; i < adev->msix_max; i++, entry++) {
+@@ -1083,9 +1081,7 @@ static int assigned_dev_update_msix_mmio(PCIDevice *pci_dev)
+             continue;
+         }
+ 
+-        msg.address = entry->addr_lo | ((uint64_t)entry->addr_hi << 32);
+-        msg.data = entry->data;
+-        r = kvm_irqchip_add_msi_route(kvm_state, msg, pci_dev);
++        r = kvm_irqchip_add_msi_route(kvm_state, i, pci_dev);
+         if (r < 0) {
+             return r;
+         }
+diff --git a/hw/misc/ivshmem.c b/hw/misc/ivshmem.c
+index f52d64e..debdc29 100644
+--- a/hw/misc/ivshmem.c
++++ b/hw/misc/ivshmem.c
+@@ -444,13 +444,12 @@ static void ivshmem_add_kvm_msi_virq(IVShmemState *s, int vector,
+                                      Error **errp)
+ {
+     PCIDevice *pdev = PCI_DEVICE(s);
+-    MSIMessage msg = msix_get_message(pdev, vector);
+     int ret;
+ 
+     IVSHMEM_DPRINTF("ivshmem_add_kvm_msi_virq vector:%d\n", vector);
+     assert(!s->msi_vectors[vector].pdev);
+ 
+-    ret = kvm_irqchip_add_msi_route(kvm_state, msg, pdev);
++    ret = kvm_irqchip_add_msi_route(kvm_state, vector, pdev);
+     if (ret < 0) {
+         error_setg(errp, "kvm_irqchip_add_msi_route failed");
+         return;
+diff --git a/hw/vfio/pci.c b/hw/vfio/pci.c
+index 62230e7..9577587 100644
+--- a/hw/vfio/pci.c
++++ b/hw/vfio/pci.c
+@@ -418,11 +418,11 @@ static int vfio_enable_vectors(VFIOPCIDevice *vdev, bool msix)
+ }
+ 
+ static void vfio_add_kvm_msi_virq(VFIOPCIDevice *vdev, VFIOMSIVector *vector,
+-                                  MSIMessage *msg, bool msix)
++                                  int vector_n, bool msix)
+ {
+     int virq;
+ 
+-    if ((msix && vdev->no_kvm_msix) || (!msix && vdev->no_kvm_msi) || !msg) {
++    if ((msix && vdev->no_kvm_msix) || (!msix && vdev->no_kvm_msi)) {
+         return;
+     }
+ 
+@@ -430,7 +430,7 @@ static void vfio_add_kvm_msi_virq(VFIOPCIDevice *vdev, VFIOMSIVector *vector,
+         return;
+     }
+ 
+-    virq = kvm_irqchip_add_msi_route(kvm_state, *msg, &vdev->pdev);
++    virq = kvm_irqchip_add_msi_route(kvm_state, vector_n, &vdev->pdev);
+     if (virq < 0) {
+         event_notifier_cleanup(&vector->kvm_interrupt);
+         return;
+@@ -496,7 +496,7 @@ static int vfio_msix_vector_do_use(PCIDevice *pdev, unsigned int nr,
+             vfio_update_kvm_msi_virq(vector, *msg, pdev);
+         }
+     } else {
+-        vfio_add_kvm_msi_virq(vdev, vector, msg, true);
++        vfio_add_kvm_msi_virq(vdev, vector, nr, true);
+     }
+ 
+     /*
+@@ -640,7 +640,6 @@ retry:
+ 
+     for (i = 0; i < vdev->nr_vectors; i++) {
+         VFIOMSIVector *vector = &vdev->msi_vectors[i];
+-        MSIMessage msg = msi_get_message(&vdev->pdev, i);
+ 
+         vector->vdev = vdev;
+         vector->virq = -1;
+@@ -657,7 +656,7 @@ retry:
+          * Attempt to enable route through KVM irqchip,
+          * default to userspace handling if unavailable.
+          */
+-        vfio_add_kvm_msi_virq(vdev, vector, &msg, false);
++        vfio_add_kvm_msi_virq(vdev, vector, i, false);
+     }
+ 
+     /* Set interrupt type prior to possible interrupts */
+diff --git a/hw/virtio/virtio-pci.c b/hw/virtio/virtio-pci.c
+index dad2dc7..91be337 100644
+--- a/hw/virtio/virtio-pci.c
++++ b/hw/virtio/virtio-pci.c
+@@ -727,14 +727,13 @@ static uint32_t virtio_read_config(PCIDevice *pci_dev,
+ 
+ static int kvm_virtio_pci_vq_vector_use(VirtIOPCIProxy *proxy,
+                                         unsigned int queue_no,
+-                                        unsigned int vector,
+-                                        MSIMessage msg)
++                                        unsigned int vector)
+ {
+     VirtIOIRQFD *irqfd = &proxy->vector_irqfd[vector];
+     int ret;
+ 
+     if (irqfd->users == 0) {
+-        ret = kvm_irqchip_add_msi_route(kvm_state, msg, &proxy->pci_dev);
++        ret = kvm_irqchip_add_msi_route(kvm_state, vector, &proxy->pci_dev);
+         if (ret < 0) {
+             return ret;
+         }
+@@ -787,7 +786,6 @@ static int kvm_virtio_pci_vector_use(VirtIOPCIProxy *proxy, int nvqs)
+     VirtioDeviceClass *k = VIRTIO_DEVICE_GET_CLASS(vdev);
+     unsigned int vector;
+     int ret, queue_no;
+-    MSIMessage msg;
+ 
+     for (queue_no = 0; queue_no < nvqs; queue_no++) {
+         if (!virtio_queue_get_num(vdev, queue_no)) {
+@@ -797,8 +795,7 @@ static int kvm_virtio_pci_vector_use(VirtIOPCIProxy *proxy, int nvqs)
+         if (vector >= msix_nr_vectors_allocated(dev)) {
+             continue;
+         }
+-        msg = msix_get_message(dev, vector);
+-        ret = kvm_virtio_pci_vq_vector_use(proxy, queue_no, vector, msg);
++        ret = kvm_virtio_pci_vq_vector_use(proxy, queue_no, vector);
+         if (ret < 0) {
+             goto undo;
+         }
+diff --git a/include/sysemu/kvm.h b/include/sysemu/kvm.h
+index 4706c37..f693c1e 100644
+--- a/include/sysemu/kvm.h
++++ b/include/sysemu/kvm.h
+@@ -471,7 +471,18 @@ static inline void cpu_synchronize_post_init(CPUState *cpu)
+     }
+ }
+ 
+-int kvm_irqchip_add_msi_route(KVMState *s, MSIMessage msg, PCIDevice *dev);
++/**
++ * kvm_irqchip_add_msi_route - Add MSI route for specific vector
++ * @s:      KVM state
++ * @vector: which vector to add. This can be either MSI/MSIX
++ *          vector. The function will automatically detect whether
++ *          MSI/MSIX is enabled, and fetch corresponding MSI
++ *          message.
++ * @dev:    Owner PCI device to add the route. If @dev is specified
++ *          as @NULL, an empty MSI message will be inited.
++ * @return: virq (>=0) when success, errno (<0) when failed.
++ */
++int kvm_irqchip_add_msi_route(KVMState *s, int vector, PCIDevice *dev);
+ int kvm_irqchip_update_msi_route(KVMState *s, int virq, MSIMessage msg,
+                                  PCIDevice *dev);
+ void kvm_irqchip_release_virq(KVMState *s, int virq);
+diff --git a/kvm-all.c b/kvm-all.c
+index 0a3a7ec..b550143 100644
+--- a/kvm-all.c
++++ b/kvm-all.c
+@@ -26,6 +26,7 @@
+ #include "qemu/error-report.h"
+ #include "hw/hw.h"
+ #include "hw/pci/msi.h"
++#include "hw/pci/msix.h"
+ #include "hw/s390x/adapter.h"
+ #include "exec/gdbstub.h"
+ #include "sysemu/kvm_int.h"
+@@ -1231,10 +1232,23 @@ int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg)
+     return kvm_set_irq(s, route->kroute.gsi, 1);
+ }
+ 
+-int kvm_irqchip_add_msi_route(KVMState *s, MSIMessage msg, PCIDevice *dev)
++int kvm_irqchip_add_msi_route(KVMState *s, int vector, PCIDevice *dev)
+ {
+     struct kvm_irq_routing_entry kroute = {};
+     int virq;
++    MSIMessage msg = {0, 0};
++
++    if (dev) {
++        if (msix_enabled(dev)) {
++            msg = msix_get_message(dev, vector);
++        } else if (msi_enabled(dev)) {
++            msg = msi_get_message(dev, vector);
++        } else {
++            /* Should never happen */
++            error_report("%s: unknown interrupt type", __func__);
++            abort();
++        }
++    }
+ 
+     if (kvm_gsi_direct_mapping()) {
+         return kvm_arch_msi_data_to_gsi(msg.data);
+@@ -1384,7 +1398,7 @@ int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg)
+     abort();
+ }
+ 
+-int kvm_irqchip_add_msi_route(KVMState *s, MSIMessage msg)
++int kvm_irqchip_add_msi_route(KVMState *s, int vector, PCIDevice *dev)
+ {
+     return -ENOSYS;
+ }
+diff --git a/kvm-stub.c b/kvm-stub.c
+index 61f9d5c..0435cfc 100644
+--- a/kvm-stub.c
++++ b/kvm-stub.c
+@@ -117,7 +117,7 @@ int kvm_on_sigbus(int code, void *addr)
+ }
+ 
+ #ifndef CONFIG_USER_ONLY
+-int kvm_irqchip_add_msi_route(KVMState *s, MSIMessage msg, PCIDevice *dev)
++int kvm_irqchip_add_msi_route(KVMState *s, int vector, PCIDevice *dev)
+ {
+     return -ENOSYS;
+ }
+diff --git a/target-i386/kvm.c b/target-i386/kvm.c
+index e84d9a8..99beb11 100644
+--- a/target-i386/kvm.c
++++ b/target-i386/kvm.c
+@@ -3201,8 +3201,7 @@ void kvm_arch_init_irq_routing(KVMState *s)
+         /* If the ioapic is in QEMU and the lapics are in KVM, reserve
+            MSI routes for signaling interrupts to the local apics. */
+         for (i = 0; i < IOAPIC_NUM_PINS; i++) {
+-            struct MSIMessage msg = { 0x0, 0x0 };
+-            if (kvm_irqchip_add_msi_route(s, msg, NULL) < 0) {
++            if (kvm_irqchip_add_msi_route(s, 0, NULL) < 0) {
+                 error_report("Could not enable split IRQ mode.");
+                 exit(1);
+             }
+-- 
+1.8.3.1
+

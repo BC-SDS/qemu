@@ -1,0 +1,41 @@
+From 8a9aadfe7e57427b11d21cef7b8b7c99d52b80ab Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Wed, 22 Jun 2016 14:03:20 +0200
+Subject: [PATCH 06/16] Disable allwiner_ahci device
+
+RH-Author: Miroslav Rezanina <mrezanin@redhat.com>
+Message-id: <eab65fa429884386898f3bc6e011eeb07ae53f66.1466603432.git.mrezanin@redhat.com>
+Patchwork-id: 70750
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCHv3 07/10] Disable allwiner_ahci device
+Bugzilla: 1333282
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Miroslav Rezanina <mrezanin@redhat.com>
+
+There's no default-configs option for allwiner_ahci device and we can't skip
+file with it so we disable type registration instead.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ide/ahci.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/hw/ide/ahci.c b/hw/ide/ahci.c
+index bcb6a07..7b3d07e 100644
+--- a/hw/ide/ahci.c
++++ b/hw/ide/ahci.c
+@@ -1812,7 +1812,9 @@ static const TypeInfo allwinner_ahci_info = {
+ static void sysbus_ahci_register_types(void)
+ {
+     type_register_static(&sysbus_ahci_info);
++#if 0  /* Disabled in Red Hat Enterprise Linux */
+     type_register_static(&allwinner_ahci_info);
++#endif
+ }
+ 
+ type_init(sysbus_ahci_register_types)
+-- 
+1.8.3.1
+

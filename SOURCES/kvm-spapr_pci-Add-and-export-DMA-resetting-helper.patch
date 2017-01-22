@@ -1,0 +1,75 @@
+From d76a912326e015ca77e5d0345446d8f3df90eeb0 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:16 +0200
+Subject: [PATCH 09/27] spapr_pci: Add and export DMA resetting helper
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-10-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71096
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 09/16] spapr_pci: Add and export DMA resetting helper
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Alexey Kardashevskiy <aik@ozlabs.ru>
+
+This will be later used by the "ibm,reset-pe-dma-window" RTAS handler
+which resets the DMA configuration to the defaults.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit b3162f22cb3cbca73d4c90b936dbadff6954e2f6)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_pci.c          | 10 ++++++++--
+ include/hw/pci-host/spapr.h |  2 ++
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/hw/ppc/spapr_pci.c b/hw/ppc/spapr_pci.c
+index af2705a..e4d2015 100644
+--- a/hw/ppc/spapr_pci.c
++++ b/hw/ppc/spapr_pci.c
+@@ -1486,9 +1486,8 @@ static int spapr_phb_children_reset(Object *child, void *opaque)
+     return 0;
+ }
+ 
+-static void spapr_phb_reset(DeviceState *qdev)
++void spapr_phb_dma_reset(sPAPRPHBState *sphb)
+ {
+-    sPAPRPHBState *sphb = SPAPR_PCI_HOST_BRIDGE(qdev);
+     sPAPRTCETable *tcet = spapr_tce_find_by_liobn(sphb->dma_liobn);
+ 
+     if (tcet && tcet->nb_table) {
+@@ -1498,6 +1497,13 @@ static void spapr_phb_reset(DeviceState *qdev)
+     /* Register default 32bit DMA window */
+     spapr_tce_table_enable(tcet, SPAPR_TCE_PAGE_SHIFT, sphb->dma_win_addr,
+                            sphb->dma_win_size >> SPAPR_TCE_PAGE_SHIFT);
++}
++
++static void spapr_phb_reset(DeviceState *qdev)
++{
++    sPAPRPHBState *sphb = SPAPR_PCI_HOST_BRIDGE(qdev);
++
++    spapr_phb_dma_reset(sphb);
+ 
+     /* Reset the IOMMU state */
+     object_child_foreach(OBJECT(qdev), spapr_phb_children_reset, NULL);
+diff --git a/include/hw/pci-host/spapr.h b/include/hw/pci-host/spapr.h
+index 03ee006..7848366 100644
+--- a/include/hw/pci-host/spapr.h
++++ b/include/hw/pci-host/spapr.h
+@@ -147,4 +147,6 @@ static inline void spapr_phb_vfio_reset(DeviceState *qdev)
+ }
+ #endif
+ 
++void spapr_phb_dma_reset(sPAPRPHBState *sphb);
++
+ #endif /* __HW_SPAPR_PCI_H__ */
+-- 
+1.8.3.1
+

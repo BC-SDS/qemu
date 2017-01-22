@@ -1,0 +1,52 @@
+From dad0167f6900afd69e49f21ae8b54043c50ff7bd Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Mon, 12 Sep 2016 18:35:59 +0200
+Subject: [PATCH 3/4] virtio-balloon: discard virtqueue element on reset
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1473705360-11838-2-git-send-email-stefanha@redhat.com>
+Patchwork-id: 72287
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 1/2] virtio-balloon: discard virtqueue element on reset
+Bugzilla: 1370703
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+RH-Acked-by: Ladi Prosek <lprosek@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+From: Ladi Prosek <lprosek@redhat.com>
+
+The one pending element is being freed but not discarded on device
+reset, which causes svq->inuse to creep up, eventually hitting the
+"Virtqueue size exceeded" error.
+
+Properly discarding the element on device reset makes sure that its
+buffers are unmapped and the inuse counter stays balanced.
+
+Cc: Michael S. Tsirkin <mst@redhat.com>
+Cc: Roman Kagan <rkagan@virtuozzo.com>
+Cc: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Ladi Prosek <lprosek@redhat.com>
+Reviewed-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 104e70cae78bd4afd95d948c6aff188f10508a9c)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/virtio-balloon.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/virtio/virtio-balloon.c b/hw/virtio/virtio-balloon.c
+index 9dbe681..bffdab3 100644
+--- a/hw/virtio/virtio-balloon.c
++++ b/hw/virtio/virtio-balloon.c
+@@ -478,6 +478,7 @@ static void virtio_balloon_device_reset(VirtIODevice *vdev)
+     VirtIOBalloon *s = VIRTIO_BALLOON(vdev);
+ 
+     if (s->stats_vq_elem != NULL) {
++        virtqueue_discard(s->svq, s->stats_vq_elem, 0);
+         g_free(s->stats_vq_elem);
+         s->stats_vq_elem = NULL;
+     }
+-- 
+1.8.3.1
+

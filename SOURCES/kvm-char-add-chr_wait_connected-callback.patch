@@ -1,0 +1,83 @@
+From 0ed053e86f12c593324d73685e9ce39ba28beec0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:41 +0200
+Subject: [PATCH 21/30] char: add chr_wait_connected callback
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-22-marcandre.lureau@redhat.com>
+Patchwork-id: 71937
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 21/28] char: add chr_wait_connected callback
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+A function to wait on the backend to be connected, to be used in the
+following patches.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 6b6723c3b508403309aa21c4fcbe515bd1edfd74)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/sysemu/char.h | 8 ++++++++
+ qemu-char.c           | 9 +++++++++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/include/sysemu/char.h b/include/sysemu/char.h
+index c4692d5..20eb7fe 100644
+--- a/include/sysemu/char.h
++++ b/include/sysemu/char.h
+@@ -70,6 +70,7 @@ struct CharDriverState {
+     int (*get_msgfds)(struct CharDriverState *s, int* fds, int num);
+     int (*set_msgfds)(struct CharDriverState *s, int *fds, int num);
+     int (*chr_add_client)(struct CharDriverState *chr, int fd);
++    int (*chr_wait_connected)(struct CharDriverState *chr, Error **errp);
+     IOEventHandler *chr_event;
+     IOCanReadHandler *chr_can_read;
+     IOReadHandler *chr_read;
+@@ -159,6 +160,13 @@ void qemu_chr_disconnect(CharDriverState *chr);
+ void qemu_chr_cleanup(void);
+ 
+ /**
++ * @qemu_chr_wait_connected:
++ *
++ * Wait for characted backend to be connected.
++ */
++int qemu_chr_wait_connected(CharDriverState *chr, Error **errp);
++
++/**
+  * @qemu_chr_new_noreplay:
+  *
+  * Create a new character backend from a URI.
+diff --git a/qemu-char.c b/qemu-char.c
+index d3b385b..02f5aa9 100644
+--- a/qemu-char.c
++++ b/qemu-char.c
+@@ -3141,6 +3141,15 @@ static gboolean tcp_chr_accept(QIOChannel *channel,
+     return TRUE;
+ }
+ 
++int qemu_chr_wait_connected(CharDriverState *chr, Error **errp)
++{
++    if (chr->chr_wait_connected) {
++        return chr->chr_wait_connected(chr, errp);
++    }
++
++    return 0;
++}
++
+ static void tcp_chr_close(CharDriverState *chr)
+ {
+     TCPCharDriver *s = chr->opaque;
+-- 
+1.8.3.1
+

@@ -1,0 +1,134 @@
+From 664668c14eb8b47f645a30334697660ba5425887 Mon Sep 17 00:00:00 2001
+From: Marcel Apfelbaum <marcel@redhat.com>
+Date: Sun, 24 Jul 2016 16:29:03 +0200
+Subject: [PATCH 23/35] machine: remove iommu property
+
+RH-Author: Marcel Apfelbaum <marcel@redhat.com>
+Message-id: <1469377743-9714-14-git-send-email-marcel@redhat.com>
+Patchwork-id: 71380
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 13/13] machine: remove iommu property
+Bugzilla: 1350196
+RH-Acked-by: Auger Eric <eric.auger@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Peter Xu <peterx@redhat.com>
+
+Since iommu devices can be created with '-device' there is
+no need to keep iommu as machine and mch property.
+
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 10d01f73e39100701028c7badd6ece52990cf758)
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/core/machine.c         | 20 --------------------
+ hw/pci-host/q35.c         | 12 ------------
+ include/hw/pci-host/q35.h |  1 -
+ qemu-options.hx           |  3 ---
+ 4 files changed, 36 deletions(-)
+
+diff --git a/hw/core/machine.c b/hw/core/machine.c
+index 6dbbc85..23456f8 100644
+--- a/hw/core/machine.c
++++ b/hw/core/machine.c
+@@ -286,20 +286,6 @@ static void machine_set_firmware(Object *obj, const char *value, Error **errp)
+     ms->firmware = g_strdup(value);
+ }
+ 
+-static bool machine_get_iommu(Object *obj, Error **errp)
+-{
+-    MachineState *ms = MACHINE(obj);
+-
+-    return ms->iommu;
+-}
+-
+-static void machine_set_iommu(Object *obj, bool value, Error **errp)
+-{
+-    MachineState *ms = MACHINE(obj);
+-
+-    ms->iommu = value;
+-}
+-
+ static void machine_set_suppress_vmdesc(Object *obj, bool value, Error **errp)
+ {
+     MachineState *ms = MACHINE(obj);
+@@ -472,12 +458,6 @@ static void machine_initfn(Object *obj)
+     object_property_set_description(obj, "firmware",
+                                     "Firmware image",
+                                     NULL);
+-    object_property_add_bool(obj, "iommu",
+-                             machine_get_iommu,
+-                             machine_set_iommu, NULL);
+-    object_property_set_description(obj, "iommu",
+-                                    "Set on/off to enable/disable Intel IOMMU (VT-d)",
+-                                    NULL);
+     object_property_add_bool(obj, "suppress-vmdesc",
+                              machine_get_suppress_vmdesc,
+                              machine_set_suppress_vmdesc, NULL);
+diff --git a/hw/pci-host/q35.c b/hw/pci-host/q35.c
+index 675dc7f..fd7f9ec 100644
+--- a/hw/pci-host/q35.c
++++ b/hw/pci-host/q35.c
+@@ -428,14 +428,6 @@ static void mch_reset(DeviceState *qdev)
+     mch_update(mch);
+ }
+ 
+-static void mch_init_dmar(MCHPCIState *mch)
+-{
+-    mch->iommu = INTEL_IOMMU_DEVICE(qdev_create(NULL, TYPE_INTEL_IOMMU_DEVICE));
+-    object_property_add_child(OBJECT(mch), "intel-iommu",
+-                              OBJECT(mch->iommu), NULL);
+-    qdev_init_nofail(DEVICE(mch->iommu));
+-}
+-
+ static void mch_realize(PCIDevice *d, Error **errp)
+ {
+     int i;
+@@ -494,10 +486,6 @@ static void mch_realize(PCIDevice *d, Error **errp)
+                  mch->pci_address_space, &mch->pam_regions[i+1],
+                  PAM_EXPAN_BASE + i * PAM_EXPAN_SIZE, PAM_EXPAN_SIZE);
+     }
+-    /* Intel IOMMU (VT-d) */
+-    if (object_property_get_bool(qdev_get_machine(), "iommu", NULL)) {
+-        mch_init_dmar(mch);
+-    }
+ }
+ 
+ uint64_t mch_mcfg_base(void)
+diff --git a/include/hw/pci-host/q35.h b/include/hw/pci-host/q35.h
+index c5c073d..3dee058 100644
+--- a/include/hw/pci-host/q35.h
++++ b/include/hw/pci-host/q35.h
+@@ -60,7 +60,6 @@ typedef struct MCHPCIState {
+     ram_addr_t above_4g_mem_size;
+     uint64_t pci_hole64_size;
+     uint32_t short_root_bus;
+-    IntelIOMMUState *iommu;
+ } MCHPCIState;
+ 
+ typedef struct Q35PCIHost {
+diff --git a/qemu-options.hx b/qemu-options.hx
+index 4f8a3cf..1d9643d 100644
+--- a/qemu-options.hx
++++ b/qemu-options.hx
+@@ -38,7 +38,6 @@ DEF("machine", HAS_ARG, QEMU_OPTION_machine, \
+     "                kvm_shadow_mem=size of KVM shadow MMU\n"
+     "                dump-guest-core=on|off include guest memory in a core dump (default=on)\n"
+     "                mem-merge=on|off controls memory merge support (default: on)\n"
+-    "                iommu=on|off controls emulated Intel IOMMU (VT-d) support (default=off)\n"
+     "                igd-passthru=on|off controls IGD GFX passthrough support (default=off)\n"
+     "                aes-key-wrap=on|off controls support for AES key wrapping (default=on)\n"
+     "                dea-key-wrap=on|off controls support for DEA key wrapping (default=on)\n"
+@@ -73,8 +72,6 @@ Include guest memory in a core dump. The default is on.
+ Enables or disables memory merge support. This feature, when supported by
+ the host, de-duplicates identical memory pages among VMs instances
+ (enabled by default).
+-@item iommu=on|off
+-Enables or disables emulated Intel IOMMU (VT-d) support. The default is off.
+ @item aes-key-wrap=on|off
+ Enables or disables AES key wrapping support on s390-ccw hosts. This feature
+ controls whether AES wrapping keys will be created to allow
+-- 
+1.8.3.1
+

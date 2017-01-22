@@ -1,0 +1,49 @@
+From d91f1223b0570324ac4a07a178cb41c444dedf0b Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Thu, 21 Jul 2016 16:20:24 +0200
+Subject: [PATCH 30/34] net: fix qemu_announce_self not emitting packets
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1469118024-27832-2-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 71307
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/1] net: fix qemu_announce_self not emitting packets
+Bugzilla: 1343433
+RH-Acked-by: Xiao Wang <jasowang@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+From: Peter Lieven <pl@kamp.de>
+
+commit fefe2a78 accidently dropped the code path for injecting
+raw packets. This feature is needed for sending gratuitous ARPs
+after an incoming migration has completed. The result is increased
+network downtime for vservers where the network card is not virtio-net
+with the VIRTIO_NET_F_GUEST_ANNOUNCE feature.
+
+Fixes: fefe2a78abde932e0f340b21bded2c86def1d242
+Cc: qemu-stable@nongnu.org
+Cc: hongyang.yang@easystack.cn
+Signed-off-by: Peter Lieven <pl@kamp.de>
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+(cherry picked from commit ca1ee3d6b546e841a1b9db413eb8fa09f13a061b)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ net/net.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/net/net.c b/net/net.c
+index 0ad6217..6b0b375 100644
+--- a/net/net.c
++++ b/net/net.c
+@@ -724,7 +724,7 @@ ssize_t qemu_deliver_packet_iov(NetClientState *sender,
+         return 0;
+     }
+ 
+-    if (nc->info->receive_iov) {
++    if (nc->info->receive_iov && !(flags & QEMU_NET_PACKET_FLAG_RAW)) {
+         ret = nc->info->receive_iov(nc, iov, iovcnt);
+     } else {
+         ret = nc_sendv_compat(nc, iov, iovcnt, flags);
+-- 
+1.8.3.1
+

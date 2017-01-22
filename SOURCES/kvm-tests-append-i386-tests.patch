@@ -1,0 +1,50 @@
+From 0cd27d3c54238cab7d56ad004059fca89c484ae9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Fri, 17 Jun 2016 13:45:43 +0200
+Subject: [PATCH 10/25] tests: append i386 tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <1466171144-10377-10-git-send-email-marcandre.lureau@redhat.com>
+Patchwork-id: 70655
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 09/10] tests: append i386 tests
+Bugzilla: 1322087
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Marc-André Lureau <marcandre.lureau@redhat.com>
+
+Do not overwrite x86-64 tests, re-enable vhost-user-test.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Reviewed-by: Victor Kaplansky <victork@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 0ee2e9daf8fd81d59f0ce67e251dfa9599252b7e)
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ tests/Makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/Makefile b/tests/Makefile
+index db93e59..eb5a6fd 100644
+--- a/tests/Makefile
++++ b/tests/Makefile
+@@ -205,7 +205,7 @@ endif
+ check-qtest-i386-y += tests/test-netfilter$(EXESUF)
+ check-qtest-i386-y += tests/test-filter-mirror$(EXESUF)
+ check-qtest-i386-y += tests/test-filter-redirector$(EXESUF)
+-check-qtest-x86_64-y = $(check-qtest-i386-y)
++check-qtest-x86_64-y += $(check-qtest-i386-y)
+ gcov-files-i386-y += i386-softmmu/hw/timer/mc146818rtc.c
+ gcov-files-x86_64-y = $(subst i386-softmmu/,x86_64-softmmu/,$(gcov-files-i386-y))
+ check-qtest-mips-y = tests/endianness-test$(EXESUF)
+-- 
+1.8.3.1
+

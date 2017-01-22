@@ -1,0 +1,148 @@
+From 928775efa6fe4070aa16ecee2a079b061e251092 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:19 +0200
+Subject: [PATCH 19/99] pc: acpi: cpuhp-legacy: switch ProcessorID to
+ possible_cpus idx
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-15-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71630
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 14/78] pc: acpi: cpuhp-legacy: switch ProcessorID to possible_cpus idx
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+In legacy cpu-hotplug ProcessorID == APIC ID is used
+in MADT and cpu-hotplug AML. It was fine as both
+are 8bit and unique. Spec depricated Processor()
+with corresponding ProcessorID and advises to use
+Device() and UID instead of it.
+
+However UID is just 32bit and it can't fit ARM's
+arch_id(MPIDR) which is 64bit. Also in case of
+sparse arch_id() distribution, managment/lookup
+of maps by arch_id(APIC ID/MPIDR) becomes complex
+and expensive.
+
+In preparation to common CPU hotplug with ARM
+and to simplify lookup in possible_cpus[] map
+switch ProcessorID to possible_cpus index in
+MADT.
+
+Legacy cpu-hotplug considerations:
+HW interface of it is APIC ID based bitmask so
+it's impossible to change, also CPON package in
+AML also APIC ID based as well all the methods.
+
+To avoid massive rewrite of AML keep is so and
+just break assumption that ProcessorID == APIC ID,
+ammending CPU_MAT_METHOD to accept APIC ID and
+possible_cpus index, it needs them both to patch
+MADT entry template. Also switch to possible_cpus
+index Processor(ProcessorID) AML.
+That way changes to MADT/AML are minimal and kept
+inside AML/MADT not affecting external interfaces.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 76bdd24ec05d9b8d41582a10602e6cf350541c6b)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/cpu_hotplug.c | 23 +++++++++++++----------
+ hw/i386/acpi-build.c  |  2 +-
+ 2 files changed, 14 insertions(+), 11 deletions(-)
+
+diff --git a/hw/acpi/cpu_hotplug.c b/hw/acpi/cpu_hotplug.c
+index 36ea6c2..9d71d2f 100644
+--- a/hw/acpi/cpu_hotplug.c
++++ b/hw/acpi/cpu_hotplug.c
+@@ -99,7 +99,8 @@ void build_legacy_cpu_hotplug_aml(Aml *ctx, MachineState *machine,
+     int i, apic_idx;
+     Aml *sb_scope = aml_scope("_SB");
+     uint8_t madt_tmpl[8] = {0x00, 0x08, 0x00, 0x00, 0x00, 0, 0, 0};
+-    Aml *cpu_id = aml_arg(0);
++    Aml *cpu_id = aml_arg(1);
++    Aml *apic_id = aml_arg(0);
+     Aml *cpu_on = aml_local(0);
+     Aml *madt = aml_local(1);
+     Aml *cpus_map = aml_name(CPU_ON_BITMAP);
+@@ -111,30 +112,31 @@ void build_legacy_cpu_hotplug_aml(Aml *ctx, MachineState *machine,
+ 
+     /*
+      * _MAT method - creates an madt apic buffer
+-     * cpu_id = Arg0 = Processor ID = Local APIC ID
++     * apic_id = Arg0 = Local APIC ID
++     * cpu_id  = Arg1 = Processor ID
+      * cpu_on = Local0 = CPON flag for this cpu
+      * madt = Local1 = Buffer (in madt apic form) to return
+      */
+-    method = aml_method(CPU_MAT_METHOD, 1, AML_NOTSERIALIZED);
++    method = aml_method(CPU_MAT_METHOD, 2, AML_NOTSERIALIZED);
+     aml_append(method,
+-        aml_store(aml_derefof(aml_index(cpus_map, cpu_id)), cpu_on));
++        aml_store(aml_derefof(aml_index(cpus_map, apic_id)), cpu_on));
+     aml_append(method,
+         aml_store(aml_buffer(sizeof(madt_tmpl), madt_tmpl), madt));
+     /* Update the processor id, lapic id, and enable/disable status */
+     aml_append(method, aml_store(cpu_id, aml_index(madt, aml_int(2))));
+-    aml_append(method, aml_store(cpu_id, aml_index(madt, aml_int(3))));
++    aml_append(method, aml_store(apic_id, aml_index(madt, aml_int(3))));
+     aml_append(method, aml_store(cpu_on, aml_index(madt, aml_int(4))));
+     aml_append(method, aml_return(madt));
+     aml_append(sb_scope, method);
+ 
+     /*
+      * _STA method - return ON status of cpu
+-     * cpu_id = Arg0 = Processor ID = Local APIC ID
++     * apic_id = Arg0 = Local APIC ID
+      * cpu_on = Local0 = CPON flag for this cpu
+      */
+     method = aml_method(CPU_STATUS_METHOD, 1, AML_NOTSERIALIZED);
+     aml_append(method,
+-        aml_store(aml_derefof(aml_index(cpus_map, cpu_id)), cpu_on));
++        aml_store(aml_derefof(aml_index(cpus_map, apic_id)), cpu_on));
+     if_ctx = aml_if(cpu_on);
+     {
+         aml_append(if_ctx, aml_return(aml_int(0xF)));
+@@ -243,11 +245,12 @@ void build_legacy_cpu_hotplug_aml(Aml *ctx, MachineState *machine,
+ 
+         assert(apic_id < ACPI_CPU_HOTPLUG_ID_LIMIT);
+ 
+-        dev = aml_processor(apic_id, 0, 0, "CP%.02X", apic_id);
++        dev = aml_processor(i, 0, 0, "CP%.02X", apic_id);
+ 
+         method = aml_method("_MAT", 0, AML_NOTSERIALIZED);
+         aml_append(method,
+-            aml_return(aml_call1(CPU_MAT_METHOD, aml_int(apic_id))));
++            aml_return(aml_call2(CPU_MAT_METHOD, aml_int(apic_id), aml_int(i))
++        ));
+         aml_append(dev, method);
+ 
+         method = aml_method("_STA", 0, AML_NOTSERIALIZED);
+@@ -268,7 +271,7 @@ void build_legacy_cpu_hotplug_aml(Aml *ctx, MachineState *machine,
+     /* build this code:
+      *   Method(NTFY, 2) {If (LEqual(Arg0, 0x00)) {Notify(CP00, Arg1)} ...}
+      */
+-    /* Arg0 = Processor ID = APIC ID */
++    /* Arg0 = APIC ID */
+     method = aml_method(AML_NOTIFY_METHOD, 2, AML_NOTSERIALIZED);
+     for (i = 0; i < apic_ids->len; i++) {
+         int apic_id = apic_ids->cpus[i].arch_id;
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index dfad306..f36e5b4 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -351,7 +351,7 @@ build_madt(GArray *table_data, BIOSLinker *linker, PCMachineState *pcms)
+ 
+         apic->type = ACPI_APIC_PROCESSOR;
+         apic->length = sizeof(*apic);
+-        apic->processor_id = apic_id;
++        apic->processor_id = i;
+         apic->local_apic_id = apic_id;
+         if (apic_ids->cpus[i].cpu != NULL) {
+             apic->flags = cpu_to_le32(1);
+-- 
+1.8.3.1
+

@@ -1,0 +1,154 @@
+From 476611ac3650182c02ee51c453882a9cf4166507 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:29 +0200
+Subject: [PATCH 09/30] vhost: do not assert() on vhost_ops failure
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-10-marcandre.lureau@redhat.com>
+Patchwork-id: 71925
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 09/28] vhost: do not assert() on vhost_ops failure
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Calling a vhost operation may fail, for example with disconnected
+vhost-user backend, but qemu shouldn't abort in this case.
+
+Log an error instead, except on error and cleanup code paths where it
+can be mostly ignored.
+
+Let's use a VHOST_OPS_DEBUG macro to easily disable those messages once
+disconnected backend stabilizes.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 162bba7fa84182e5dc07f94db9744fc80109592a)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/vhost.c | 49 ++++++++++++++++++++++++++++++++-----------------
+ 1 file changed, 32 insertions(+), 17 deletions(-)
+
+diff --git a/hw/virtio/vhost.c b/hw/virtio/vhost.c
+index 2f5ac08..638cb53 100644
+--- a/hw/virtio/vhost.c
++++ b/hw/virtio/vhost.c
+@@ -27,6 +27,18 @@
+ #include "hw/virtio/virtio-access.h"
+ #include "migration/migration.h"
+ 
++/* enabled until disconnected backend stabilizes */
++#define _VHOST_DEBUG 1
++
++#ifdef _VHOST_DEBUG
++#define VHOST_OPS_DEBUG(fmt, ...) \
++    do { error_report(fmt ": %s (%d)", ## __VA_ARGS__, \
++                      strerror(errno), errno); } while (0)
++#else
++#define VHOST_OPS_DEBUG(fmt, ...) \
++    do { } while (0)
++#endif
++
+ static struct vhost_log *vhost_log;
+ static struct vhost_log *vhost_log_shm;
+ 
+@@ -400,7 +412,10 @@ static inline void vhost_dev_log_resize(struct vhost_dev *dev, uint64_t size)
+     /* inform backend of log switching, this must be done before
+        releasing the current log, to ensure no logging is lost */
+     r = dev->vhost_ops->vhost_set_log_base(dev, log_base, log);
+-    assert(r >= 0);
++    if (r < 0) {
++        VHOST_OPS_DEBUG("vhost_set_log_base failed");
++    }
++
+     vhost_log_put(dev, true);
+     dev->log = log;
+     dev->log_size = size;
+@@ -567,7 +582,9 @@ static void vhost_commit(MemoryListener *listener)
+ 
+     if (!dev->log_enabled) {
+         r = dev->vhost_ops->vhost_set_mem_table(dev, dev->mem);
+-        assert(r >= 0);
++        if (r < 0) {
++            VHOST_OPS_DEBUG("vhost_set_mem_table failed");
++        }
+         dev->memory_changed = false;
+         return;
+     }
+@@ -580,7 +597,9 @@ static void vhost_commit(MemoryListener *listener)
+         vhost_dev_log_resize(dev, log_size + VHOST_LOG_BUFFER);
+     }
+     r = dev->vhost_ops->vhost_set_mem_table(dev, dev->mem);
+-    assert(r >= 0);
++    if (r < 0) {
++        VHOST_OPS_DEBUG("vhost_set_mem_table failed");
++    }
+     /* To log less, can only decrease log size after table update. */
+     if (dev->log_size > log_size + VHOST_LOG_BUFFER) {
+         vhost_dev_log_resize(dev, log_size);
+@@ -667,7 +686,7 @@ static int vhost_dev_set_features(struct vhost_dev *dev, bool enable_log)
+ 
+ static int vhost_dev_set_log(struct vhost_dev *dev, bool enable_log)
+ {
+-    int r, t, i, idx;
++    int r, i, idx;
+     r = vhost_dev_set_features(dev, enable_log);
+     if (r < 0) {
+         goto err_features;
+@@ -684,12 +703,10 @@ static int vhost_dev_set_log(struct vhost_dev *dev, bool enable_log)
+ err_vq:
+     for (; i >= 0; --i) {
+         idx = dev->vhost_ops->vhost_get_vq_index(dev, dev->vq_index + i);
+-        t = vhost_virtqueue_set_addr(dev, dev->vqs + i, idx,
+-                                     dev->log_enabled);
+-        assert(t >= 0);
++        vhost_virtqueue_set_addr(dev, dev->vqs + i, idx,
++                                 dev->log_enabled);
+     }
+-    t = vhost_dev_set_features(dev, dev->log_enabled);
+-    assert(t >= 0);
++    vhost_dev_set_features(dev, dev->log_enabled);
+ err_features:
+     return r;
+ }
+@@ -933,15 +950,11 @@ static void vhost_virtqueue_stop(struct vhost_dev *dev,
+      * native as legacy devices expect so by default.
+      */
+     if (vhost_needs_vring_endian(vdev)) {
+-        r = vhost_virtqueue_set_vring_endian_legacy(dev,
+-                                                    !virtio_is_big_endian(vdev),
+-                                                    vhost_vq_index);
+-        if (r < 0) {
+-            error_report("failed to reset vring endianness");
+-        }
++        vhost_virtqueue_set_vring_endian_legacy(dev,
++                                                !virtio_is_big_endian(vdev),
++                                                vhost_vq_index);
+     }
+ 
+-    assert (r >= 0);
+     cpu_physical_memory_unmap(vq->ring, virtio_queue_get_ring_size(vdev, idx),
+                               0, virtio_queue_get_ring_size(vdev, idx));
+     cpu_physical_memory_unmap(vq->used, virtio_queue_get_used_size(vdev, idx),
+@@ -1231,7 +1244,9 @@ void vhost_virtqueue_mask(struct vhost_dev *hdev, VirtIODevice *vdev, int n,
+ 
+     file.index = hdev->vhost_ops->vhost_get_vq_index(hdev, n);
+     r = hdev->vhost_ops->vhost_set_vring_call(hdev, &file);
+-    assert(r >= 0);
++    if (r < 0) {
++        VHOST_OPS_DEBUG("vhost_set_vring_call failed");
++    }
+ }
+ 
+ uint64_t vhost_get_features(struct vhost_dev *hdev, const int *feature_bits,
+-- 
+1.8.3.1
+

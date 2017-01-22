@@ -1,0 +1,184 @@
+From 69e2155268495a016c026d8e002d93f81b615a0f Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 24 Jun 2016 18:55:44 +0200
+Subject: [PATCH 15/33] acpi: make bios_linker_loader_add_checksum() API offset
+ based
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466794559-27963-8-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70774
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 07/22] acpi: make bios_linker_loader_add_checksum() API offset based
+Bugzilla: 1270345
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Igor Mammedov <imammedo@redhat.com>
+
+It should help to make clear that bios_linker works in terms
+of offsets within a file. Also it should prevent mistakes
+where user passes as arguments pointers to unrelated to file blobs.
+
+While at it, considering that it's a ACPI checksum and
+it's initial value must be 0, move checksum field zeroing
+into bios_linker_loader_add_checksum() instead of doing it
+at every call site manually before bios_linker_loader_add_checksum()
+is called.
+
+In addition add extra boundary checks.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 28213cb6a61a724e2cb1e3a76d2bb17aa0ce9b36)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/aml-build.c                  |  5 +++--
+ hw/acpi/bios-linker-loader.c         | 36 +++++++++++++-----------------------
+ hw/arm/virt-acpi-build.c             |  5 ++---
+ hw/i386/acpi-build.c                 |  5 ++---
+ include/hw/acpi/bios-linker-loader.h |  4 ++--
+ 5 files changed, 22 insertions(+), 33 deletions(-)
+
+diff --git a/hw/acpi/aml-build.c b/hw/acpi/aml-build.c
+index 5a4aeb1..87def65 100644
+--- a/hw/acpi/aml-build.c
++++ b/hw/acpi/aml-build.c
+@@ -1476,6 +1476,8 @@ build_header(BIOSLinker *linker, GArray *table_data,
+              AcpiTableHeader *h, const char *sig, int len, uint8_t rev,
+              const char *oem_id, const char *oem_table_id)
+ {
++    unsigned tbl_offset = (char *)h - table_data->data;
++    unsigned checksum_offset = (char *)&h->checksum - table_data->data;
+     memcpy(&h->signature, sig, 4);
+     h->length = cpu_to_le32(len);
+     h->revision = rev;
+@@ -1496,10 +1498,9 @@ build_header(BIOSLinker *linker, GArray *table_data,
+     h->oem_revision = cpu_to_le32(1);
+     memcpy(h->asl_compiler_id, ACPI_BUILD_APPNAME4, 4);
+     h->asl_compiler_revision = cpu_to_le32(1);
+-    h->checksum = 0;
+     /* Checksum to be filled in by Guest linker */
+     bios_linker_loader_add_checksum(linker, ACPI_BUILD_TABLE_FILE,
+-                                    h, len, &h->checksum);
++        tbl_offset, len, checksum_offset);
+ }
+ 
+ void *acpi_data_push(GArray *table_data, unsigned size)
+diff --git a/hw/acpi/bios-linker-loader.c b/hw/acpi/bios-linker-loader.c
+index 3fb54dc..d963ebe 100644
+--- a/hw/acpi/bios-linker-loader.c
++++ b/hw/acpi/bios-linker-loader.c
+@@ -189,8 +189,8 @@ void bios_linker_loader_alloc(BIOSLinker *linker,
+ }
+ 
+ /*
+- * bios_linker_loader_add_checksum: ask guest to add checksum of file data
+- * into (same) file at the specified pointer.
++ * bios_linker_loader_add_checksum: ask guest to add checksum of ACPI
++ * table in the specified file at the specified offset.
+  *
+  * Checksum calculation simply sums -X for each byte X in the range
+  * using 8-bit math (i.e. ACPI checksum).
+@@ -198,35 +198,25 @@ void bios_linker_loader_alloc(BIOSLinker *linker,
+  * @linker: linker object instance
+  * @file: file that includes the checksum to be calculated
+  *        and the data to be checksummed
+- * @start, @size: range of data to checksum
+- * @checksum: location of the checksum to be patched within file blob
+- *
+- * Notes:
+- * - checksum byte initial value must have been pushed into blob
+- *   associated with @file and reside at address @checksum.
+- * - @size bytes must have been pushed into blob associated wtih @file
+- *   and reside at address @start.
+- * - Guest calculates checksum of specified range of data, result is added to
+- *   initial value at @checksum into copy of @file in Guest memory.
+- * - Range might include the checksum itself.
+- * - To avoid confusion, caller must always put 0x0 at @checksum.
+- * - @file must be loaded into Guest memory using bios_linker_loader_alloc
++ * @start_offset, @size: range of data in the file to checksum,
++ *                       relative to the start of file blob
++ * @checksum_offset: location of the checksum to be patched within file blob,
++ *                   relative to the start of file blob
+  */
+ void bios_linker_loader_add_checksum(BIOSLinker *linker, const char *file_name,
+-                                     void *start, unsigned size,
+-                                     uint8_t *checksum)
++                                     unsigned start_offset, unsigned size,
++                                     unsigned checksum_offset)
+ {
+     BiosLinkerLoaderEntry entry;
+     const BiosLinkerFileEntry *file = bios_linker_find_file(linker, file_name);
+-    ptrdiff_t checksum_offset = (gchar *)checksum - file->blob->data;
+-    ptrdiff_t start_offset = (gchar *)start - file->blob->data;
+ 
+-    assert(checksum_offset >= 0);
+-    assert(start_offset >= 0);
+-    assert(checksum_offset + 1 <= file->blob->len);
++    assert(file);
++    assert(start_offset < file->blob->len);
+     assert(start_offset + size <= file->blob->len);
+-    assert(*checksum == 0x0);
++    assert(checksum_offset >= start_offset);
++    assert(checksum_offset + 1 <= start_offset + size);
+ 
++    *(file->blob->data + checksum_offset) = 0;
+     memset(&entry, 0, sizeof entry);
+     strncpy(entry.cksum.file, file_name, sizeof entry.cksum.file - 1);
+     entry.command = cpu_to_le32(BIOS_LINKER_LOADER_COMMAND_ADD_CHECKSUM);
+diff --git a/hw/arm/virt-acpi-build.c b/hw/arm/virt-acpi-build.c
+index 4dcc680..819033f 100644
+--- a/hw/arm/virt-acpi-build.c
++++ b/hw/arm/virt-acpi-build.c
+@@ -372,11 +372,10 @@ build_rsdp(GArray *rsdp_table, BIOSLinker *linker, unsigned rsdt_tbl_offset)
+         ACPI_BUILD_RSDP_FILE, rsdt_pa_offset, rsdt_pa_size,
+         ACPI_BUILD_TABLE_FILE, rsdt_tbl_offset);
+ 
+-    rsdp->checksum = 0;
+     /* Checksum to be filled by Guest linker */
+     bios_linker_loader_add_checksum(linker, ACPI_BUILD_RSDP_FILE,
+-                                    rsdp, sizeof *rsdp,
+-                                    &rsdp->checksum);
++        (char *)rsdp - rsdp_table->data, sizeof *rsdp,
++        (char *)&rsdp->checksum - rsdp_table->data);
+ 
+     return rsdp_table;
+ }
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index 0ff6564..e2f3d8f 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -2612,11 +2612,10 @@ build_rsdp(GArray *rsdp_table, BIOSLinker *linker, unsigned rsdt_tbl_offset)
+         ACPI_BUILD_RSDP_FILE, rsdt_pa_offset, rsdt_pa_size,
+         ACPI_BUILD_TABLE_FILE, rsdt_tbl_offset);
+ 
+-    rsdp->checksum = 0;
+     /* Checksum to be filled by Guest linker */
+     bios_linker_loader_add_checksum(linker, ACPI_BUILD_RSDP_FILE,
+-                                    rsdp, sizeof *rsdp,
+-                                    &rsdp->checksum);
++        (char *)rsdp - rsdp_table->data, sizeof *rsdp,
++        (char *)&rsdp->checksum - rsdp_table->data);
+ 
+     return rsdp_table;
+ }
+diff --git a/include/hw/acpi/bios-linker-loader.h b/include/hw/acpi/bios-linker-loader.h
+index f666b7c..a05227e 100644
+--- a/include/hw/acpi/bios-linker-loader.h
++++ b/include/hw/acpi/bios-linker-loader.h
+@@ -17,8 +17,8 @@ void bios_linker_loader_alloc(BIOSLinker *linker,
+                               bool alloc_fseg);
+ 
+ void bios_linker_loader_add_checksum(BIOSLinker *linker, const char *file,
+-                                     void *start, unsigned size,
+-                                     uint8_t *checksum);
++                                     unsigned start_offset, unsigned size,
++                                     unsigned checksum_offset);
+ 
+ void bios_linker_loader_add_pointer(BIOSLinker *linker,
+                                     const char *dest_file,
+-- 
+1.8.3.1
+

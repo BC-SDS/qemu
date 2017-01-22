@@ -1,0 +1,65 @@
+From d9fa9aa5abfc4e9e9f69bb26372467373aad3aa9 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Thu, 16 Jun 2016 09:44:32 +0200
+Subject: [PATCH 08/13] Fix rhel6 rom file
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1466070273-5859-3-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70633
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH v2 2/3] Fix rhel6 rom file
+Bugzilla: 1344320
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+RHEL6 uses the bios.bin (which is 128KB)
+7.2.0's code in pc_machine_rhel* just didn't set default_machine_opts
+at all in the 6.* types - I'd rather be explicit.
+
+We don't need to set it at all for the 7.[210].0 machine types
+since they now inherit from 7.3.0.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+---
+ hw/i386/pc_piix.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc_piix.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/hw/i386/pc_piix.c b/hw/i386/pc_piix.c
+index ae70af2..9679c33 100644
+--- a/hw/i386/pc_piix.c
++++ b/hw/i386/pc_piix.c
+@@ -1168,7 +1168,6 @@ static void pc_machine_rhel710_options(MachineClass *m)
+     pc_machine_rhel720_options(m);
+     m->family = "pc_piix_Y";
+     m->desc = "RHEL 7.1.0 PC (i440FX + PIIX, 1996)";
+-    m->default_machine_opts = "firmware=bios-256k.bin";
+     SET_MACHINE_COMPAT(m, PC_RHEL7_1_COMPAT);
+ }
+ 
+@@ -1203,7 +1202,6 @@ static void pc_machine_rhel700_options(MachineClass *m)
+     pc_machine_rhel710_options(m);
+     m->family = "pc_piix_Y";
+     m->desc = "RHEL 7.0.0 PC (i440FX + PIIX, 1996)";
+-    m->default_machine_opts = "firmware=bios-256k.bin";
+     SET_MACHINE_COMPAT(m, PC_RHEL7_0_COMPAT);
+ }
+ 
+@@ -1517,6 +1515,7 @@ static void pc_machine_rhel660_options(MachineClass *m)
+     m->family = "pc_piix_Z";
+     m->desc = "RHEL 6.6.0 PC";
+     m->rom_file_has_mr = false;
++    m->default_machine_opts = "firmware=bios.bin";
+     SET_MACHINE_COMPAT(m, PC_RHEL6_6_COMPAT);
+ }
+ 
+-- 
+1.8.3.1
+

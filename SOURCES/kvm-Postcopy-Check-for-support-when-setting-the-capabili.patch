@@ -1,0 +1,67 @@
+From 6a98696a4b9d15e02d1e4b2f595ce8774c77e691 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Fri, 17 Jun 2016 14:39:27 +0200
+Subject: [PATCH 06/33] Postcopy: Check for support when setting the capability
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1466174367-11047-7-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70664
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 6/6] Postcopy: Check for support when setting the capability
+Bugzilla: 1347256
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+RH-Acked-by: John Snow <jsnow@redhat.com>
+RH-Acked-by: Amit Shah <amit.shah@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+Knowing whether the destination host supports migration with
+postcopy can be tricky.
+The destination doesn't need the capability set, however
+if we set it then use the opportunity to do the test and
+tell the user/management layer early.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: 1465816605-29488-7-git-send-email-dgilbert@redhat.com
+Message-Id: <1465816605-29488-7-git-send-email-dgilbert@redhat.com>
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+(cherry picked from commit 096631bd95ac8f873fed9f62c4a57076ffcdb54d)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ migration/migration.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/migration/migration.c b/migration/migration.c
+index 96b6f45..bc8a46b 100644
+--- a/migration/migration.c
++++ b/migration/migration.c
+@@ -676,6 +676,7 @@ void qmp_migrate_set_capabilities(MigrationCapabilityStatusList *params,
+ {
+     MigrationState *s = migrate_get_current();
+     MigrationCapabilityStatusList *cap;
++    bool old_postcopy_cap = migrate_postcopy_ram();
+ 
+     if (migration_is_setup_or_active(s->state)) {
+         error_setg(errp, QERR_MIGRATION_ACTIVE);
+@@ -698,6 +699,19 @@ void qmp_migrate_set_capabilities(MigrationCapabilityStatusList *params,
+             s->enabled_capabilities[MIGRATION_CAPABILITY_POSTCOPY_RAM] =
+                 false;
+         }
++        /* This check is reasonably expensive, so only when it's being
++         * set the first time, also it's only the destination that needs
++         * special support.
++         */
++        if (!old_postcopy_cap && runstate_check(RUN_STATE_INMIGRATE) &&
++            !postcopy_ram_supported_by_host()) {
++            /* postcopy_ram_supported_by_host will have emitted a more
++             * detailed message
++             */
++            error_report("Postcopy is not supported");
++            s->enabled_capabilities[MIGRATION_CAPABILITY_POSTCOPY_RAM] =
++                false;
++        }
+     }
+ }
+ 
+-- 
+1.8.3.1
+

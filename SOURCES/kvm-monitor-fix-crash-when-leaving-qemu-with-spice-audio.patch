@@ -1,0 +1,135 @@
+From 13cb34b3e12a7beab404ca535d70466be328358f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Wed, 10 Aug 2016 20:01:43 +0200
+Subject: [PATCH 08/17] monitor: fix crash when leaving qemu with spice audio
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160810200144.31810-2-marcandre.lureau@redhat.com>
+Patchwork-id: 71914
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 1/2] monitor: fix crash when leaving qemu with spice audio
+Bugzilla: 1355704
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Since aa5cb7f5e, the chardevs are being cleaned up when leaving
+qemu. However, the monitor has still references to them, which may
+lead to crashes when running atexit() and trying to send monitor
+events:
+
+ #0  0x00007fffdb18f6f5 in __GI_raise (sig=sig@entry=6) at ../sysdeps/unix/sysv/linux/raise.c:54
+ #1  0x00007fffdb1912fa in __GI_abort () at abort.c:89
+ #2  0x0000555555c263e7 in error_exit (err=22, msg=0x555555d47980 <__func__.13537> "qemu_mutex_lock") at util/qemu-thread-posix.c:39
+ #3  0x0000555555c26488 in qemu_mutex_lock (mutex=0x5555567a2420) at util/qemu-thread-posix.c:66
+ #4  0x00005555558c52db in qemu_chr_fe_write (s=0x5555567a2420, buf=0x55555740dc40 "{\"timestamp\": {\"seconds\": 1470041716, \"microseconds\": 989699}, \"event\": \"SPICE_DISCONNECTED\", \"data\": {\"server\": {\"port\": \"5900\", \"family\": \"ipv4\", \"host\": \"127.0.0.1\"}, \"client\": {\"port\": \"40272\", \"f"..., len=240) at qemu-char.c:280
+ #5  0x0000555555787cad in monitor_flush_locked (mon=0x5555567bd9e0) at /home/elmarco/src/qemu/monitor.c:311
+ #6  0x0000555555787e46 in monitor_puts (mon=0x5555567bd9e0, str=0x5555567a44ef "") at /home/elmarco/src/qemu/monitor.c:353
+ #7  0x00005555557880fe in monitor_json_emitter (mon=0x5555567bd9e0, data=0x5555567c73a0) at /home/elmarco/src/qemu/monitor.c:401
+ #8  0x00005555557882d2 in monitor_qapi_event_emit (event=QAPI_EVENT_SPICE_DISCONNECTED, qdict=0x5555567c73a0) at /home/elmarco/src/qemu/monitor.c:472
+ #9  0x000055555578838f in monitor_qapi_event_queue (event=QAPI_EVENT_SPICE_DISCONNECTED, qdict=0x5555567c73a0, errp=0x7fffffffca88) at /home/elmarco/src/qemu/monitor.c:497
+ #10 0x0000555555c15541 in qapi_event_send_spice_disconnected (server=0x5555571139d0, client=0x5555570d0db0, errp=0x5555566c0428 <error_abort>) at qapi-event.c:1038
+ #11 0x0000555555b11bc6 in channel_event (event=3, info=0x5555570d6c00) at ui/spice-core.c:248
+ #12 0x00007fffdcc9983a in adapter_channel_event (event=3, info=0x5555570d6c00) at reds.c:120
+ #13 0x00007fffdcc99a25 in reds_handle_channel_event (reds=0x5555567a9d60, event=3, info=0x5555570d6c00) at reds.c:324
+ #14 0x00007fffdcc7d4c4 in main_dispatcher_self_handle_channel_event (self=0x5555567b28b0, event=3, info=0x5555570d6c00) at main-dispatcher.c:175
+ #15 0x00007fffdcc7d5b1 in main_dispatcher_channel_event (self=0x5555567b28b0, event=3, info=0x5555570d6c00) at main-dispatcher.c:194
+ #16 0x00007fffdcca7674 in reds_stream_push_channel_event (s=0x5555570d9910, event=3) at reds-stream.c:354
+ #17 0x00007fffdcca749b in reds_stream_free (s=0x5555570d9910) at reds-stream.c:323
+ #18 0x00007fffdccb5dad in snd_disconnect_channel (channel=0x5555576a89a0) at sound.c:229
+ #19 0x00007fffdccb9e57 in snd_detach_common (worker=0x555557739720) at sound.c:1589
+ #20 0x00007fffdccb9f0e in snd_detach_playback (sin=0x5555569fe3f8) at sound.c:1602
+ #21 0x00007fffdcca3373 in spice_server_remove_interface (sin=0x5555569fe3f8) at reds.c:3387
+ #22 0x00005555558ff6e2 in line_out_fini (hw=0x5555569fe370) at audio/spiceaudio.c:152
+ #23 0x00005555558f909e in audio_atexit () at audio/audio.c:1754
+ #24 0x00007fffdb1941e8 in __run_exit_handlers (status=0, listp=0x7fffdb5175d8 <__exit_funcs>, run_list_atexit=run_list_atexit@entry=true) at exit.c:82
+ #25 0x00007fffdb194235 in __GI_exit (status=<optimized out>) at exit.c:104
+ #26 0x00007fffdb17b738 in __libc_start_main (main=0x5555558d7874 <main>, argc=67, argv=0x7fffffffcf48, init=<optimized out>, fini=<optimized out>, rtld_fini=<optimized out>, stack_end=0x7fffffffcf38) at ../csu/libc-start.c:323
+
+Add a monitor_cleanup() functions to remove all the monitors before
+cleaning up the chardev. Note that we are "losing" some events that
+used to be sent during atexit().
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-Id: <20160801112343.29082-2-marcandre.lureau@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Markus Armbruster <armbru@redhat.com>
+Signed-off-by: Markus Armbruster <armbru@redhat.com>
+
+(cherry picked from commit 2ef45716e1d4820f10a90ee2f17a9cb4fe5a8806)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355704
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/monitor/monitor.h |  1 +
+ monitor.c                 | 20 ++++++++++++++++++++
+ vl.c                      |  1 +
+ 3 files changed, 22 insertions(+)
+
+diff --git a/include/monitor/monitor.h b/include/monitor/monitor.h
+index d22b2de..67c4928 100644
+--- a/include/monitor/monitor.h
++++ b/include/monitor/monitor.h
+@@ -20,6 +20,7 @@ extern Monitor *cur_mon;
+ bool monitor_cur_is_qmp(void);
+ 
+ void monitor_init(CharDriverState *chr, int flags);
++void monitor_cleanup(void);
+ 
+ int monitor_suspend(Monitor *mon);
+ void monitor_resume(Monitor *mon);
+diff --git a/monitor.c b/monitor.c
+index b469225..e214a58 100644
+--- a/monitor.c
++++ b/monitor.c
+@@ -635,6 +635,13 @@ static void monitor_data_init(Monitor *mon)
+ 
+ static void monitor_data_destroy(Monitor *mon)
+ {
++    if (mon->chr) {
++        qemu_chr_add_handlers(mon->chr, NULL, NULL, NULL, NULL);
++    }
++    if (monitor_is_qmp(mon)) {
++        json_message_parser_destroy(&mon->qmp.parser);
++    }
++    g_free(mon->rs);
+     QDECREF(mon->outbuf);
+     qemu_mutex_destroy(&mon->out_lock);
+ }
+@@ -4156,6 +4163,19 @@ void monitor_init(CharDriverState *chr, int flags)
+     qemu_mutex_unlock(&monitor_lock);
+ }
+ 
++void monitor_cleanup(void)
++{
++    Monitor *mon, *next;
++
++    qemu_mutex_lock(&monitor_lock);
++    QLIST_FOREACH_SAFE(mon, &mon_list, entry, next) {
++        QLIST_REMOVE(mon, entry);
++        monitor_data_destroy(mon);
++        g_free(mon);
++    }
++    qemu_mutex_unlock(&monitor_lock);
++}
++
+ static void bdrv_password_cb(void *opaque, const char *password,
+                              void *readline_opaque)
+ {
+diff --git a/vl.c b/vl.c
+index 56b05c6..e342942 100644
+--- a/vl.c
++++ b/vl.c
+@@ -4687,6 +4687,7 @@ int main(int argc, char **argv, char **envp)
+ #endif
+     net_cleanup();
+ 
++    monitor_cleanup();
+     qemu_chr_cleanup();
+ 
+     return 0;
+-- 
+1.8.3.1
+

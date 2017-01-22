@@ -1,0 +1,86 @@
+From 08559056d4a03df6b0f25e038470cc32330f305f Mon Sep 17 00:00:00 2001
+From: Andrew Jones <drjones@redhat.com>
+Date: Fri, 15 Jul 2016 07:37:24 +0200
+Subject: [PATCH 3/6] hw/arm/virt: kill 7.2 machine type
+
+RH-Author: Andrew Jones <drjones@redhat.com>
+Message-id: <1468568244-8166-1-git-send-email-drjones@redhat.com>
+Patchwork-id: 71193
+O-Subject: [AArch64 RHEL-7.3 qemu-kvm-rhev PATCH] hw/arm/virt: kill 7.2 machine type
+Bugzilla: 1356814
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1356814
+Brew: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11356574
+Upstream: N/A
+
+We didn't release an AArch64 build for 7.2. Remove our 7.2
+dry-run machine type to avoid needing to maintain it and to
+explain to users why it's there but not supported.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/arm/virt.c | 38 --------------------------------------
+ 1 file changed, 38 deletions(-)
+
+diff --git a/hw/arm/virt.c b/hw/arm/virt.c
+index 874aa26..069d6b4 100644
+--- a/hw/arm/virt.c
++++ b/hw/arm/virt.c
+@@ -1469,43 +1469,6 @@ static const TypeInfo rhel_machine_info = {
+     .class_init    = rhel_machine_class_init,
+ };
+ 
+-static void rhel720_virt_instance_init(Object *obj)
+-{
+-    VirtMachineState *vms = VIRT_MACHINE(obj);
+-
+-    /* EL3 is disabled on RHEL 7.2.0 virt */
+-    vms->secure = false;
+-    /* High memory is disabled on RHEL 7.2.0 virt */
+-    vms->highmem = false;
+-    /* Default GIC type is v2 on RHEL 7.2.0 virt */
+-    vms->gic_version = 2;
+-}
+-
+-static void rhel720_virt_class_init(ObjectClass *oc, void *data)
+-{
+-    MachineClass *mc = MACHINE_CLASS(oc);
+-    static GlobalProperty rhel720_compat_props[] = {
+-      { /* end of list */ }
+-    };
+-
+-    mc->desc = "RHEL 7.2.0 ARM Virtual Machine";
+-    mc->alias = "virt-rhelsa7.2";
+-    mc->compat_props = rhel720_compat_props;
+-
+-    /* override the base class init configuration */
+-    mc->max_cpus = 8;
+-    mc->block_default_type = IF_IDE; /* IF_IDE = 0 */
+-    mc->no_cdrom = 0;
+-    mc->pci_allow_0_address = false;
+-}
+-
+-static const TypeInfo rhel720_machvirt_info = {
+-    .name = MACHINE_TYPE_NAME("virt-rhel7.2.0"),
+-    .parent = TYPE_VIRT_MACHINE,
+-    .instance_init = rhel720_virt_instance_init,
+-    .class_init = rhel720_virt_class_init,
+-};
+-
+ static void rhel730_virt_instance_init(Object *obj)
+ {
+     VirtMachineState *vms = VIRT_MACHINE(obj);
+@@ -1552,7 +1515,6 @@ static const TypeInfo rhel730_machvirt_info = {
+ static void rhel_machine_register_types(void)
+ {
+     type_register_static(&rhel_machine_info);
+-    type_register_static(&rhel720_machvirt_info);
+     type_register_static(&rhel730_machvirt_info);
+ }
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,74 @@
+From 9781233ca30ec94dc1d77df3449a20ab789a1771 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Fri, 29 Jul 2016 12:01:25 +0200
+Subject: [PATCH 31/35] target-i386: Mask mtrr mask based on CPU physical
+ address limits
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1469793688-10313-5-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 71523
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH v5 4/7] target-i386: Mask mtrr mask based on CPU physical address limits
+Bugzilla: 1339196
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+RH-Acked-by: Andrea Arcangeli <aarcange@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+The CPU GPs if we try and set a bit in a variable MTRR mask above
+the limit of physical address bits on the host.  We hit this
+when loading a migration from a host with a larger physical
+address limit than our destination (e.g. a Xeon->i7 of same
+generation) but previously used to get away with it
+until 48e1a45 started checking that msr writes actually worked.
+
+It seems in our case the GP probably comes from KVM emulating
+that GP.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 112dad69d723a68205f255dd46d78871b5c5a8ca)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	target-i386/kvm.c
+---
+ target-i386/kvm.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/target-i386/kvm.c b/target-i386/kvm.c
+index abad411..cf8634c 100644
+--- a/target-i386/kvm.c
++++ b/target-i386/kvm.c
+@@ -1659,6 +1659,8 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
+             }
+         }
+         if (has_msr_mtrr) {
++            uint64_t phys_mask = MAKE_64BIT_MASK(0, cpu->phys_bits);
++
+             kvm_msr_entry_set(&msrs[n++], MSR_MTRRdefType, env->mtrr_deftype);
+             kvm_msr_entry_set(&msrs[n++],
+                               MSR_MTRRfix64K_00000, env->mtrr_fixed[0]);
+@@ -1683,10 +1685,16 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
+             kvm_msr_entry_set(&msrs[n++],
+                               MSR_MTRRfix4K_F8000, env->mtrr_fixed[10]);
+             for (i = 0; i < MSR_MTRRcap_VCNT; i++) {
++                /* The CPU GPs if we write to a bit above the physical limit of
++                 * the host CPU (and KVM emulates that)
++                 */
++                uint64_t mask = env->mtrr_var[i].mask;
++                mask &= phys_mask;
++
+                 kvm_msr_entry_set(&msrs[n++],
+                                   MSR_MTRRphysBase(i), env->mtrr_var[i].base);
+                 kvm_msr_entry_set(&msrs[n++],
+-                                  MSR_MTRRphysMask(i), env->mtrr_var[i].mask);
++                                  MSR_MTRRphysMask(i), mask);
+             }
+         }
+ 
+-- 
+1.8.3.1
+

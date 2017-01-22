@@ -1,0 +1,52 @@
+From b2b103d3fb03b68c0aa175f10275d61b041eaf5b Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Fri, 29 Jul 2016 12:01:23 +0200
+Subject: [PATCH 29/35] target-i386: Provide TCG_PHYS_ADDR_BITS
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1469793688-10313-3-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 71521
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH v5 2/7] target-i386: Provide TCG_PHYS_ADDR_BITS
+Bugzilla: 1339196
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+RH-Acked-by: Andrea Arcangeli <aarcange@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+Provide a constant for the number of address bits supported under TCG.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Suggested-by: Eduardo Habkost <ehabkost@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 709787ee997f0a0ccab78e0edaf10d48929151ee)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/cpu.h | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/target-i386/cpu.h b/target-i386/cpu.h
+index 732eb6d..0bbf1ec 100644
+--- a/target-i386/cpu.h
++++ b/target-i386/cpu.h
+@@ -1202,11 +1202,13 @@ uint64_t cpu_get_tsc(CPUX86State *env);
+ /* XXX: This value should match the one returned by CPUID
+  * and in exec.c */
+ # if defined(TARGET_X86_64)
+-# define PHYS_ADDR_MASK 0xffffffffffLL
++# define TCG_PHYS_ADDR_BITS 40
+ # else
+-# define PHYS_ADDR_MASK 0xfffffffffLL
++# define TCG_PHYS_ADDR_BITS 36
+ # endif
+ 
++#define PHYS_ADDR_MASK MAKE_64BIT_MASK(0, TCG_PHYS_ADDR_BITS)
++
+ #define cpu_init(cpu_model) CPU(cpu_x86_init(cpu_model))
+ 
+ #define cpu_exec cpu_x86_exec
+-- 
+1.8.3.1
+

@@ -1,0 +1,147 @@
+From 6d2c67a529c956e1fd62fe265e2042f9af417dbf Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:47 +0200
+Subject: [PATCH 14/34] spapr: CPU hot unplug support
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-15-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71134
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 14/27] spapr: CPU hot unplug support
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+Remove the CPU core device by removing the underlying CPU thread devices.
+Hot removal of CPU for sPAPR guests is achieved by sending the hot unplug
+notification to the guest. Release the vCPU object after CPU hot unplug so
+that vCPU fd can be parked and reused.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 6f4b5c3ec590b04ba58fda753a81a93f316b77a4)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr.c                  |  8 ++++++
+ hw/ppc/spapr_cpu_core.c         | 59 +++++++++++++++++++++++++++++++++++++++++
+ include/hw/ppc/spapr_cpu_core.h |  2 ++
+ 3 files changed, 69 insertions(+)
+
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index 75543ae..9bfc94e 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -2281,8 +2281,16 @@ static void spapr_machine_device_plug(HotplugHandler *hotplug_dev,
+ static void spapr_machine_device_unplug(HotplugHandler *hotplug_dev,
+                                       DeviceState *dev, Error **errp)
+ {
++    sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(qdev_get_machine());
++
+     if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+         error_setg(errp, "Memory hot unplug not supported by sPAPR");
++    } else if (object_dynamic_cast(OBJECT(dev), TYPE_SPAPR_CPU_CORE)) {
++        if (!smc->dr_cpu_enabled) {
++            error_setg(errp, "CPU hot unplug not supported on this machine");
++            return;
++        }
++        spapr_core_unplug(hotplug_dev, dev, errp);
+     }
+ }
+ 
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index d5fa4e6..3a5da09 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -38,6 +38,14 @@ static void spapr_cpu_reset(void *opaque)
+                                 &error_fatal);
+ }
+ 
++static void spapr_cpu_destroy(PowerPCCPU *cpu)
++{
++    sPAPRMachineState *spapr = SPAPR_MACHINE(qdev_get_machine());
++
++    xics_cpu_destroy(spapr->icp, cpu);
++    qemu_unregister_reset(spapr_cpu_reset, cpu);
++}
++
+ void spapr_cpu_init(sPAPRMachineState *spapr, PowerPCCPU *cpu, Error **errp)
+ {
+     CPUPPCState *env = &cpu->env;
+@@ -88,6 +96,57 @@ char *spapr_get_cpu_core_type(const char *model)
+     return core_type;
+ }
+ 
++static void spapr_core_release(DeviceState *dev, void *opaque)
++{
++    sPAPRCPUCore *sc = SPAPR_CPU_CORE(OBJECT(dev));
++    const char *typename = object_class_get_name(sc->cpu_class);
++    size_t size = object_type_get_instance_size(typename);
++    sPAPRMachineState *spapr = SPAPR_MACHINE(qdev_get_machine());
++    sPAPRCPUCore *core = SPAPR_CPU_CORE(OBJECT(dev));
++    CPUCore *cc = CPU_CORE(dev);
++    int smt = kvmppc_smt_threads();
++    int i;
++
++    for (i = 0; i < cc->nr_threads; i++) {
++        void *obj = sc->threads + i * size;
++        DeviceState *dev = DEVICE(obj);
++        CPUState *cs = CPU(dev);
++        PowerPCCPU *cpu = POWERPC_CPU(cs);
++
++        spapr_cpu_destroy(cpu);
++        cpu_remove_sync(cs);
++        object_unparent(obj);
++    }
++
++    spapr->cores[cc->core_id / smt] = NULL;
++
++    g_free(core->threads);
++    object_unparent(OBJECT(dev));
++}
++
++void spapr_core_unplug(HotplugHandler *hotplug_dev, DeviceState *dev,
++                       Error **errp)
++{
++    sPAPRCPUCore *core = SPAPR_CPU_CORE(OBJECT(dev));
++    PowerPCCPU *cpu = POWERPC_CPU(core->threads);
++    int id = ppc_get_vcpu_dt_id(cpu);
++    sPAPRDRConnector *drc =
++        spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, id);
++    sPAPRDRConnectorClass *drck;
++    Error *local_err = NULL;
++
++    g_assert(drc);
++
++    drck = SPAPR_DR_CONNECTOR_GET_CLASS(drc);
++    drck->detach(drc, dev, spapr_core_release, NULL, &local_err);
++    if (local_err) {
++        error_propagate(errp, local_err);
++        return;
++    }
++
++    spapr_hotplug_req_remove_by_index(drc);
++}
++
+ void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+                      Error **errp)
+ {
+diff --git a/include/hw/ppc/spapr_cpu_core.h b/include/hw/ppc/spapr_cpu_core.h
+index 7cb0515..1c9b319 100644
+--- a/include/hw/ppc/spapr_cpu_core.h
++++ b/include/hw/ppc/spapr_cpu_core.h
+@@ -31,4 +31,6 @@ void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+ char *spapr_get_cpu_core_type(const char *model);
+ void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+                      Error **errp);
++void spapr_core_unplug(HotplugHandler *hotplug_dev, DeviceState *dev,
++                       Error **errp);
+ #endif
+-- 
+1.8.3.1
+

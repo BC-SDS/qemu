@@ -1,0 +1,60 @@
+From c2ae4b8f24cfbf5150e4f3a996719d6a34515d2b Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Tue, 26 Jul 2016 13:47:46 +0200
+Subject: [PATCH 12/16] migration: set state to post-migrate on failure
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1469540866-18871-2-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 71435
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/1] migration: set state to post-migrate on failure
+Bugzilla: 1355683
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Amit Shah <amit.shah@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+If a migration fails/is cancelled during the postcopy stage we currently
+end up with the runstate as finish-migrate, where it should be post-migrate.
+There's a small window in precopy where I think the same thing can
+happen, but I've never seen it.
+
+It rarely matters; the only postcopy case is if you restart a migration, which
+again is a case that rarely matters in postcopy because it's only
+safe to restart the migration if you know the destination hasn't
+been running (which you might if you started the destination with -S
+and hadn't got around to 'c' ing it before the postcopy failed).
+Even then it's a small window but potentially you could hit if
+there's a problem loading the devices on the destination.
+
+This corresponds to:
+https://bugzilla.redhat.com/show_bug.cgi?id=1355683
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Reviewed-by: Amit Shah <amit.shah@redhat.com>
+Message-Id: <1468601086-32117-1-git-send-email-dgilbert@redhat.com>
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+(cherry picked from commit 42da5550d6d44ea0a5e36925deba1e1b13041f42)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ migration/migration.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/migration/migration.c b/migration/migration.c
+index bc8a46b..802ca19 100644
+--- a/migration/migration.c
++++ b/migration/migration.c
+@@ -1767,6 +1767,10 @@ static void *migration_thread(void *opaque)
+     } else {
+         if (old_vm_running && !entered_postcopy) {
+             vm_start();
++        } else {
++            if (runstate_check(RUN_STATE_FINISH_MIGRATE)) {
++                runstate_set(RUN_STATE_POSTMIGRATE);
++            }
+         }
+     }
+     qemu_bh_schedule(s->cleanup_bh);
+-- 
+1.8.3.1
+

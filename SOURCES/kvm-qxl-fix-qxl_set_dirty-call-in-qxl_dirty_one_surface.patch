@@ -1,0 +1,79 @@
+From 00ba9447e0d70979c90e824b8bbd71196d35ec54 Mon Sep 17 00:00:00 2001
+From: Gerd Hoffmann <kraxel@redhat.com>
+Date: Thu, 21 Jul 2016 08:20:59 +0200
+Subject: [PATCH 26/27] qxl: fix qxl_set_dirty call in qxl_dirty_one_surface
+
+RH-Author: Gerd Hoffmann <kraxel@redhat.com>
+Message-id: <1469089259-4407-5-git-send-email-kraxel@redhat.com>
+Patchwork-id: 71271
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 4/4] qxl: fix qxl_set_dirty call in qxl_dirty_one_surface
+Bugzilla: 1235732
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+
+qxl_set_dirty() expects start and end as range specification.
+qxl_dirty_one_surface passes 'size' instead of 'offset + size' as end
+parameter.  Fix that.  Also use uint64_t everywhere while being at it.
+
+Bug was added by "e25139b qxl: set only off-screen surfaces dirty instead
+of the whole vram" and carried forward unnoticed by "5cdc402 qxl: fix
+surface migration".
+
+Reported-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Signed-off-by: Gerd Hoffmann <kraxel@redhat.com>
+Reviewed-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: 1468413187-22071-1-git-send-email-kraxel@redhat.com
+(cherry picked from commit e0127d2eec9cd5676ea9f3c47c2a7579a02c0466)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	hw/display/trace-events
+---
+ hw/display/qxl.c | 11 ++++++-----
+ trace-events     |  2 +-
+ 2 files changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/hw/display/qxl.c b/hw/display/qxl.c
+index 7da7b4e..252199a 100644
+--- a/hw/display/qxl.c
++++ b/hw/display/qxl.c
+@@ -1811,16 +1811,17 @@ static void qxl_hw_update(void *opaque)
+ static void qxl_dirty_one_surface(PCIQXLDevice *qxl, QXLPHYSICAL pqxl,
+                                   uint32_t height, int32_t stride)
+ {
+-    uint64_t offset;
+-    uint32_t slot, size;
++    uint64_t offset, size;
++    uint32_t slot;
+     bool rc;
+ 
+     rc = qxl_get_check_slot_offset(qxl, pqxl, &slot, &offset);
+     assert(rc == true);
+-    size = height * abs(stride);
+-    trace_qxl_surfaces_dirty(qxl->id, (int)offset, size);
++    size = (uint64_t)height * abs(stride);
++    trace_qxl_surfaces_dirty(qxl->id, offset, size);
+     qxl_set_dirty(qxl->guest_slots[slot].mr,
+-                  qxl->guest_slots[slot].offset + offset, size);
++                  qxl->guest_slots[slot].offset + offset,
++                  qxl->guest_slots[slot].offset + offset + size);
+ }
+ 
+ static void qxl_dirty_surfaces(PCIQXLDevice *qxl)
+diff --git a/trace-events b/trace-events
+index f0fe056..c93e42a 100644
+--- a/trace-events
++++ b/trace-events
+@@ -1339,7 +1339,7 @@ qxl_spice_reset_image_cache(int qid) "%d"
+ qxl_spice_reset_memslots(int qid) "%d"
+ qxl_spice_update_area(int qid, uint32_t surface_id, uint32_t left, uint32_t right, uint32_t top, uint32_t bottom) "%d sid=%d [%d,%d,%d,%d]"
+ qxl_spice_update_area_rest(int qid, uint32_t num_dirty_rects, uint32_t clear_dirty_region) "%d #d=%d clear=%d"
+-qxl_surfaces_dirty(int qid, int offset, int size) "%d offset=%d size=%d"
++qxl_surfaces_dirty(int qid, uint64_t offset, uint64_t size) "%d offset=0x%"PRIx64" size=0x%"PRIx64
+ qxl_send_events(int qid, uint32_t events) "%d %d"
+ qxl_send_events_vm_stopped(int qid, uint32_t events) "%d %d"
+ qxl_set_guest_bug(int qid) "%d"
+-- 
+1.8.3.1
+

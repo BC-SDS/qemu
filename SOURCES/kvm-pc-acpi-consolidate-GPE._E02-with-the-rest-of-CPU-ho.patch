@@ -1,0 +1,57 @@
+From ffc08ab4eb197e9229aa6f4e63e5f4f4d1f8b83f Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:14 +0200
+Subject: [PATCH 14/99] pc: acpi: consolidate \GPE._E02 with the rest of CPU
+ hotplug AML
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-10-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71625
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 09/78] pc: acpi: consolidate \GPE._E02 with the rest of CPU hotplug AML
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+(cherry picked from commit 8edf77e497deb35024a6318a7f568d1e117bdb49)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/cpu_hotplug_acpi_table.c | 4 ++++
+ hw/i386/acpi-build.c             | 4 ----
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/hw/acpi/cpu_hotplug_acpi_table.c b/hw/acpi/cpu_hotplug_acpi_table.c
+index 730f44c..c31f346 100644
+--- a/hw/acpi/cpu_hotplug_acpi_table.c
++++ b/hw/acpi/cpu_hotplug_acpi_table.c
+@@ -235,4 +235,8 @@ void build_cpu_hotplug_aml(Aml *ctx, MachineState *machine,
+     g_free(apic_ids);
+ 
+     aml_append(ctx, sb_scope);
++
++    method = aml_method("\\_GPE._E02", 0, AML_NOTSERIALIZED);
++    aml_append(method, aml_call0("\\_SB." CPU_SCAN_METHOD));
++    aml_append(ctx, method);
+ }
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index dd98f2a..8369273 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -2002,10 +2002,6 @@ build_dsdt(GArray *table_data, BIOSLinker *linker,
+             aml_append(scope, method);
+         }
+ 
+-        method = aml_method("_E02", 0, AML_NOTSERIALIZED);
+-        aml_append(method, aml_call0("\\_SB." CPU_SCAN_METHOD));
+-        aml_append(scope, method);
+-
+         method = aml_method("_E03", 0, AML_NOTSERIALIZED);
+         aml_append(method, aml_call0(MEMORY_HOTPLUG_HANDLER_PATH));
+         aml_append(scope, method);
+-- 
+1.8.3.1
+

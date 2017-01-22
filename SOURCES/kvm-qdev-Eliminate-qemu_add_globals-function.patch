@@ -1,0 +1,113 @@
+From 8100dbf5eba2ad3b7ac77d79a86430fcf0e457df Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:39 +0200
+Subject: [PATCH 39/99] qdev: Eliminate qemu_add_globals() function
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-35-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71650
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 34/78] qdev: Eliminate qemu_add_globals() function
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Eduardo Habkost <ehabkost@redhat.com>
+
+The function is just a helper to handle the -global options, it
+can stay in vl.c like most qemu_opts_foreach() calls.
+
+Reviewed-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Markus Armbruster <armbru@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 8d76bfe8f8dbc7995bc0682d14f5f92583ae5b0a)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/core/qdev-properties-system.c | 21 +--------------------
+ include/qemu/config-file.h       |  1 -
+ vl.c                             | 16 +++++++++++++++-
+ 3 files changed, 16 insertions(+), 22 deletions(-)
+
+diff --git a/hw/core/qdev-properties-system.c b/hw/core/qdev-properties-system.c
+index 891219a..cf7139d 100644
+--- a/hw/core/qdev-properties-system.c
++++ b/hw/core/qdev-properties-system.c
+@@ -1,5 +1,5 @@
+ /*
+- * qdev property parsing and global properties
++ * qdev property parsing
+  * (parts specific for qemu-system-*)
+  *
+  * This file is based on code from hw/qdev-properties.c from
+@@ -394,22 +394,3 @@ void qdev_set_nic_properties(DeviceState *dev, NICInfo *nd)
+     }
+     nd->instantiated = 1;
+ }
+-
+-static int qdev_add_one_global(void *opaque, QemuOpts *opts, Error **errp)
+-{
+-    GlobalProperty *g;
+-
+-    g = g_malloc0(sizeof(*g));
+-    g->driver   = qemu_opt_get(opts, "driver");
+-    g->property = qemu_opt_get(opts, "property");
+-    g->value    = qemu_opt_get(opts, "value");
+-    g->user_provided = true;
+-    qdev_prop_register_global(g);
+-    return 0;
+-}
+-
+-void qemu_add_globals(void)
+-{
+-    qemu_opts_foreach(qemu_find_opts("global"),
+-                      qdev_add_one_global, NULL, NULL);
+-}
+diff --git a/include/qemu/config-file.h b/include/qemu/config-file.h
+index 3b8ecb0..8603e86 100644
+--- a/include/qemu/config-file.h
++++ b/include/qemu/config-file.h
+@@ -12,7 +12,6 @@ void qemu_add_opts(QemuOptsList *list);
+ void qemu_add_drive_opts(QemuOptsList *list);
+ int qemu_set_option(const char *str);
+ int qemu_global_option(const char *str);
+-void qemu_add_globals(void);
+ 
+ void qemu_config_write(FILE *fp);
+ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname);
+diff --git a/vl.c b/vl.c
+index 3a25b48..d48e936 100644
+--- a/vl.c
++++ b/vl.c
+@@ -2975,6 +2975,19 @@ static void set_memory_options(uint64_t *ram_slots, ram_addr_t *maxram_size,
+     loc_pop(&loc);
+ }
+ 
++static int global_init_func(void *opaque, QemuOpts *opts, Error **errp)
++{
++    GlobalProperty *g;
++
++    g = g_malloc0(sizeof(*g));
++    g->driver   = qemu_opt_get(opts, "driver");
++    g->property = qemu_opt_get(opts, "property");
++    g->value    = qemu_opt_get(opts, "value");
++    g->user_provided = true;
++    qdev_prop_register_global(g);
++    return 0;
++}
++
+ int main(int argc, char **argv, char **envp)
+ {
+     int i;
+@@ -4516,7 +4529,8 @@ int main(int argc, char **argv, char **envp)
+     if (machine_class->compat_props) {
+         qdev_prop_register_global_list(machine_class->compat_props);
+     }
+-    qemu_add_globals();
++    qemu_opts_foreach(qemu_find_opts("global"),
++                      global_init_func, NULL, NULL);
+ 
+     /* This checkpoint is required by replay to separate prior clock
+        reading from the other reads, because timer polling functions query
+-- 
+1.8.3.1
+

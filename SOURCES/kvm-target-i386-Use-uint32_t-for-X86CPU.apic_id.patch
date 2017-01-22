@@ -1,0 +1,89 @@
+From 32de5cc33a184c12f9b2e9f253c00bbbab0a9e9d Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:54 +0200
+Subject: [PATCH 54/99] target-i386: Use uint32_t for X86CPU.apic_id
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-50-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71665
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 49/78] target-i386: Use uint32_t for X86CPU.apic_id
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Redo 9886e834 (target-i386: Require APIC ID to be explicitly set before
+CPU realize) in another way that doesn't use int64_t to detect
+if apic-id property has been set.
+
+Use the fact that 0xFFFFFFFF is the broadcast
+value that a CPU can't have and set default
+uint32_t apic_id to it instead of using int64_t.
+
+Later uint32_t apic_id will be used to drop custom
+property setter/getter in favor of static property.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit d9c84f196970f78d4b55ab87e03cbcad7c65f86f)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	target-i386/cpu.h
+          due to missing not related XSAVE patches
+---
+ target-i386/cpu.c | 4 ++--
+ target-i386/cpu.h | 7 ++++++-
+ 2 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 2d74e9e..3279790 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -2921,7 +2921,7 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
+         goto out;
+     }
+ 
+-    if (cpu->apic_id < 0) {
++    if (cpu->apic_id == UNASSIGNED_APIC_ID) {
+         error_setg(errp, "apic-id property was not initialized properly");
+         return;
+     }
+@@ -3255,7 +3255,7 @@ static void x86_cpu_initfn(Object *obj)
+ 
+ #ifndef CONFIG_USER_ONLY
+     /* Any code creating new X86CPU objects have to set apic-id explicitly */
+-    cpu->apic_id = -1;
++    cpu->apic_id = UNASSIGNED_APIC_ID;
+ #endif
+ 
+     for (w = 0; w < FEATURE_WORDS; w++) {
+diff --git a/target-i386/cpu.h b/target-i386/cpu.h
+index d512c00..2e08516 100644
+--- a/target-i386/cpu.h
++++ b/target-i386/cpu.h
+@@ -830,6 +830,11 @@ typedef struct {
+ 
+ #define NB_OPMASK_REGS 8
+ 
++/* CPU can't have 0xFFFFFFFF APIC ID, use that value to distinguish
++ * that APIC ID hasn't been set yet
++ */
++#define UNASSIGNED_APIC_ID 0xFFFFFFFF
++
+ typedef enum TPRAccess {
+     TPR_ACCESS_READ,
+     TPR_ACCESS_WRITE,
+@@ -1061,7 +1066,7 @@ struct X86CPU {
+     bool expose_kvm;
+     bool migratable;
+     bool host_features;
+-    int64_t apic_id;
++    uint32_t apic_id;
+ 
+     /* if true the CPUID code directly forward host cache leaves to the guest */
+     bool cache_info_passthrough;
+-- 
+1.8.3.1
+

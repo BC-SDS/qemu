@@ -1,0 +1,68 @@
+From c80101879a9047a7f1bccfb9e05ff5b3354e6e9c Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:15 +0200
+Subject: [PATCH 15/99] pc: acpi: cpu-hotplug: make AML CPU_foo defines local
+ to cpu_hotplug_acpi_table.c
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-11-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71626
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 10/78] pc: acpi: cpu-hotplug: make AML CPU_foo defines local to cpu_hotplug_acpi_table.c
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+now as those defines are used only locally inside of
+cpu_hotplug_acpi_table.c, move them out of header file.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+(cherry picked from commit a630bb314c1f3108f391d19e1a20e07ea3c9edd2)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/cpu_hotplug_acpi_table.c | 7 +++++++
+ include/hw/acpi/cpu_hotplug.h    | 7 -------
+ 2 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/hw/acpi/cpu_hotplug_acpi_table.c b/hw/acpi/cpu_hotplug_acpi_table.c
+index c31f346..9fdde6d 100644
+--- a/hw/acpi/cpu_hotplug_acpi_table.c
++++ b/hw/acpi/cpu_hotplug_acpi_table.c
+@@ -17,6 +17,13 @@
+ #include "hw/acpi/cpu_hotplug.h"
+ #include "hw/i386/pc.h"
+ 
++#define CPU_EJECT_METHOD "CPEJ"
++#define CPU_MAT_METHOD "CPMA"
++#define CPU_ON_BITMAP "CPON"
++#define CPU_STATUS_METHOD "CPST"
++#define CPU_STATUS_MAP "PRS"
++#define CPU_SCAN_METHOD "PRSC"
++
+ void build_cpu_hotplug_aml(Aml *ctx, MachineState *machine,
+                            uint16_t io_base, uint16_t io_len)
+ {
+diff --git a/include/hw/acpi/cpu_hotplug.h b/include/hw/acpi/cpu_hotplug.h
+index 9b1d0cf..565f96c 100644
+--- a/include/hw/acpi/cpu_hotplug.h
++++ b/include/hw/acpi/cpu_hotplug.h
+@@ -27,13 +27,6 @@ void acpi_cpu_plug_cb(ACPIREGS *ar, qemu_irq irq,
+ void acpi_cpu_hotplug_init(MemoryRegion *parent, Object *owner,
+                            AcpiCpuHotplug *gpe_cpu, uint16_t base);
+ 
+-#define CPU_EJECT_METHOD "CPEJ"
+-#define CPU_MAT_METHOD "CPMA"
+-#define CPU_ON_BITMAP "CPON"
+-#define CPU_STATUS_METHOD "CPST"
+-#define CPU_STATUS_MAP "PRS"
+-#define CPU_SCAN_METHOD "PRSC"
+-
+ void build_cpu_hotplug_aml(Aml *ctx, MachineState *machine,
+                            uint16_t io_base, uint16_t io_len);
+ #endif
+-- 
+1.8.3.1
+

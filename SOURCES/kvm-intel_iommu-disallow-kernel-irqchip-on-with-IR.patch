@@ -1,0 +1,73 @@
+From 6054565c248742d297ff090e2de1543fcc6b7604 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:49 +0200
+Subject: [PATCH 31/37] intel_iommu: disallow kernel-irqchip=on with IR
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-31-git-send-email-peterx@redhat.com>
+Patchwork-id: 72015
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 30/34] intel_iommu: disallow kernel-irqchip=on with IR
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+When user specify "intremap=on" with "-M kernel-irqchip=on", throw error
+and then quit.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 4684a2041005b598ecc92fbaf36463d2fd12b5de)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/intel_iommu.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index df2678b..0e139d1 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -20,6 +20,7 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include "qemu/error-report.h"
+ #include "hw/sysbus.h"
+ #include "exec/address-spaces.h"
+ #include "intel_iommu_internal.h"
+@@ -29,6 +30,7 @@
+ #include "hw/boards.h"
+ #include "hw/i386/x86-iommu.h"
+ #include "hw/pci-host/q35.h"
++#include "sysemu/kvm.h"
+ 
+ /*#define DEBUG_INTEL_IOMMU*/
+ #ifdef DEBUG_INTEL_IOMMU
+@@ -2448,6 +2450,7 @@ static void vtd_realize(DeviceState *dev, Error **errp)
+     PCMachineState *pcms = PC_MACHINE(qdev_get_machine());
+     PCIBus *bus = pcms->bus;
+     IntelIOMMUState *s = INTEL_IOMMU_DEVICE(dev);
++    X86IOMMUState *x86_iommu = X86_IOMMU_DEVICE(dev);
+ 
+     VTD_DPRINTF(GENERAL, "");
+     memset(s->vtd_as_by_bus_num, 0, sizeof(s->vtd_as_by_bus_num));
+@@ -2464,6 +2467,14 @@ static void vtd_realize(DeviceState *dev, Error **errp)
+     pci_setup_iommu(bus, vtd_host_dma_iommu, dev);
+     /* Pseudo address space under root PCI bus. */
+     pcms->ioapic_as = vtd_host_dma_iommu(bus, s, Q35_PSEUDO_DEVFN_IOAPIC);
++
++    /* Currently Intel IOMMU IR only support "kernel-irqchip={off|split}" */
++    if (x86_iommu->intr_supported && kvm_irqchip_in_kernel() &&
++        !kvm_irqchip_is_split()) {
++        error_report("Intel Interrupt Remapping cannot work with "
++                     "kernel-irqchip=on, please use 'split|off'.");
++        exit(1);
++    }
+ }
+ 
+ static void vtd_class_init(ObjectClass *klass, void *data)
+-- 
+1.8.3.1
+

@@ -1,0 +1,37 @@
+From 5522aa3b11786a3c53fd36d055d816fc3ad4ed6f Mon Sep 17 00:00:00 2001
+From: Marcel Apfelbaum <marcel@redhat.com>
+Date: Sun, 24 Jul 2016 16:29:01 +0200
+Subject: [PATCH 21/35] q35-rhel: allow dynamic sysbus
+
+RH-Author: Marcel Apfelbaum <marcel@redhat.com>
+Message-id: <1469377743-9714-12-git-send-email-marcel@redhat.com>
+Patchwork-id: 71378
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 11/13] q35-rhel: allow dynamic sysbus
+Bugzilla: 1350196
+RH-Acked-by: Auger Eric <eric.auger@redhat.com>
+RH-Acked-by: Peter Xu <peterx@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+
+Allow adding sysbus devices with -device on RHEL Q35 machines.
+
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc_q35.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/i386/pc_q35.c b/hw/i386/pc_q35.c
+index 881cef3..2aa6fff 100644
+--- a/hw/i386/pc_q35.c
++++ b/hw/i386/pc_q35.c
+@@ -340,6 +340,7 @@ static void pc_q35_machine_rhel730_options(MachineClass *m)
+     m->default_machine_opts = "firmware=bios-256k.bin";
+     m->default_display = "std";
+     m->no_floppy = 1;
++    m->has_dynamic_sysbus = true;
+ }
+ 
+ DEFINE_PC_MACHINE(q35_rhel730, "pc-q35-rhel7.3.0", pc_q35_init_rhel730,
+-- 
+1.8.3.1
+

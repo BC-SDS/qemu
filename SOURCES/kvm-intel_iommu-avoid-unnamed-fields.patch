@@ -1,0 +1,212 @@
+From 38fd33e87a825aba2da288f9034cc9c16b2c715b Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:50 +0200
+Subject: [PATCH 32/37] intel_iommu: avoid unnamed fields
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-32-git-send-email-peterx@redhat.com>
+Patchwork-id: 72016
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 31/34] intel_iommu: avoid unnamed fields
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+From: "Michael S. Tsirkin" <mst@redhat.com>
+
+Also avoid unnamed fields for portability.
+Also, rename VTD_IRTE to VTD_IR_TableEntry for coding
+style compliance.
+
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit bc38ee10fc26338e21c01485540f815be1f3db28)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/intel_iommu.c         | 42 +++++++++++++++++++++---------------------
+ include/hw/i386/intel_iommu.h |  8 ++++----
+ 2 files changed, 25 insertions(+), 25 deletions(-)
+
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index 0e139d1..28c31a2 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -2010,7 +2010,7 @@ static Property vtd_properties[] = {
+ 
+ /* Read IRTE entry with specific index */
+ static int vtd_irte_get(IntelIOMMUState *iommu, uint16_t index,
+-                        VTD_IRTE *entry, uint16_t sid)
++                        VTD_IR_TableEntry *entry, uint16_t sid)
+ {
+     static const uint16_t vtd_svt_mask[VTD_SQ_MAX] = \
+         {0xffff, 0xfffb, 0xfff9, 0xfff8};
+@@ -2026,7 +2026,7 @@ static int vtd_irte_get(IntelIOMMUState *iommu, uint16_t index,
+         return -VTD_FR_IR_ROOT_INVAL;
+     }
+ 
+-    if (!entry->present) {
++    if (!entry->irte.present) {
+         VTD_DPRINTF(GENERAL, "error: present flag not set in IRTE"
+                     " entry index %u value 0x%"PRIx64 " 0x%"PRIx64,
+                     index, le64_to_cpu(entry->data[1]),
+@@ -2034,8 +2034,8 @@ static int vtd_irte_get(IntelIOMMUState *iommu, uint16_t index,
+         return -VTD_FR_IR_ENTRY_P;
+     }
+ 
+-    if (entry->__reserved_0 || entry->__reserved_1 || \
+-        entry->__reserved_2) {
++    if (entry->irte.__reserved_0 || entry->irte.__reserved_1 ||
++        entry->irte.__reserved_2) {
+         VTD_DPRINTF(GENERAL, "error: IRTE entry index %"PRIu16
+                     " reserved fields non-zero: 0x%"PRIx64 " 0x%"PRIx64,
+                     index, le64_to_cpu(entry->data[1]),
+@@ -2045,14 +2045,14 @@ static int vtd_irte_get(IntelIOMMUState *iommu, uint16_t index,
+ 
+     if (sid != X86_IOMMU_SID_INVALID) {
+         /* Validate IRTE SID */
+-        source_id = le32_to_cpu(entry->source_id);
+-        switch (entry->sid_vtype) {
++        source_id = le32_to_cpu(entry->irte.source_id);
++        switch (entry->irte.sid_vtype) {
+         case VTD_SVT_NONE:
+             VTD_DPRINTF(IR, "No SID validation for IRTE index %d", index);
+             break;
+ 
+         case VTD_SVT_ALL:
+-            mask = vtd_svt_mask[entry->sid_q];
++            mask = vtd_svt_mask[entry->irte.sid_q];
+             if ((source_id & mask) != (sid & mask)) {
+                 VTD_DPRINTF(GENERAL, "SID validation for IRTE index "
+                             "%d failed (reqid 0x%04x sid 0x%04x)", index,
+@@ -2075,7 +2075,7 @@ static int vtd_irte_get(IntelIOMMUState *iommu, uint16_t index,
+ 
+         default:
+             VTD_DPRINTF(GENERAL, "Invalid SVT bits (0x%x) in IRTE index "
+-                        "%d", entry->sid_vtype, index);
++                        "%d", entry->irte.sid_vtype, index);
+             /* Take this as verification failure. */
+             return -VTD_FR_IR_SID_ERR;
+             break;
+@@ -2089,7 +2089,7 @@ static int vtd_irte_get(IntelIOMMUState *iommu, uint16_t index,
+ static int vtd_remap_irq_get(IntelIOMMUState *iommu, uint16_t index,
+                              VTDIrq *irq, uint16_t sid)
+ {
+-    VTD_IRTE irte = {};
++    VTD_IR_TableEntry irte = {};
+     int ret = 0;
+ 
+     ret = vtd_irte_get(iommu, index, &irte, sid);
+@@ -2097,18 +2097,18 @@ static int vtd_remap_irq_get(IntelIOMMUState *iommu, uint16_t index,
+         return ret;
+     }
+ 
+-    irq->trigger_mode = irte.trigger_mode;
+-    irq->vector = irte.vector;
+-    irq->delivery_mode = irte.delivery_mode;
+-    irq->dest = le32_to_cpu(irte.dest_id);
++    irq->trigger_mode = irte.irte.trigger_mode;
++    irq->vector = irte.irte.vector;
++    irq->delivery_mode = irte.irte.delivery_mode;
++    irq->dest = le32_to_cpu(irte.irte.dest_id);
+     if (!iommu->intr_eime) {
+ #define  VTD_IR_APIC_DEST_MASK         (0xff00ULL)
+ #define  VTD_IR_APIC_DEST_SHIFT        (8)
+         irq->dest = (irq->dest & VTD_IR_APIC_DEST_MASK) >>
+             VTD_IR_APIC_DEST_SHIFT;
+     }
+-    irq->dest_mode = irte.dest_mode;
+-    irq->redir_hint = irte.redir_hint;
++    irq->dest_mode = irte.irte.dest_mode;
++    irq->redir_hint = irte.irte.redir_hint;
+ 
+     VTD_DPRINTF(IR, "remapping interrupt index %d: trig:%u,vec:%u,"
+                 "deliver:%u,dest:%u,dest_mode:%u", index,
+@@ -2167,23 +2167,23 @@ static int vtd_interrupt_remap_msi(IntelIOMMUState *iommu,
+     }
+ 
+     addr.data = origin->address & VTD_MSI_ADDR_LO_MASK;
+-    if (le16_to_cpu(addr.__head) != 0xfee) {
++    if (le16_to_cpu(addr.addr.__head) != 0xfee) {
+         VTD_DPRINTF(GENERAL, "error: MSI addr low 32 bits invalid: "
+                     "0x%"PRIx32, addr.data);
+         return -VTD_FR_IR_REQ_RSVD;
+     }
+ 
+     /* This is compatible mode. */
+-    if (addr.int_mode != VTD_IR_INT_FORMAT_REMAP) {
++    if (addr.addr.int_mode != VTD_IR_INT_FORMAT_REMAP) {
+         goto do_not_translate;
+     }
+ 
+-    index = addr.index_h << 15 | le16_to_cpu(addr.index_l);
++    index = addr.addr.index_h << 15 | le16_to_cpu(addr.addr.index_l);
+ 
+ #define  VTD_IR_MSI_DATA_SUBHANDLE       (0x0000ffff)
+ #define  VTD_IR_MSI_DATA_RESERVED        (0xffff0000)
+ 
+-    if (addr.sub_valid) {
++    if (addr.addr.sub_valid) {
+         /* See VT-d spec 5.1.2.2 and 5.1.3 on subhandle */
+         index += origin->data & VTD_IR_MSI_DATA_SUBHANDLE;
+     }
+@@ -2193,7 +2193,7 @@ static int vtd_interrupt_remap_msi(IntelIOMMUState *iommu,
+         return ret;
+     }
+ 
+-    if (addr.sub_valid) {
++    if (addr.addr.sub_valid) {
+         VTD_DPRINTF(IR, "received MSI interrupt");
+         if (origin->data & VTD_IR_MSI_DATA_RESERVED) {
+             VTD_DPRINTF(GENERAL, "error: MSI data bits non-zero for "
+@@ -2217,7 +2217,7 @@ static int vtd_interrupt_remap_msi(IntelIOMMUState *iommu,
+      * We'd better keep the last two bits, assuming that guest OS
+      * might modify it. Keep it does not hurt after all.
+      */
+-    irq.msi_addr_last_bits = addr.__not_care;
++    irq.msi_addr_last_bits = addr.addr.__not_care;
+ 
+     /* Translate VTDIrq to MSI message */
+     vtd_generate_msi_message(&irq, translated);
+diff --git a/include/hw/i386/intel_iommu.h b/include/hw/i386/intel_iommu.h
+index 2eba7ed..a42dbd7 100644
+--- a/include/hw/i386/intel_iommu.h
++++ b/include/hw/i386/intel_iommu.h
+@@ -59,7 +59,7 @@ typedef struct IntelIOMMUState IntelIOMMUState;
+ typedef struct VTDAddressSpace VTDAddressSpace;
+ typedef struct VTDIOTLBEntry VTDIOTLBEntry;
+ typedef struct VTDBus VTDBus;
+-typedef union VTD_IRTE VTD_IRTE;
++typedef union VTD_IR_TableEntry VTD_IR_TableEntry;
+ typedef union VTD_IR_MSIAddress VTD_IR_MSIAddress;
+ typedef struct VTDIrq VTDIrq;
+ typedef struct VTD_MSIMessage VTD_MSIMessage;
+@@ -120,7 +120,7 @@ enum {
+ };
+ 
+ /* Interrupt Remapping Table Entry Definition */
+-union VTD_IRTE {
++union VTD_IR_TableEntry {
+     struct {
+ #ifdef HOST_WORDS_BIGENDIAN
+         uint32_t dest_id:32;         /* Destination ID */
+@@ -159,7 +159,7 @@ union VTD_IRTE {
+         uint64_t sid_vtype:2;        /* Source-ID Validation Type */
+         uint64_t __reserved_2:44;    /* Reserved 2 */
+ #endif
+-    } QEMU_PACKED;
++    } QEMU_PACKED irte;
+     uint64_t data[2];
+ };
+ 
+@@ -184,7 +184,7 @@ union VTD_IR_MSIAddress {
+         uint32_t index_l:15;         /* Interrupt index bit 14-0 */
+         uint32_t __head:12;          /* Should always be: 0x0fee */
+ #endif
+-    } QEMU_PACKED;
++    } QEMU_PACKED addr;
+     uint32_t data;
+ };
+ 
+-- 
+1.8.3.1
+

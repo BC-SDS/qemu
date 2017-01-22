@@ -1,0 +1,79 @@
+From ad30e722cba488eb25afc54a6e76919d0a0ddc9c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:25 +0200
+Subject: [PATCH 05/30] vhost: fix cleanup on not fully initialized device
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-6-marcandre.lureau@redhat.com>
+Patchwork-id: 71921
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 05/28] vhost: fix cleanup on not fully initialized device
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+If vhost_dev_init() failed, caller may still call vhost_dev_cleanup()
+later. However, vhost_dev_cleanup() tries to remove the device from the
+list even if it wasn't yet added, which may lead to crashes. Similarly
+for the memory listener.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 5be5f9be724d43fbec3d6f955a43bc64a62d55cc)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/vhost.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/hw/virtio/vhost.c b/hw/virtio/vhost.c
+index fc42d48..2e6899a 100644
+--- a/hw/virtio/vhost.c
++++ b/hw/virtio/vhost.c
+@@ -1037,7 +1037,6 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
+         r = -1;
+         goto fail;
+     }
+-    QLIST_INSERT_HEAD(&vhost_devices, hdev, entry);
+ 
+     r = hdev->vhost_ops->vhost_set_owner(hdev);
+     if (r < 0) {
+@@ -1107,6 +1106,7 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
+     hdev->started = false;
+     hdev->memory_changed = false;
+     memory_listener_register(&hdev->memory_listener, &address_space_memory);
++    QLIST_INSERT_HEAD(&vhost_devices, hdev, entry);
+     return 0;
+ fail_busyloop:
+     while (--i >= 0) {
+@@ -1130,7 +1130,11 @@ void vhost_dev_cleanup(struct vhost_dev *hdev)
+     for (i = 0; i < hdev->nvqs; ++i) {
+         vhost_virtqueue_cleanup(hdev->vqs + i);
+     }
+-    memory_listener_unregister(&hdev->memory_listener);
++    if (hdev->mem) {
++        /* those are only safe after successful init */
++        memory_listener_unregister(&hdev->memory_listener);
++        QLIST_REMOVE(hdev, entry);
++    }
+     if (hdev->migration_blocker) {
+         migrate_del_blocker(hdev->migration_blocker);
+         error_free(hdev->migration_blocker);
+@@ -1139,7 +1143,6 @@ void vhost_dev_cleanup(struct vhost_dev *hdev)
+     g_free(hdev->mem_sections);
+     hdev->vhost_ops->vhost_backend_cleanup(hdev);
+     assert(!hdev->log);
+-    QLIST_REMOVE(hdev, entry);
+ }
+ 
+ /* Stop processing guest IO notifications in qemu.
+-- 
+1.8.3.1
+

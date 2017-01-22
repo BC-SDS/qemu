@@ -1,0 +1,53 @@
+From 351e1fb40c4a9c29d3e332e4ae39313020c3a4f2 Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Mon, 30 May 2016 13:03:14 +0200
+Subject: [PATCH 01/13] Disable Windows enlightnements
+
+RH-Author: Miroslav Rezanina <mrezanin@redhat.com>
+Message-id: <1464613394-2318-1-git-send-email-mrezanin@redhat.com>
+Patchwork-id: 70499
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH] Disable Windows enlightnements
+Bugzilla: 1336517
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: Miroslav Rezanina <mrezanin@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1336517
+Brew: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11103778
+Upstream: n/a
+
+We want to disable following englightnements:
+- hv-vpindex
+- hv-runtime
+- hv-synic
+- hv-stimer
+- hv-reset
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/cpu.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 32b9664..bbeff4b 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -3247,11 +3247,13 @@ static Property x86_cpu_properties[] = {
+     DEFINE_PROP_BOOL("hv-vapic", X86CPU, hyperv_vapic, false),
+     DEFINE_PROP_BOOL("hv-time", X86CPU, hyperv_time, false),
+     DEFINE_PROP_BOOL("hv-crash", X86CPU, hyperv_crash, false),
++#if 0 /* Disabled for Red Hat Enterprise Linux */
+     DEFINE_PROP_BOOL("hv-reset", X86CPU, hyperv_reset, false),
+     DEFINE_PROP_BOOL("hv-vpindex", X86CPU, hyperv_vpindex, false),
+     DEFINE_PROP_BOOL("hv-runtime", X86CPU, hyperv_runtime, false),
+     DEFINE_PROP_BOOL("hv-synic", X86CPU, hyperv_synic, false),
+     DEFINE_PROP_BOOL("hv-stimer", X86CPU, hyperv_stimer, false),
++#endif
+     DEFINE_PROP_BOOL("check", X86CPU, check_cpuid, true),
+     DEFINE_PROP_BOOL("enforce", X86CPU, enforce_cpuid, false),
+     DEFINE_PROP_BOOL("kvm", X86CPU, expose_kvm, true),
+-- 
+1.8.3.1
+

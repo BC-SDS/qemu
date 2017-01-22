@@ -1,0 +1,60 @@
+From 9858b0cbc46dc90a2731be8bc9c55e2039783ee4 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:45 +0200
+Subject: [PATCH 45/99] vl: Set errp to &error_abort on machine compat_props
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-41-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71656
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 40/78] vl: Set errp to &error_abort on machine compat_props
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Eduardo Habkost <ehabkost@redhat.com>
+
+Use the new GlobalProperty.errp field to handle compat_props
+errors.
+
+Example output before this change:
+(with an intentionally broken entry added to PC_COMPAT_1_3 just
+for testing)
+
+  $ qemu-system-x86_64 -machine pc-1.3
+  qemu-system-x86_64: hw/core/qdev-properties.c:1091: qdev_prop_set_globals_for_type: Assertion `prop->user_provided' failed.
+  Aborted (core dumped)
+
+After:
+
+  $ qemu-system-x86_64 -machine pc-1.3
+  Unexpected error in x86_cpuid_set_vendor() at /home/ehabkost/rh/proj/virt/qemu/target-i386/cpu.c:1688:
+  qemu-system-x86_64: can't apply global cpu.vendor=x: Property '.vendor' doesn't take value 'x'
+  Aborted (core dumped)
+
+Suggested-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+Reviewed-by: Markus Armbruster <armbru@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit adae837d40dea7100040136647e3de44898994df)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/core/machine.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/hw/core/machine.c b/hw/core/machine.c
+index 4ccb7e6..afe577e 100644
+--- a/hw/core/machine.c
++++ b/hw/core/machine.c
+@@ -551,6 +551,8 @@ void machine_register_compat_props(MachineState *machine)
+ 
+     for (i = 0; i < mc->compat_props->len; i++) {
+         p = g_array_index(mc->compat_props, GlobalProperty *, i);
++        /* Machine compat_props must never cause errors: */
++        p->errp = &error_abort;
+         qdev_prop_register_global(p);
+     }
+ }
+-- 
+1.8.3.1
+

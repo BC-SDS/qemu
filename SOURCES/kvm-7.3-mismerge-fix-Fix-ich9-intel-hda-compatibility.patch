@@ -1,0 +1,45 @@
+From 0520d7ed938c47c0f2d2cad11e05614b637f6407 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Thu, 2 Jun 2016 15:11:46 +0200
+Subject: [PATCH 20/24] 7.3 mismerge fix: Fix ich9-intel-hda compatibility
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1464880310-29953-3-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70540
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/6] 7.3 mismerge fix: Fix ich9-intel-hda compatibility
+Bugzilla: 1342015
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Bandan Das <bsd@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+This is the same as 865f672f and corresponds to bz 1209793
+unfortunately it got lost in the 7.3 merge.
+(Laurent is removing the fragment from the 7.2 section as
+part of bz 1316303).
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/compat.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/include/hw/compat.h b/include/hw/compat.h
+index 147244d..5a075e4 100644
+--- a/include/hw/compat.h
++++ b/include/hw/compat.h
+@@ -113,8 +113,8 @@
+  *    we don't need virtio-scsi-pci since 7.0 already had that on
+  */
+ #define HW_COMPAT_RHEL7_1 \
+-        {\
+-            .driver   = "intel-hda",\
++        { /* COMPAT_RHEL7.1 */ \
++            .driver   = "intel-hda-generic",\
+             .property = "old_msi_addr",\
+             .value    = "on",\
+         },{\
+-- 
+1.8.3.1
+

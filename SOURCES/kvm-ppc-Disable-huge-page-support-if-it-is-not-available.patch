@@ -1,0 +1,82 @@
+From ea1d19f91198358aa0b6cac68052027c3adcd759 Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Fri, 24 Jun 2016 07:23:13 +0200
+Subject: [PATCH 08/33] ppc: Disable huge page support if it is not available
+ for main RAM
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1466752993-31513-2-git-send-email-thuth@redhat.com>
+Patchwork-id: 70765
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/1] ppc: Disable huge page support if it is not available for main RAM
+Bugzilla: 1347498
+RH-Acked-by: John Snow <jsnow@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+
+On powerpc, we must only signal huge page support to the guest if
+all memory areas are capable of supporting huge pages. The commit
+2d103aae8765 ("fix hugepage support when using memory-backend-file")
+already fixed the case when the user specified the mem-path property
+for NUMA memory nodes instead of using the global "-mem-path" option.
+However, there is one more case where it currently can go wrong.
+When specifying additional memory DIMMs without using NUMA, e.g.
+
+ qemu-system-ppc64 -enable-kvm ... -m 1G,slots=2,maxmem=2G \
+    -device pc-dimm,id=dimm-mem1,memdev=mem1 -object \
+    memory-backend-file,policy=default,mem-path=/...,size=1G,id=mem1
+
+the code in getrampagesize() currently assumes that huge pages
+are possible since they are enabled for the mem1 object. But
+since the main RAM is not backed by a huge page filesystem,
+the guest Linux kernel then crashes very quickly after being
+started. So in case the we've got "normal" memory without NUMA
+and without the global "-mem-path" option, we must not announce
+huge pages to the guest. Since this is likely a mis-configuration
+by the user, also spill out a message in this case.
+
+Signed-off-by: Thomas Huth <thuth@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 86b50f2e1befc33407bdfeb6f45f7b0d2439a740)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-ppc/kvm.c | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/target-ppc/kvm.c b/target-ppc/kvm.c
+index e684918..bb15dd9 100644
+--- a/target-ppc/kvm.c
++++ b/target-ppc/kvm.c
+@@ -27,6 +27,7 @@
+ #include "qemu/timer.h"
+ #include "sysemu/sysemu.h"
+ #include "sysemu/kvm.h"
++#include "sysemu/numa.h"
+ #include "kvm_ppc.h"
+ #include "cpu.h"
+ #include "sysemu/cpus.h"
+@@ -386,7 +387,21 @@ static long getrampagesize(void)
+ 
+     object_child_foreach(memdev_root, find_max_supported_pagesize, &hpsize);
+ 
+-    return (hpsize == LONG_MAX) ? getpagesize() : hpsize;
++    if (hpsize == LONG_MAX) {
++        return getpagesize();
++    }
++
++    if (nb_numa_nodes == 0 && hpsize > getpagesize()) {
++        /* No NUMA nodes and normal RAM without -mem-path ==> no huge pages! */
++        static bool warned;
++        if (!warned) {
++            error_report("Huge page support disabled (n/a for main memory).");
++            warned = true;
++        }
++        return getpagesize();
++    }
++
++    return hpsize;
+ }
+ 
+ static bool kvm_valid_page_size(uint32_t flags, long rampgsize, uint32_t shift)
+-- 
+1.8.3.1
+

@@ -1,0 +1,53 @@
+From 6e3040322688acfcee84aff230bb5b441defd3c3 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:58 +0200
+Subject: [PATCH 25/34] spapr: drop duplicate variable in spapr_core_release()
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-26-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71145
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 25/27] spapr: drop duplicate variable in spapr_core_release()
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Greg Kurz <groug@kaod.org>
+
+Signed-off-by: Greg Kurz <groug@kaod.org>
+Reviewed-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 8a1eb71bd8cf46a0fd163bc8805a3e86762ea798)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_cpu_core.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index 4886cd7..45aeb5d 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -102,7 +102,6 @@ static void spapr_core_release(DeviceState *dev, void *opaque)
+     const char *typename = object_class_get_name(sc->cpu_class);
+     size_t size = object_type_get_instance_size(typename);
+     sPAPRMachineState *spapr = SPAPR_MACHINE(qdev_get_machine());
+-    sPAPRCPUCore *core = SPAPR_CPU_CORE(OBJECT(dev));
+     CPUCore *cc = CPU_CORE(dev);
+     int smt = kvmppc_smt_threads();
+     int i;
+@@ -120,7 +119,7 @@ static void spapr_core_release(DeviceState *dev, void *opaque)
+ 
+     spapr->cores[cc->core_id / smt] = NULL;
+ 
+-    g_free(core->threads);
++    g_free(sc->threads);
+     object_unparent(OBJECT(dev));
+ }
+ 
+-- 
+1.8.3.1
+

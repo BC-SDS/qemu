@@ -1,0 +1,205 @@
+From 4eaa835ad39642c92414c99808e9fd84643bda27 Mon Sep 17 00:00:00 2001
+From: Xiao Wang <jasowang@redhat.com>
+Date: Thu, 21 Jul 2016 06:40:31 +0200
+Subject: [PATCH 04/35] pcie: Add support for PCIe CAP v1
+
+RH-Author: Xiao Wang <jasowang@redhat.com>
+Message-id: <1469083246-12219-5-git-send-email-jasowang@redhat.com>
+Patchwork-id: 71251
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 04/19] pcie: Add support for PCIe CAP v1
+Bugzilla: 1343092
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Dmitry Fleytman <dfleytma@redhat.com>
+
+From: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+
+Added support for PCIe CAP v1, while reusing some of the existing v2
+infrastructure.
+
+Signed-off-by: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+Signed-off-by: Leonid Bloch <leonid.bloch@ravellosystems.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+(cherry picked from commit 6383292ac884f01be609f69d888f54c099af622e)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/pci/pcie.c              | 84 ++++++++++++++++++++++++++++++++++++----------
+ include/hw/pci/pcie.h      |  4 +++
+ include/hw/pci/pcie_regs.h |  5 +--
+ 3 files changed, 73 insertions(+), 20 deletions(-)
+
+diff --git a/hw/pci/pcie.c b/hw/pci/pcie.c
+index 728386a..24cfc3b 100644
+--- a/hw/pci/pcie.c
++++ b/hw/pci/pcie.c
+@@ -43,26 +43,15 @@
+ /***************************************************************************
+  * pci express capability helper functions
+  */
+-int pcie_cap_init(PCIDevice *dev, uint8_t offset, uint8_t type, uint8_t port)
+-{
+-    int pos;
+-    uint8_t *exp_cap;
+-
+-    assert(pci_is_express(dev));
+-
+-    pos = pci_add_capability(dev, PCI_CAP_ID_EXP, offset,
+-                                 PCI_EXP_VER2_SIZEOF);
+-    if (pos < 0) {
+-        return pos;
+-    }
+-    dev->exp.exp_cap = pos;
+-    exp_cap = dev->config + pos;
+ 
++static void
++pcie_cap_v1_fill(uint8_t *exp_cap, uint8_t port, uint8_t type, uint8_t version)
++{
+     /* capability register
+-       interrupt message number defaults to 0 */
++    interrupt message number defaults to 0 */
+     pci_set_word(exp_cap + PCI_EXP_FLAGS,
+                  ((type << PCI_EXP_FLAGS_TYPE_SHIFT) & PCI_EXP_FLAGS_TYPE) |
+-                 PCI_EXP_FLAGS_VER2);
++                 version);
+ 
+     /* device capability register
+      * table 7-12:
+@@ -81,7 +70,27 @@ int pcie_cap_init(PCIDevice *dev, uint8_t offset, uint8_t type, uint8_t port)
+ 
+     pci_set_word(exp_cap + PCI_EXP_LNKSTA,
+                  PCI_EXP_LNK_MLW_1 | PCI_EXP_LNK_LS_25 |PCI_EXP_LNKSTA_DLLLA);
++}
++
++int pcie_cap_init(PCIDevice *dev, uint8_t offset, uint8_t type, uint8_t port)
++{
++    /* PCIe cap v2 init */
++    int pos;
++    uint8_t *exp_cap;
++
++    assert(pci_is_express(dev));
++
++    pos = pci_add_capability(dev, PCI_CAP_ID_EXP, offset, PCI_EXP_VER2_SIZEOF);
++    if (pos < 0) {
++        return pos;
++    }
++    dev->exp.exp_cap = pos;
++    exp_cap = dev->config + pos;
++
++    /* Filling values common with v1 */
++    pcie_cap_v1_fill(exp_cap, port, type, PCI_EXP_FLAGS_VER2);
+ 
++    /* Filling v2 specific values */
+     pci_set_long(exp_cap + PCI_EXP_DEVCAP2,
+                  PCI_EXP_DEVCAP2_EFF | PCI_EXP_DEVCAP2_EETLPP);
+ 
+@@ -89,7 +98,29 @@ int pcie_cap_init(PCIDevice *dev, uint8_t offset, uint8_t type, uint8_t port)
+     return pos;
+ }
+ 
+-int pcie_endpoint_cap_init(PCIDevice *dev, uint8_t offset)
++int pcie_cap_v1_init(PCIDevice *dev, uint8_t offset, uint8_t type,
++                     uint8_t port)
++{
++    /* PCIe cap v1 init */
++    int pos;
++    uint8_t *exp_cap;
++
++    assert(pci_is_express(dev));
++
++    pos = pci_add_capability(dev, PCI_CAP_ID_EXP, offset, PCI_EXP_VER1_SIZEOF);
++    if (pos < 0) {
++        return pos;
++    }
++    dev->exp.exp_cap = pos;
++    exp_cap = dev->config + pos;
++
++    pcie_cap_v1_fill(exp_cap, port, type, PCI_EXP_FLAGS_VER1);
++
++    return pos;
++}
++
++static int
++pcie_endpoint_cap_common_init(PCIDevice *dev, uint8_t offset, uint8_t cap_size)
+ {
+     uint8_t type = PCI_EXP_TYPE_ENDPOINT;
+ 
+@@ -102,7 +133,19 @@ int pcie_endpoint_cap_init(PCIDevice *dev, uint8_t offset)
+         type = PCI_EXP_TYPE_RC_END;
+     }
+ 
+-    return pcie_cap_init(dev, offset, type, 0);
++    return (cap_size == PCI_EXP_VER1_SIZEOF)
++        ? pcie_cap_v1_init(dev, offset, type, 0)
++        : pcie_cap_init(dev, offset, type, 0);
++}
++
++int pcie_endpoint_cap_init(PCIDevice *dev, uint8_t offset)
++{
++    return pcie_endpoint_cap_common_init(dev, offset, PCI_EXP_VER2_SIZEOF);
++}
++
++int pcie_endpoint_cap_v1_init(PCIDevice *dev, uint8_t offset)
++{
++    return pcie_endpoint_cap_common_init(dev, offset, PCI_EXP_VER1_SIZEOF);
+ }
+ 
+ void pcie_cap_exit(PCIDevice *dev)
+@@ -110,6 +153,11 @@ void pcie_cap_exit(PCIDevice *dev)
+     pci_del_capability(dev, PCI_CAP_ID_EXP, PCI_EXP_VER2_SIZEOF);
+ }
+ 
++void pcie_cap_v1_exit(PCIDevice *dev)
++{
++    pci_del_capability(dev, PCI_CAP_ID_EXP, PCI_EXP_VER1_SIZEOF);
++}
++
+ uint8_t pcie_cap_get_type(const PCIDevice *dev)
+ {
+     uint32_t pos = dev->exp.exp_cap;
+diff --git a/include/hw/pci/pcie.h b/include/hw/pci/pcie.h
+index b48a7a2..cbbf0c5 100644
+--- a/include/hw/pci/pcie.h
++++ b/include/hw/pci/pcie.h
+@@ -80,8 +80,12 @@ struct PCIExpressDevice {
+ 
+ /* PCI express capability helper functions */
+ int pcie_cap_init(PCIDevice *dev, uint8_t offset, uint8_t type, uint8_t port);
++int pcie_cap_v1_init(PCIDevice *dev, uint8_t offset,
++                     uint8_t type, uint8_t port);
+ int pcie_endpoint_cap_init(PCIDevice *dev, uint8_t offset);
+ void pcie_cap_exit(PCIDevice *dev);
++int pcie_endpoint_cap_v1_init(PCIDevice *dev, uint8_t offset);
++void pcie_cap_v1_exit(PCIDevice *dev);
+ uint8_t pcie_cap_get_type(const PCIDevice *dev);
+ void pcie_cap_flags_set_vector(PCIDevice *dev, uint8_t vector);
+ uint8_t pcie_cap_flags_get_vector(PCIDevice *dev);
+diff --git a/include/hw/pci/pcie_regs.h b/include/hw/pci/pcie_regs.h
+index 6a28b33..a95522a 100644
+--- a/include/hw/pci/pcie_regs.h
++++ b/include/hw/pci/pcie_regs.h
+@@ -11,6 +11,7 @@
+ 
+ /* express capability */
+ 
++#define PCI_EXP_VER1_SIZEOF             0x14 /* express capability of ver. 1 */
+ #define PCI_EXP_VER2_SIZEOF             0x3c /* express capability of ver. 2 */
+ #define PCI_EXT_CAP_VER_SHIFT           16
+ #define PCI_EXT_CAP_NEXT_SHIFT          20
+@@ -26,11 +27,11 @@
+     (((x) + PCI_EXT_CAP_ALIGN - 1) & ~(PCI_EXT_CAP_ALIGN - 1))
+ 
+ /* PCI_EXP_FLAGS */
+-#define PCI_EXP_FLAGS_VER2              2 /* for now, supports only ver. 2 */
++#define PCI_EXP_FLAGS_VER1              1
++#define PCI_EXP_FLAGS_VER2              2
+ #define PCI_EXP_FLAGS_IRQ_SHIFT         ctz32(PCI_EXP_FLAGS_IRQ)
+ #define PCI_EXP_FLAGS_TYPE_SHIFT        ctz32(PCI_EXP_FLAGS_TYPE)
+ 
+-
+ /* PCI_EXP_LINK{CAP, STA} */
+ /* link speed */
+ #define PCI_EXP_LNK_LS_25               1
+-- 
+1.8.3.1
+

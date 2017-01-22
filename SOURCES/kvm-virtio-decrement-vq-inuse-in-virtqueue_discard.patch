@@ -1,0 +1,46 @@
+From 02aa1d7c1ccd522eabc9d7e3e5674646c414d556 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Mon, 12 Sep 2016 12:22:36 +0200
+Subject: [PATCH 2/4] virtio: decrement vq->inuse in virtqueue_discard()
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1473682956-31576-3-git-send-email-stefanha@redhat.com>
+Patchwork-id: 72285
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 2/2] virtio: decrement vq->inuse in virtqueue_discard()
+Bugzilla: 1372763
+RH-Acked-by: Ladi Prosek <lprosek@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+virtqueue_discard() moves vq->last_avail_idx back so the element can be
+popped again.  It's necessary to decrement vq->inuse to avoid "leaking"
+the element count.
+
+Cc: qemu-stable@nongnu.org
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Reviewed-by: Cornelia Huck <cornelia.huck@de.ibm.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 58a83c61496eeb0d31571a07a51bc1947e3379ac)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/virtio.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/virtio/virtio.c b/hw/virtio/virtio.c
+index cf911f6..2d7e1ec 100644
+--- a/hw/virtio/virtio.c
++++ b/hw/virtio/virtio.c
+@@ -267,6 +267,7 @@ void virtqueue_discard(VirtQueue *vq, const VirtQueueElement *elem,
+                        unsigned int len)
+ {
+     vq->last_avail_idx--;
++    vq->inuse--;
+     virtqueue_unmap_sg(vq, elem, len);
+ }
+ 
+-- 
+1.8.3.1
+

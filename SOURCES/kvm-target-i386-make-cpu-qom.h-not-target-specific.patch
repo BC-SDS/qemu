@@ -1,0 +1,283 @@
+From f53dc478a8d53789342e2e98d2c63c51a3be72ee Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Wed, 3 Aug 2016 07:38:26 +0200
+Subject: [PATCH 51/99] target-i386: make cpu-qom.h not target specific
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470209906-112838-1-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71793
+O-Subject: [RHEV-7.3 qemu-kvm-rhev v2 46/78] target-i386: make cpu-qom.h not target specific
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+
+From: Paolo Bonzini <pbonzini@redhat.com>
+
+Make X86CPU an opaque type within cpu-qom.h, and move all definitions of
+private methods, as well as all type definitions that require knowledge
+of the layout to cpu.h.  This helps making files independent of NEED_CPU_H
+if they only need to pass around CPU pointers.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit 4da6f8d954429c0cd1471d25cb9dbe909607374e)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+   target-i386/cpu-qom.h: introduced by mttr backports
+      1b457dbd target-i386: Allow physical address bits to be set
+      910cf4a5 target-i386: Fill high bits of mtrr mask
+      aadc6b0a target-i386: Set physical address bits based on host
+   fixed by moving added in above commits fields
+         phys_bits, fill_mtrr_mask, host_phys_bits
+   to target-i386/cpu.h as part of struct X86CPU{} movement
+
+v2:
+  Fix conflicts introduced by 1b457dbd, 910cf4a5, aadc6b0a
+---
+ target-i386/cpu-qom.h | 105 +------------------------------------------------
+ target-i386/cpu.h     | 106 +++++++++++++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 106 insertions(+), 105 deletions(-)
+
+diff --git a/target-i386/cpu-qom.h b/target-i386/cpu-qom.h
+index 695d6c9..5dde658 100644
+--- a/target-i386/cpu-qom.h
++++ b/target-i386/cpu-qom.h
+@@ -67,109 +67,6 @@ typedef struct X86CPUClass {
+     void (*parent_reset)(CPUState *cpu);
+ } X86CPUClass;
+ 
+-/**
+- * X86CPU:
+- * @env: #CPUX86State
+- * @migratable: If set, only migratable flags will be accepted when "enforce"
+- * mode is used, and only migratable flags will be included in the "host"
+- * CPU model.
+- *
+- * An x86 CPU.
+- */
+-typedef struct X86CPU {
+-    /*< private >*/
+-    CPUState parent_obj;
+-    /*< public >*/
+-
+-    CPUX86State env;
+-
+-    bool hyperv_vapic;
+-    bool hyperv_relaxed_timing;
+-    int hyperv_spinlock_attempts;
+-    char *hyperv_vendor_id;
+-    bool hyperv_time;
+-    bool hyperv_crash;
+-    bool hyperv_reset;
+-    bool hyperv_vpindex;
+-    bool hyperv_runtime;
+-    bool hyperv_synic;
+-    bool hyperv_stimer;
+-    bool check_cpuid;
+-    bool enforce_cpuid;
+-    bool expose_kvm;
+-    bool migratable;
+-    bool host_features;
+-    int64_t apic_id;
+-
+-    /* if true the CPUID code directly forward host cache leaves to the guest */
+-    bool cache_info_passthrough;
+-
+-    /* Features that were filtered out because of missing host capabilities */
+-    uint32_t filtered_features[FEATURE_WORDS];
+-
+-    /* Number of physical address bits supported */
+-    uint32_t phys_bits;
+-
+-    /* if true fill the top bits of the MTRR_PHYSMASKn variable range */
+-    bool fill_mtrr_mask;
+-    /* if true override the phys_bits value with a value read from the host */
+-    bool host_phys_bits;
+-
+-    /* Enable PMU CPUID bits. This can't be enabled by default yet because
+-     * it doesn't have ABI stability guarantees, as it passes all PMU CPUID
+-     * bits returned by GET_SUPPORTED_CPUID (that depend on host CPU and kernel
+-     * capabilities) directly to the guest.
+-     */
+-    bool enable_pmu;
+-
+-    /* in order to simplify APIC support, we leave this pointer to the
+-       user */
+-    struct DeviceState *apic_state;
+-    struct MemoryRegion *cpu_as_root, *cpu_as_mem, *smram;
+-    Notifier machine_done;
+-} X86CPU;
+-
+-static inline X86CPU *x86_env_get_cpu(CPUX86State *env)
+-{
+-    return container_of(env, X86CPU, env);
+-}
+-
+-#define ENV_GET_CPU(e) CPU(x86_env_get_cpu(e))
+-
+-#define ENV_OFFSET offsetof(X86CPU, env)
+-
+-#ifndef CONFIG_USER_ONLY
+-extern struct VMStateDescription vmstate_x86_cpu;
+-#endif
+-
+-/**
+- * x86_cpu_do_interrupt:
+- * @cpu: vCPU the interrupt is to be handled by.
+- */
+-void x86_cpu_do_interrupt(CPUState *cpu);
+-bool x86_cpu_exec_interrupt(CPUState *cpu, int int_req);
+-
+-int x86_cpu_write_elf64_note(WriteCoreDumpFunction f, CPUState *cpu,
+-                             int cpuid, void *opaque);
+-int x86_cpu_write_elf32_note(WriteCoreDumpFunction f, CPUState *cpu,
+-                             int cpuid, void *opaque);
+-int x86_cpu_write_elf64_qemunote(WriteCoreDumpFunction f, CPUState *cpu,
+-                                 void *opaque);
+-int x86_cpu_write_elf32_qemunote(WriteCoreDumpFunction f, CPUState *cpu,
+-                                 void *opaque);
+-
+-void x86_cpu_get_memory_mapping(CPUState *cpu, MemoryMappingList *list,
+-                                Error **errp);
+-
+-void x86_cpu_dump_state(CPUState *cs, FILE *f, fprintf_function cpu_fprintf,
+-                        int flags);
+-
+-hwaddr x86_cpu_get_phys_page_debug(CPUState *cpu, vaddr addr);
+-
+-int x86_cpu_gdb_read_register(CPUState *cpu, uint8_t *buf, int reg);
+-int x86_cpu_gdb_write_register(CPUState *cpu, uint8_t *buf, int reg);
+-
+-void x86_cpu_exec_enter(CPUState *cpu);
+-void x86_cpu_exec_exit(CPUState *cpu);
++typedef struct X86CPU X86CPU;
+ 
+ #endif
+diff --git a/target-i386/cpu.h b/target-i386/cpu.h
+index 0bbf1ec..a80eb95 100644
+--- a/target-i386/cpu.h
++++ b/target-i386/cpu.h
+@@ -20,6 +20,7 @@
+ #define CPU_I386_H
+ 
+ #include "qemu-common.h"
++#include "cpu-qom.h"
+ #include "standard-headers/asm-x86/hyperv.h"
+ 
+ #ifdef TARGET_X86_64
+@@ -1028,7 +1029,110 @@ typedef struct CPUX86State {
+     TPRAccess tpr_access_type;
+ } CPUX86State;
+ 
+-#include "cpu-qom.h"
++/**
++ * X86CPU:
++ * @env: #CPUX86State
++ * @migratable: If set, only migratable flags will be accepted when "enforce"
++ * mode is used, and only migratable flags will be included in the "host"
++ * CPU model.
++ *
++ * An x86 CPU.
++ */
++struct X86CPU {
++    /*< private >*/
++    CPUState parent_obj;
++    /*< public >*/
++
++    CPUX86State env;
++
++    bool hyperv_vapic;
++    bool hyperv_relaxed_timing;
++    int hyperv_spinlock_attempts;
++    char *hyperv_vendor_id;
++    bool hyperv_time;
++    bool hyperv_crash;
++    bool hyperv_reset;
++    bool hyperv_vpindex;
++    bool hyperv_runtime;
++    bool hyperv_synic;
++    bool hyperv_stimer;
++    bool check_cpuid;
++    bool enforce_cpuid;
++    bool expose_kvm;
++    bool migratable;
++    bool host_features;
++    int64_t apic_id;
++
++    /* if true the CPUID code directly forward host cache leaves to the guest */
++    bool cache_info_passthrough;
++
++    /* Features that were filtered out because of missing host capabilities */
++    uint32_t filtered_features[FEATURE_WORDS];
++
++    /* Number of physical address bits supported */
++    uint32_t phys_bits;
++
++    /* if true fill the top bits of the MTRR_PHYSMASKn variable range */
++    bool fill_mtrr_mask;
++    /* if true override the phys_bits value with a value read from the host */
++    bool host_phys_bits;
++
++    /* Enable PMU CPUID bits. This can't be enabled by default yet because
++     * it doesn't have ABI stability guarantees, as it passes all PMU CPUID
++     * bits returned by GET_SUPPORTED_CPUID (that depend on host CPU and kernel
++     * capabilities) directly to the guest.
++     */
++    bool enable_pmu;
++
++    /* in order to simplify APIC support, we leave this pointer to the
++       user */
++    struct DeviceState *apic_state;
++    struct MemoryRegion *cpu_as_root, *cpu_as_mem, *smram;
++    Notifier machine_done;
++};
++
++static inline X86CPU *x86_env_get_cpu(CPUX86State *env)
++{
++    return container_of(env, X86CPU, env);
++}
++
++#define ENV_GET_CPU(e) CPU(x86_env_get_cpu(e))
++
++#define ENV_OFFSET offsetof(X86CPU, env)
++
++#ifndef CONFIG_USER_ONLY
++extern struct VMStateDescription vmstate_x86_cpu;
++#endif
++
++/**
++ * x86_cpu_do_interrupt:
++ * @cpu: vCPU the interrupt is to be handled by.
++ */
++void x86_cpu_do_interrupt(CPUState *cpu);
++bool x86_cpu_exec_interrupt(CPUState *cpu, int int_req);
++
++int x86_cpu_write_elf64_note(WriteCoreDumpFunction f, CPUState *cpu,
++                             int cpuid, void *opaque);
++int x86_cpu_write_elf32_note(WriteCoreDumpFunction f, CPUState *cpu,
++                             int cpuid, void *opaque);
++int x86_cpu_write_elf64_qemunote(WriteCoreDumpFunction f, CPUState *cpu,
++                                 void *opaque);
++int x86_cpu_write_elf32_qemunote(WriteCoreDumpFunction f, CPUState *cpu,
++                                 void *opaque);
++
++void x86_cpu_get_memory_mapping(CPUState *cpu, MemoryMappingList *list,
++                                Error **errp);
++
++void x86_cpu_dump_state(CPUState *cs, FILE *f, fprintf_function cpu_fprintf,
++                        int flags);
++
++hwaddr x86_cpu_get_phys_page_debug(CPUState *cpu, vaddr addr);
++
++int x86_cpu_gdb_read_register(CPUState *cpu, uint8_t *buf, int reg);
++int x86_cpu_gdb_write_register(CPUState *cpu, uint8_t *buf, int reg);
++
++void x86_cpu_exec_enter(CPUState *cpu);
++void x86_cpu_exec_exit(CPUState *cpu);
+ 
+ X86CPU *cpu_x86_init(const char *cpu_model);
+ X86CPU *cpu_x86_create(const char *cpu_model, Error **errp);
+-- 
+1.8.3.1
+

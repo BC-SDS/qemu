@@ -1,0 +1,213 @@
+From 3769d0ed9cb0c64f67152c5542b174ed189f3009 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Tue, 9 Aug 2016 14:05:01 +0200
+Subject: [PATCH 01/17] fix qemu exit on memory hotplug when allocation fails
+ at prealloc time
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470751501-137069-1-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71890
+O-Subject: [RHEV-7.3 qemu-kvm-rhev] fix qemu exit on memory hotplug when allocation fails at prealloc time
+Bugzilla: 1351409
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+When adding hostmem backend at runtime, QEMU might exit with error:
+  "os_mem_prealloc: Insufficient free host memory pages available to allocate guest RAM"
+
+It happens due to os_mem_prealloc() not handling errors gracefully.
+
+Fix it by passing errp argument so that os_mem_prealloc() could
+report error to callers and undo performed allocation when
+os_mem_prealloc() fails.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Message-Id: <1469008443-72059-1-git-send-email-imammedo@redhat.com>
+Reviewed-by: Markus Armbruster <armbru@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit 056b68af773b31fa98fe4538f6424c0079b61415)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ backends/hostmem.c   | 18 ++++++++++++++----
+ exec.c               | 10 ++++++++--
+ include/qemu/osdep.h |  2 +-
+ util/oslib-posix.c   | 26 +++++++++++++-------------
+ util/oslib-win32.c   |  2 +-
+ 5 files changed, 37 insertions(+), 21 deletions(-)
+
+diff --git a/backends/hostmem.c b/backends/hostmem.c
+index 6e28be1..3e7839f 100644
+--- a/backends/hostmem.c
++++ b/backends/hostmem.c
+@@ -197,6 +197,7 @@ static bool host_memory_backend_get_prealloc(Object *obj, Error **errp)
+ static void host_memory_backend_set_prealloc(Object *obj, bool value,
+                                              Error **errp)
+ {
++    Error *local_err = NULL;
+     HostMemoryBackend *backend = MEMORY_BACKEND(obj);
+ 
+     if (backend->force_prealloc) {
+@@ -217,7 +218,11 @@ static void host_memory_backend_set_prealloc(Object *obj, bool value,
+         void *ptr = memory_region_get_ram_ptr(&backend->mr);
+         uint64_t sz = memory_region_size(&backend->mr);
+ 
+-        os_mem_prealloc(fd, ptr, sz);
++        os_mem_prealloc(fd, ptr, sz, &local_err);
++        if (local_err) {
++            error_propagate(errp, local_err);
++            return;
++        }
+         backend->prealloc = true;
+     }
+ }
+@@ -270,8 +275,7 @@ host_memory_backend_memory_complete(UserCreatable *uc, Error **errp)
+     if (bc->alloc) {
+         bc->alloc(backend, &local_err);
+         if (local_err) {
+-            error_propagate(errp, local_err);
+-            return;
++            goto out;
+         }
+ 
+         ptr = memory_region_get_ram_ptr(&backend->mr);
+@@ -327,9 +331,15 @@ host_memory_backend_memory_complete(UserCreatable *uc, Error **errp)
+          * specified NUMA policy in place.
+          */
+         if (backend->prealloc) {
+-            os_mem_prealloc(memory_region_get_fd(&backend->mr), ptr, sz);
++            os_mem_prealloc(memory_region_get_fd(&backend->mr), ptr, sz,
++                            &local_err);
++            if (local_err) {
++                goto out;
++            }
+         }
+     }
++out:
++    error_propagate(errp, local_err);
+ }
+ 
+ static bool
+diff --git a/exec.c b/exec.c
+index ffd65af..7b287a3 100644
+--- a/exec.c
++++ b/exec.c
+@@ -1224,7 +1224,7 @@ static void *file_ram_alloc(RAMBlock *block,
+     char *filename;
+     char *sanitized_name;
+     char *c;
+-    void *area;
++    void *area = MAP_FAILED;
+     int fd = -1;
+     int64_t page_size;
+ 
+@@ -1311,13 +1311,19 @@ static void *file_ram_alloc(RAMBlock *block,
+     }
+ 
+     if (mem_prealloc) {
+-        os_mem_prealloc(fd, area, memory);
++        os_mem_prealloc(fd, area, memory, errp);
++        if (errp && *errp) {
++            goto error;
++        }
+     }
+ 
+     block->fd = fd;
+     return area;
+ 
+ error:
++    if (area != MAP_FAILED) {
++        qemu_ram_munmap(area, memory);
++    }
+     if (unlink_on_error) {
+         unlink(path);
+     }
+diff --git a/include/qemu/osdep.h b/include/qemu/osdep.h
+index 408783f..3d8f37e 100644
+--- a/include/qemu/osdep.h
++++ b/include/qemu/osdep.h
+@@ -339,7 +339,7 @@ unsigned long qemu_getauxval(unsigned long type);
+ 
+ void qemu_set_tty_echo(int fd, bool echo);
+ 
+-void os_mem_prealloc(int fd, char *area, size_t sz);
++void os_mem_prealloc(int fd, char *area, size_t sz, Error **errp);
+ 
+ int qemu_read_password(char *buf, int buf_size);
+ 
+diff --git a/util/oslib-posix.c b/util/oslib-posix.c
+index 6cc4b8f..c1065f8 100644
+--- a/util/oslib-posix.c
++++ b/util/oslib-posix.c
+@@ -330,7 +330,7 @@ static void sigbus_handler(int signal)
+     siglongjmp(sigjump, 1);
+ }
+ 
+-void os_mem_prealloc(int fd, char *area, size_t memory)
++void os_mem_prealloc(int fd, char *area, size_t memory, Error **errp)
+ {
+     int ret;
+     struct sigaction act, oldact;
+@@ -342,8 +342,9 @@ void os_mem_prealloc(int fd, char *area, size_t memory)
+ 
+     ret = sigaction(SIGBUS, &act, &oldact);
+     if (ret) {
+-        perror("os_mem_prealloc: failed to install signal handler");
+-        exit(1);
++        error_setg_errno(errp, errno,
++            "os_mem_prealloc: failed to install signal handler");
++        return;
+     }
+ 
+     /* unblock SIGBUS */
+@@ -352,9 +353,8 @@ void os_mem_prealloc(int fd, char *area, size_t memory)
+     pthread_sigmask(SIG_UNBLOCK, &set, &oldset);
+ 
+     if (sigsetjmp(sigjump, 1)) {
+-        fprintf(stderr, "os_mem_prealloc: Insufficient free host memory "
+-                        "pages available to allocate guest RAM\n");
+-        exit(1);
++        error_setg(errp, "os_mem_prealloc: Insufficient free host memory "
++            "pages available to allocate guest RAM\n");
+     } else {
+         int i;
+         size_t hpagesize = qemu_fd_getpagesize(fd);
+@@ -364,15 +364,15 @@ void os_mem_prealloc(int fd, char *area, size_t memory)
+         for (i = 0; i < numpages; i++) {
+             memset(area + (hpagesize * i), 0, 1);
+         }
++    }
+ 
+-        ret = sigaction(SIGBUS, &oldact, NULL);
+-        if (ret) {
+-            perror("os_mem_prealloc: failed to reinstall signal handler");
+-            exit(1);
+-        }
+-
+-        pthread_sigmask(SIG_SETMASK, &oldset, NULL);
++    ret = sigaction(SIGBUS, &oldact, NULL);
++    if (ret) {
++        /* Terminate QEMU since it can't recover from error */
++        perror("os_mem_prealloc: failed to reinstall signal handler");
++        exit(1);
+     }
++    pthread_sigmask(SIG_SETMASK, &oldset, NULL);
+ }
+ 
+ 
+diff --git a/util/oslib-win32.c b/util/oslib-win32.c
+index c926db4..cf0fe11 100644
+--- a/util/oslib-win32.c
++++ b/util/oslib-win32.c
+@@ -540,7 +540,7 @@ int getpagesize(void)
+     return system_info.dwPageSize;
+ }
+ 
+-void os_mem_prealloc(int fd, char *area, size_t memory)
++void os_mem_prealloc(int fd, char *area, size_t memory, Error **errp)
+ {
+     int i;
+     size_t pagesize = getpagesize();
+-- 
+1.8.3.1
+

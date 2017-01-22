@@ -1,0 +1,69 @@
+From 3d87ed184b03797846a0543e7e719446a8a24662 Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Mon, 25 Jul 2016 14:11:19 +0200
+Subject: [PATCH 34/34] hw/ppc/spapr: Make sure to close the htab_fd when
+ migration is canceled
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1469455879-31571-2-git-send-email-thuth@redhat.com>
+Patchwork-id: 71395
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/1] hw/ppc/spapr: Make sure to close the htab_fd when migration is canceled
+Bugzilla: 1354341
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+When canceling a migration process, we currently do not close the
+HTAB migration file descriptor since htab_save_complete() is never
+called in that case. So we leave the migration process with a
+dangling htab_fd value around, and this causes any further migration
+attempts to fail. To fix this issue, simply make sure that the
+htab_fd is closed during the migration cleanup stage. And since the
+cleanup() function is also called when migration succeeds, we can
+also remove the call to close_htab_fd() from the htab_save_complete()
+function.
+
+Buglink: https://bugzilla.redhat.com/show_bug.cgi?id=1354341
+Signed-off-by: Thomas Huth <thuth@redhat.com>
+Reviewed-by: Greg Kurz <groug@kaod.org>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit c573fc03da65e35bf44bce0448ea12801e3631ac)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index f470f39..b1ee70d 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -1490,7 +1490,6 @@ static int htab_save_complete(QEMUFile *f, void *opaque)
+         if (rc < 0) {
+             return rc;
+         }
+-        close_htab_fd(spapr);
+     } else {
+         if (spapr->htab_first_pass) {
+             htab_save_first_pass(f, spapr, -1);
+@@ -1592,10 +1591,18 @@ static int htab_load(QEMUFile *f, void *opaque, int version_id)
+     return 0;
+ }
+ 
++static void htab_cleanup(void *opaque)
++{
++    sPAPRMachineState *spapr = opaque;
++
++    close_htab_fd(spapr);
++}
++
+ static SaveVMHandlers savevm_htab_handlers = {
+     .save_live_setup = htab_save_setup,
+     .save_live_iterate = htab_save_iterate,
+     .save_live_complete_precopy = htab_save_complete,
++    .cleanup = htab_cleanup,
+     .load_state = htab_load,
+ };
+ 
+-- 
+1.8.3.1
+

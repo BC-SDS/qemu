@@ -1,0 +1,2631 @@
+From f3eb2c1ec6026a4ec307d07ea4daa11c55d4f8c9 Mon Sep 17 00:00:00 2001
+From: Xiao Wang <jasowang@redhat.com>
+Date: Thu, 21 Jul 2016 06:40:37 +0200
+Subject: [PATCH 10/35] net_pkt: Name vmxnet3 packet abstractions more generic
+
+RH-Author: Xiao Wang <jasowang@redhat.com>
+Message-id: <1469083246-12219-11-git-send-email-jasowang@redhat.com>
+Patchwork-id: 71257
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 10/19] net_pkt: Name vmxnet3 packet abstractions more generic
+Bugzilla: 1343092
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Dmitry Fleytman <dfleytma@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+From: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+
+Notes: conflicts since commit caaa2b731cf73681fe49ec96c2b817b22335679c
+       ("Add RHEL 7 machine types") disable vmxnet3 qtest.
+
+This patch drops "vmx" prefix from packet abstractions names
+to emphasize the fact they are generic and not tied to any
+specific network device.
+
+These abstractions will be reused by e1000e emulation implementation
+introduced by following patches so their names need generalization.
+
+This patch (except renamed files, adjusted comments and changes in MAINTAINTERS)
+was produced by:
+
+git grep -lz 'vmxnet_tx_pkt' | xargs -0 perl -i'' -pE "s/vmxnet_tx_pkt/net_tx_pkt/g"
+git grep -lz 'vmxnet_rx_pkt' | xargs -0 perl -i'' -pE "s/vmxnet_rx_pkt/net_rx_pkt/g"
+git grep -lz 'VmxnetTxPkt' | xargs -0 perl -i'' -pE "s/VmxnetTxPkt/NetTxPkt/g"
+git grep -lz 'VMXNET_TX_PKT' | xargs -0 perl -i'' -pE "s/VMXNET_TX_PKT/NET_TX_PKT/g"
+git grep -lz 'VmxnetRxPkt' | xargs -0 perl -i'' -pE "s/VmxnetRxPkt/NetRxPkt/g"
+git grep -lz 'VMXNET_RX_PKT' | xargs -0 perl -i'' -pE "s/VMXNET_RX_PKT/NET_RX_PKT/g"
+sed -ie 's/VMXNET_/NET_/g' hw/net/vmxnet_rx_pkt.c
+sed -ie 's/VMXNET_/NET_/g' hw/net/vmxnet_tx_pkt.c
+
+Signed-off-by: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+Signed-off-by: Leonid Bloch <leonid.bloch@ravellosystems.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+(cherry picked from commit 605d52e62fc94ec28408890fc682d4bdd7d8a36c)
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	tests/Makefile
+---
+ MAINTAINERS            |   8 +
+ hw/net/Makefile.objs   |   2 +-
+ hw/net/net_rx_pkt.c    | 187 ++++++++++++++++
+ hw/net/net_rx_pkt.h    | 174 +++++++++++++++
+ hw/net/net_tx_pkt.c    | 581 +++++++++++++++++++++++++++++++++++++++++++++++++
+ hw/net/net_tx_pkt.h    | 146 +++++++++++++
+ hw/net/vmxnet3.c       |  88 ++++----
+ hw/net/vmxnet_rx_pkt.c | 187 ----------------
+ hw/net/vmxnet_rx_pkt.h | 174 ---------------
+ hw/net/vmxnet_tx_pkt.c | 581 -------------------------------------------------
+ hw/net/vmxnet_tx_pkt.h | 146 -------------
+ tests/Makefile         |   4 +-
+ 12 files changed, 1143 insertions(+), 1135 deletions(-)
+ create mode 100644 hw/net/net_rx_pkt.c
+ create mode 100644 hw/net/net_rx_pkt.h
+ create mode 100644 hw/net/net_tx_pkt.c
+ create mode 100644 hw/net/net_tx_pkt.h
+ delete mode 100644 hw/net/vmxnet_rx_pkt.c
+ delete mode 100644 hw/net/vmxnet_rx_pkt.h
+ delete mode 100644 hw/net/vmxnet_tx_pkt.c
+ delete mode 100644 hw/net/vmxnet_tx_pkt.h
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 81e7fac..dc5e536 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -953,6 +953,14 @@ S: Maintained
+ F: hw/*/xilinx_*
+ F: include/hw/xilinx.h
+ 
++Network packet abstractions
++M: Dmitry Fleytman <dmitry@daynix.com>
++S: Maintained
++F: include/net/eth.h
++F: net/eth.c
++F: hw/net/net_rx_pkt*
++F: hw/net/net_tx_pkt*
++
+ Vmware
+ M: Dmitry Fleytman <dmitry@daynix.com>
+ S: Maintained
+diff --git a/hw/net/Makefile.objs b/hw/net/Makefile.objs
+index 64d0449..527d264 100644
+--- a/hw/net/Makefile.objs
++++ b/hw/net/Makefile.objs
+@@ -8,7 +8,7 @@ common-obj-$(CONFIG_PCNET_PCI) += pcnet-pci.o
+ common-obj-$(CONFIG_PCNET_COMMON) += pcnet.o
+ common-obj-$(CONFIG_E1000_PCI) += e1000.o
+ common-obj-$(CONFIG_RTL8139_PCI) += rtl8139.o
+-common-obj-$(CONFIG_VMXNET3_PCI) += vmxnet_tx_pkt.o vmxnet_rx_pkt.o
++common-obj-$(CONFIG_VMXNET3_PCI) += net_tx_pkt.o net_rx_pkt.o
+ common-obj-$(CONFIG_VMXNET3_PCI) += vmxnet3.o
+ 
+ common-obj-$(CONFIG_SMC91C111) += smc91c111.o
+diff --git a/hw/net/net_rx_pkt.c b/hw/net/net_rx_pkt.c
+new file mode 100644
+index 0000000..8a4f29f
+--- /dev/null
++++ b/hw/net/net_rx_pkt.c
+@@ -0,0 +1,187 @@
++/*
++ * QEMU RX packets abstractions
++ *
++ * Copyright (c) 2012 Ravello Systems LTD (http://ravellosystems.com)
++ *
++ * Developed by Daynix Computing LTD (http://www.daynix.com)
++ *
++ * Authors:
++ * Dmitry Fleytman <dmitry@daynix.com>
++ * Tamir Shomer <tamirs@daynix.com>
++ * Yan Vugenfirer <yan@daynix.com>
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ *
++ */
++
++#include "qemu/osdep.h"
++#include "net_rx_pkt.h"
++#include "net/eth.h"
++#include "qemu-common.h"
++#include "qemu/iov.h"
++#include "net/checksum.h"
++#include "net/tap.h"
++
++/*
++ * RX packet may contain up to 2 fragments - rebuilt eth header
++ * in case of VLAN tag stripping
++ * and payload received from QEMU - in any case
++ */
++#define NET_MAX_RX_PACKET_FRAGMENTS (2)
++
++struct NetRxPkt {
++    struct virtio_net_hdr virt_hdr;
++    uint8_t ehdr_buf[ETH_MAX_L2_HDR_LEN];
++    struct iovec vec[NET_MAX_RX_PACKET_FRAGMENTS];
++    uint16_t vec_len;
++    uint32_t tot_len;
++    uint16_t tci;
++    bool vlan_stripped;
++    bool has_virt_hdr;
++    eth_pkt_types_e packet_type;
++
++    /* Analysis results */
++    bool isip4;
++    bool isip6;
++    bool isudp;
++    bool istcp;
++};
++
++void net_rx_pkt_init(struct NetRxPkt **pkt, bool has_virt_hdr)
++{
++    struct NetRxPkt *p = g_malloc0(sizeof *p);
++    p->has_virt_hdr = has_virt_hdr;
++    *pkt = p;
++}
++
++void net_rx_pkt_uninit(struct NetRxPkt *pkt)
++{
++    g_free(pkt);
++}
++
++struct virtio_net_hdr *net_rx_pkt_get_vhdr(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++    return &pkt->virt_hdr;
++}
++
++void net_rx_pkt_attach_data(struct NetRxPkt *pkt, const void *data,
++                               size_t len, bool strip_vlan)
++{
++    uint16_t tci = 0;
++    uint16_t ploff;
++    assert(pkt);
++    pkt->vlan_stripped = false;
++
++    if (strip_vlan) {
++        pkt->vlan_stripped = eth_strip_vlan(data, pkt->ehdr_buf, &ploff, &tci);
++    }
++
++    if (pkt->vlan_stripped) {
++        pkt->vec[0].iov_base = pkt->ehdr_buf;
++        pkt->vec[0].iov_len = ploff - sizeof(struct vlan_header);
++        pkt->vec[1].iov_base = (uint8_t *) data + ploff;
++        pkt->vec[1].iov_len = len - ploff;
++        pkt->vec_len = 2;
++        pkt->tot_len = len - ploff + sizeof(struct eth_header);
++    } else {
++        pkt->vec[0].iov_base = (void *)data;
++        pkt->vec[0].iov_len = len;
++        pkt->vec_len = 1;
++        pkt->tot_len = len;
++    }
++
++    pkt->tci = tci;
++}
++
++void net_rx_pkt_dump(struct NetRxPkt *pkt)
++{
++#ifdef NET_RX_PKT_DEBUG
++    NetRxPkt *pkt = (NetRxPkt *)pkt;
++    assert(pkt);
++
++    printf("RX PKT: tot_len: %d, vlan_stripped: %d, vlan_tag: %d\n",
++              pkt->tot_len, pkt->vlan_stripped, pkt->tci);
++#endif
++}
++
++void net_rx_pkt_set_packet_type(struct NetRxPkt *pkt,
++    eth_pkt_types_e packet_type)
++{
++    assert(pkt);
++
++    pkt->packet_type = packet_type;
++
++}
++
++eth_pkt_types_e net_rx_pkt_get_packet_type(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++
++    return pkt->packet_type;
++}
++
++size_t net_rx_pkt_get_total_len(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++
++    return pkt->tot_len;
++}
++
++void net_rx_pkt_set_protocols(struct NetRxPkt *pkt, const void *data,
++                              size_t len)
++{
++    assert(pkt);
++
++    eth_get_protocols(data, len, &pkt->isip4, &pkt->isip6,
++        &pkt->isudp, &pkt->istcp);
++}
++
++void net_rx_pkt_get_protocols(struct NetRxPkt *pkt,
++                              bool *isip4, bool *isip6,
++                              bool *isudp, bool *istcp)
++{
++    assert(pkt);
++
++    *isip4 = pkt->isip4;
++    *isip6 = pkt->isip6;
++    *isudp = pkt->isudp;
++    *istcp = pkt->istcp;
++}
++
++struct iovec *net_rx_pkt_get_iovec(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++
++    return pkt->vec;
++}
++
++void net_rx_pkt_set_vhdr(struct NetRxPkt *pkt,
++                            struct virtio_net_hdr *vhdr)
++{
++    assert(pkt);
++
++    memcpy(&pkt->virt_hdr, vhdr, sizeof pkt->virt_hdr);
++}
++
++bool net_rx_pkt_is_vlan_stripped(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++
++    return pkt->vlan_stripped;
++}
++
++bool net_rx_pkt_has_virt_hdr(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++
++    return pkt->has_virt_hdr;
++}
++
++uint16_t net_rx_pkt_get_vlan_tag(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++
++    return pkt->tci;
++}
+diff --git a/hw/net/net_rx_pkt.h b/hw/net/net_rx_pkt.h
+new file mode 100644
+index 0000000..897330a
+--- /dev/null
++++ b/hw/net/net_rx_pkt.h
+@@ -0,0 +1,174 @@
++/*
++ * QEMU RX packets abstraction
++ *
++ * Copyright (c) 2012 Ravello Systems LTD (http://ravellosystems.com)
++ *
++ * Developed by Daynix Computing LTD (http://www.daynix.com)
++ *
++ * Authors:
++ * Dmitry Fleytman <dmitry@daynix.com>
++ * Tamir Shomer <tamirs@daynix.com>
++ * Yan Vugenfirer <yan@daynix.com>
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ *
++ */
++
++#ifndef NET_RX_PKT_H
++#define NET_RX_PKT_H
++
++#include "net/eth.h"
++
++/* defines to enable packet dump functions */
++/*#define NET_RX_PKT_DEBUG*/
++
++struct NetRxPkt;
++
++/**
++ * Clean all rx packet resources
++ *
++ * @pkt:            packet
++ *
++ */
++void net_rx_pkt_uninit(struct NetRxPkt *pkt);
++
++/**
++ * Init function for rx packet functionality
++ *
++ * @pkt:            packet pointer
++ * @has_virt_hdr:   device uses virtio header
++ *
++ */
++void net_rx_pkt_init(struct NetRxPkt **pkt, bool has_virt_hdr);
++
++/**
++ * returns total length of data attached to rx context
++ *
++ * @pkt:            packet
++ *
++ * Return:  nothing
++ *
++ */
++size_t net_rx_pkt_get_total_len(struct NetRxPkt *pkt);
++
++/**
++ * parse and set packet analysis results
++ *
++ * @pkt:            packet
++ * @data:           pointer to the data buffer to be parsed
++ * @len:            data length
++ *
++ */
++void net_rx_pkt_set_protocols(struct NetRxPkt *pkt, const void *data,
++                              size_t len);
++
++/**
++ * fetches packet analysis results
++ *
++ * @pkt:            packet
++ * @isip4:          whether the packet given is IPv4
++ * @isip6:          whether the packet given is IPv6
++ * @isudp:          whether the packet given is UDP
++ * @istcp:          whether the packet given is TCP
++ *
++ */
++void net_rx_pkt_get_protocols(struct NetRxPkt *pkt,
++                                 bool *isip4, bool *isip6,
++                                 bool *isudp, bool *istcp);
++
++/**
++ * returns virtio header stored in rx context
++ *
++ * @pkt:            packet
++ * @ret:            virtio header
++ *
++ */
++struct virtio_net_hdr *net_rx_pkt_get_vhdr(struct NetRxPkt *pkt);
++
++/**
++ * returns packet type
++ *
++ * @pkt:            packet
++ * @ret:            packet type
++ *
++ */
++eth_pkt_types_e net_rx_pkt_get_packet_type(struct NetRxPkt *pkt);
++
++/**
++ * returns vlan tag
++ *
++ * @pkt:            packet
++ * @ret:            VLAN tag
++ *
++ */
++uint16_t net_rx_pkt_get_vlan_tag(struct NetRxPkt *pkt);
++
++/**
++ * tells whether vlan was stripped from the packet
++ *
++ * @pkt:            packet
++ * @ret:            VLAN stripped sign
++ *
++ */
++bool net_rx_pkt_is_vlan_stripped(struct NetRxPkt *pkt);
++
++/**
++ * notifies caller if the packet has virtio header
++ *
++ * @pkt:            packet
++ * @ret:            true if packet has virtio header, false otherwize
++ *
++ */
++bool net_rx_pkt_has_virt_hdr(struct NetRxPkt *pkt);
++
++/**
++ * attach data to rx packet
++ *
++ * @pkt:            packet
++ * @data:           pointer to the data buffer
++ * @len:            data length
++ * @strip_vlan:     should the module strip vlan from data
++ *
++ */
++void net_rx_pkt_attach_data(struct NetRxPkt *pkt, const void *data,
++    size_t len, bool strip_vlan);
++
++/**
++ * returns io vector that holds the attached data
++ *
++ * @pkt:            packet
++ * @ret:            pointer to IOVec
++ *
++ */
++struct iovec *net_rx_pkt_get_iovec(struct NetRxPkt *pkt);
++
++/**
++ * prints rx packet data if debug is enabled
++ *
++ * @pkt:            packet
++ *
++ */
++void net_rx_pkt_dump(struct NetRxPkt *pkt);
++
++/**
++ * copy passed vhdr data to packet context
++ *
++ * @pkt:            packet
++ * @vhdr:           VHDR buffer
++ *
++ */
++void net_rx_pkt_set_vhdr(struct NetRxPkt *pkt,
++    struct virtio_net_hdr *vhdr);
++
++/**
++ * save packet type in packet context
++ *
++ * @pkt:            packet
++ * @packet_type:    the packet type
++ *
++ */
++void net_rx_pkt_set_packet_type(struct NetRxPkt *pkt,
++    eth_pkt_types_e packet_type);
++
++#endif
+diff --git a/hw/net/net_tx_pkt.c b/hw/net/net_tx_pkt.c
+new file mode 100644
+index 0000000..94c7e3d
+--- /dev/null
++++ b/hw/net/net_tx_pkt.c
+@@ -0,0 +1,581 @@
++/*
++ * QEMU TX packets abstractions
++ *
++ * Copyright (c) 2012 Ravello Systems LTD (http://ravellosystems.com)
++ *
++ * Developed by Daynix Computing LTD (http://www.daynix.com)
++ *
++ * Authors:
++ * Dmitry Fleytman <dmitry@daynix.com>
++ * Tamir Shomer <tamirs@daynix.com>
++ * Yan Vugenfirer <yan@daynix.com>
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ *
++ */
++
++#include "qemu/osdep.h"
++#include "hw/hw.h"
++#include "net_tx_pkt.h"
++#include "net/eth.h"
++#include "qemu-common.h"
++#include "qemu/iov.h"
++#include "net/checksum.h"
++#include "net/tap.h"
++#include "net/net.h"
++
++enum {
++    NET_TX_PKT_VHDR_FRAG = 0,
++    NET_TX_PKT_L2HDR_FRAG,
++    NET_TX_PKT_L3HDR_FRAG,
++    NET_TX_PKT_PL_START_FRAG
++};
++
++/* TX packet private context */
++struct NetTxPkt {
++    struct virtio_net_hdr virt_hdr;
++    bool has_virt_hdr;
++
++    struct iovec *raw;
++    uint32_t raw_frags;
++    uint32_t max_raw_frags;
++
++    struct iovec *vec;
++
++    uint8_t l2_hdr[ETH_MAX_L2_HDR_LEN];
++
++    uint32_t payload_len;
++
++    uint32_t payload_frags;
++    uint32_t max_payload_frags;
++
++    uint16_t hdr_len;
++    eth_pkt_types_e packet_type;
++    uint8_t l4proto;
++};
++
++void net_tx_pkt_init(struct NetTxPkt **pkt, uint32_t max_frags,
++    bool has_virt_hdr)
++{
++    struct NetTxPkt *p = g_malloc0(sizeof *p);
++
++    p->vec = g_malloc((sizeof *p->vec) *
++        (max_frags + NET_TX_PKT_PL_START_FRAG));
++
++    p->raw = g_malloc((sizeof *p->raw) * max_frags);
++
++    p->max_payload_frags = max_frags;
++    p->max_raw_frags = max_frags;
++    p->has_virt_hdr = has_virt_hdr;
++    p->vec[NET_TX_PKT_VHDR_FRAG].iov_base = &p->virt_hdr;
++    p->vec[NET_TX_PKT_VHDR_FRAG].iov_len =
++        p->has_virt_hdr ? sizeof p->virt_hdr : 0;
++    p->vec[NET_TX_PKT_L2HDR_FRAG].iov_base = &p->l2_hdr;
++    p->vec[NET_TX_PKT_L3HDR_FRAG].iov_base = NULL;
++    p->vec[NET_TX_PKT_L3HDR_FRAG].iov_len = 0;
++
++    *pkt = p;
++}
++
++void net_tx_pkt_uninit(struct NetTxPkt *pkt)
++{
++    if (pkt) {
++        g_free(pkt->vec);
++        g_free(pkt->raw);
++        g_free(pkt);
++    }
++}
++
++void net_tx_pkt_update_ip_checksums(struct NetTxPkt *pkt)
++{
++    uint16_t csum;
++    uint32_t ph_raw_csum;
++    assert(pkt);
++    uint8_t gso_type = pkt->virt_hdr.gso_type & ~VIRTIO_NET_HDR_GSO_ECN;
++    struct ip_header *ip_hdr;
++
++    if (VIRTIO_NET_HDR_GSO_TCPV4 != gso_type &&
++        VIRTIO_NET_HDR_GSO_UDP != gso_type) {
++        return;
++    }
++
++    ip_hdr = pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_base;
++
++    if (pkt->payload_len + pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_len >
++        ETH_MAX_IP_DGRAM_LEN) {
++        return;
++    }
++
++    ip_hdr->ip_len = cpu_to_be16(pkt->payload_len +
++        pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_len);
++
++    /* Calculate IP header checksum                    */
++    ip_hdr->ip_sum = 0;
++    csum = net_raw_checksum((uint8_t *)ip_hdr,
++        pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_len);
++    ip_hdr->ip_sum = cpu_to_be16(csum);
++
++    /* Calculate IP pseudo header checksum             */
++    ph_raw_csum = eth_calc_pseudo_hdr_csum(ip_hdr, pkt->payload_len);
++    csum = cpu_to_be16(~net_checksum_finish(ph_raw_csum));
++    iov_from_buf(&pkt->vec[NET_TX_PKT_PL_START_FRAG], pkt->payload_frags,
++                 pkt->virt_hdr.csum_offset, &csum, sizeof(csum));
++}
++
++static void net_tx_pkt_calculate_hdr_len(struct NetTxPkt *pkt)
++{
++    pkt->hdr_len = pkt->vec[NET_TX_PKT_L2HDR_FRAG].iov_len +
++        pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_len;
++}
++
++static bool net_tx_pkt_parse_headers(struct NetTxPkt *pkt)
++{
++    struct iovec *l2_hdr, *l3_hdr;
++    size_t bytes_read;
++    size_t full_ip6hdr_len;
++    uint16_t l3_proto;
++
++    assert(pkt);
++
++    l2_hdr = &pkt->vec[NET_TX_PKT_L2HDR_FRAG];
++    l3_hdr = &pkt->vec[NET_TX_PKT_L3HDR_FRAG];
++
++    bytes_read = iov_to_buf(pkt->raw, pkt->raw_frags, 0, l2_hdr->iov_base,
++                            ETH_MAX_L2_HDR_LEN);
++    if (bytes_read < sizeof(struct eth_header)) {
++        l2_hdr->iov_len = 0;
++        return false;
++    }
++
++    l2_hdr->iov_len = sizeof(struct eth_header);
++    switch (be16_to_cpu(PKT_GET_ETH_HDR(l2_hdr->iov_base)->h_proto)) {
++    case ETH_P_VLAN:
++        l2_hdr->iov_len += sizeof(struct vlan_header);
++        break;
++    case ETH_P_DVLAN:
++        l2_hdr->iov_len += 2 * sizeof(struct vlan_header);
++        break;
++    }
++
++    if (bytes_read < l2_hdr->iov_len) {
++        l2_hdr->iov_len = 0;
++        return false;
++    }
++
++    l3_proto = eth_get_l3_proto(l2_hdr->iov_base, l2_hdr->iov_len);
++
++    switch (l3_proto) {
++    case ETH_P_IP:
++        l3_hdr->iov_base = g_malloc(ETH_MAX_IP4_HDR_LEN);
++
++        bytes_read = iov_to_buf(pkt->raw, pkt->raw_frags, l2_hdr->iov_len,
++                                l3_hdr->iov_base, sizeof(struct ip_header));
++
++        if (bytes_read < sizeof(struct ip_header)) {
++            l3_hdr->iov_len = 0;
++            return false;
++        }
++
++        l3_hdr->iov_len = IP_HDR_GET_LEN(l3_hdr->iov_base);
++        pkt->l4proto = ((struct ip_header *) l3_hdr->iov_base)->ip_p;
++
++        /* copy optional IPv4 header data */
++        bytes_read = iov_to_buf(pkt->raw, pkt->raw_frags,
++                                l2_hdr->iov_len + sizeof(struct ip_header),
++                                l3_hdr->iov_base + sizeof(struct ip_header),
++                                l3_hdr->iov_len - sizeof(struct ip_header));
++        if (bytes_read < l3_hdr->iov_len - sizeof(struct ip_header)) {
++            l3_hdr->iov_len = 0;
++            return false;
++        }
++        break;
++
++    case ETH_P_IPV6:
++        if (!eth_parse_ipv6_hdr(pkt->raw, pkt->raw_frags, l2_hdr->iov_len,
++                               &pkt->l4proto, &full_ip6hdr_len)) {
++            l3_hdr->iov_len = 0;
++            return false;
++        }
++
++        l3_hdr->iov_base = g_malloc(full_ip6hdr_len);
++
++        bytes_read = iov_to_buf(pkt->raw, pkt->raw_frags, l2_hdr->iov_len,
++                                l3_hdr->iov_base, full_ip6hdr_len);
++
++        if (bytes_read < full_ip6hdr_len) {
++            l3_hdr->iov_len = 0;
++            return false;
++        } else {
++            l3_hdr->iov_len = full_ip6hdr_len;
++        }
++        break;
++
++    default:
++        l3_hdr->iov_len = 0;
++        break;
++    }
++
++    net_tx_pkt_calculate_hdr_len(pkt);
++    pkt->packet_type = get_eth_packet_type(l2_hdr->iov_base);
++    return true;
++}
++
++static bool net_tx_pkt_rebuild_payload(struct NetTxPkt *pkt)
++{
++    size_t payload_len = iov_size(pkt->raw, pkt->raw_frags) - pkt->hdr_len;
++
++    pkt->payload_frags = iov_copy(&pkt->vec[NET_TX_PKT_PL_START_FRAG],
++                                pkt->max_payload_frags,
++                                pkt->raw, pkt->raw_frags,
++                                pkt->hdr_len, payload_len);
++
++    if (pkt->payload_frags != (uint32_t) -1) {
++        pkt->payload_len = payload_len;
++        return true;
++    } else {
++        return false;
++    }
++}
++
++bool net_tx_pkt_parse(struct NetTxPkt *pkt)
++{
++    return net_tx_pkt_parse_headers(pkt) &&
++           net_tx_pkt_rebuild_payload(pkt);
++}
++
++struct virtio_net_hdr *net_tx_pkt_get_vhdr(struct NetTxPkt *pkt)
++{
++    assert(pkt);
++    return &pkt->virt_hdr;
++}
++
++static uint8_t net_tx_pkt_get_gso_type(struct NetTxPkt *pkt,
++                                          bool tso_enable)
++{
++    uint8_t rc = VIRTIO_NET_HDR_GSO_NONE;
++    uint16_t l3_proto;
++
++    l3_proto = eth_get_l3_proto(pkt->vec[NET_TX_PKT_L2HDR_FRAG].iov_base,
++        pkt->vec[NET_TX_PKT_L2HDR_FRAG].iov_len);
++
++    if (!tso_enable) {
++        goto func_exit;
++    }
++
++    rc = eth_get_gso_type(l3_proto, pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_base,
++                          pkt->l4proto);
++
++func_exit:
++    return rc;
++}
++
++void net_tx_pkt_build_vheader(struct NetTxPkt *pkt, bool tso_enable,
++    bool csum_enable, uint32_t gso_size)
++{
++    struct tcp_hdr l4hdr;
++    assert(pkt);
++
++    /* csum has to be enabled if tso is. */
++    assert(csum_enable || !tso_enable);
++
++    pkt->virt_hdr.gso_type = net_tx_pkt_get_gso_type(pkt, tso_enable);
++
++    switch (pkt->virt_hdr.gso_type & ~VIRTIO_NET_HDR_GSO_ECN) {
++    case VIRTIO_NET_HDR_GSO_NONE:
++        pkt->virt_hdr.hdr_len = 0;
++        pkt->virt_hdr.gso_size = 0;
++        break;
++
++    case VIRTIO_NET_HDR_GSO_UDP:
++        pkt->virt_hdr.gso_size = IP_FRAG_ALIGN_SIZE(gso_size);
++        pkt->virt_hdr.hdr_len = pkt->hdr_len + sizeof(struct udp_header);
++        break;
++
++    case VIRTIO_NET_HDR_GSO_TCPV4:
++    case VIRTIO_NET_HDR_GSO_TCPV6:
++        iov_to_buf(&pkt->vec[NET_TX_PKT_PL_START_FRAG], pkt->payload_frags,
++                   0, &l4hdr, sizeof(l4hdr));
++        pkt->virt_hdr.hdr_len = pkt->hdr_len + l4hdr.th_off * sizeof(uint32_t);
++        pkt->virt_hdr.gso_size = IP_FRAG_ALIGN_SIZE(gso_size);
++        break;
++
++    default:
++        g_assert_not_reached();
++    }
++
++    if (csum_enable) {
++        switch (pkt->l4proto) {
++        case IP_PROTO_TCP:
++            pkt->virt_hdr.flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
++            pkt->virt_hdr.csum_start = pkt->hdr_len;
++            pkt->virt_hdr.csum_offset = offsetof(struct tcp_hdr, th_sum);
++            break;
++        case IP_PROTO_UDP:
++            pkt->virt_hdr.flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
++            pkt->virt_hdr.csum_start = pkt->hdr_len;
++            pkt->virt_hdr.csum_offset = offsetof(struct udp_hdr, uh_sum);
++            break;
++        default:
++            break;
++        }
++    }
++}
++
++void net_tx_pkt_setup_vlan_header(struct NetTxPkt *pkt, uint16_t vlan)
++{
++    bool is_new;
++    assert(pkt);
++
++    eth_setup_vlan_headers(pkt->vec[NET_TX_PKT_L2HDR_FRAG].iov_base,
++        vlan, &is_new);
++
++    /* update l2hdrlen */
++    if (is_new) {
++        pkt->hdr_len += sizeof(struct vlan_header);
++        pkt->vec[NET_TX_PKT_L2HDR_FRAG].iov_len +=
++            sizeof(struct vlan_header);
++    }
++}
++
++bool net_tx_pkt_add_raw_fragment(struct NetTxPkt *pkt, hwaddr pa,
++    size_t len)
++{
++    hwaddr mapped_len = 0;
++    struct iovec *ventry;
++    assert(pkt);
++    assert(pkt->max_raw_frags > pkt->raw_frags);
++
++    if (!len) {
++        return true;
++     }
++
++    ventry = &pkt->raw[pkt->raw_frags];
++    mapped_len = len;
++
++    ventry->iov_base = cpu_physical_memory_map(pa, &mapped_len, false);
++    ventry->iov_len = mapped_len;
++    pkt->raw_frags += !!ventry->iov_base;
++
++    if ((ventry->iov_base == NULL) || (len != mapped_len)) {
++        return false;
++    }
++
++    return true;
++}
++
++eth_pkt_types_e net_tx_pkt_get_packet_type(struct NetTxPkt *pkt)
++{
++    assert(pkt);
++
++    return pkt->packet_type;
++}
++
++size_t net_tx_pkt_get_total_len(struct NetTxPkt *pkt)
++{
++    assert(pkt);
++
++    return pkt->hdr_len + pkt->payload_len;
++}
++
++void net_tx_pkt_dump(struct NetTxPkt *pkt)
++{
++#ifdef NET_TX_PKT_DEBUG
++    assert(pkt);
++
++    printf("TX PKT: hdr_len: %d, pkt_type: 0x%X, l2hdr_len: %lu, "
++        "l3hdr_len: %lu, payload_len: %u\n", pkt->hdr_len, pkt->packet_type,
++        pkt->vec[NET_TX_PKT_L2HDR_FRAG].iov_len,
++        pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_len, pkt->payload_len);
++#endif
++}
++
++void net_tx_pkt_reset(struct NetTxPkt *pkt)
++{
++    int i;
++
++    /* no assert, as reset can be called before tx_pkt_init */
++    if (!pkt) {
++        return;
++    }
++
++    memset(&pkt->virt_hdr, 0, sizeof(pkt->virt_hdr));
++
++    g_free(pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_base);
++    pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_base = NULL;
++
++    assert(pkt->vec);
++    for (i = NET_TX_PKT_L2HDR_FRAG;
++         i < pkt->payload_frags + NET_TX_PKT_PL_START_FRAG; i++) {
++        pkt->vec[i].iov_len = 0;
++    }
++    pkt->payload_len = 0;
++    pkt->payload_frags = 0;
++
++    assert(pkt->raw);
++    for (i = 0; i < pkt->raw_frags; i++) {
++        assert(pkt->raw[i].iov_base);
++        cpu_physical_memory_unmap(pkt->raw[i].iov_base, pkt->raw[i].iov_len,
++                                  false, pkt->raw[i].iov_len);
++        pkt->raw[i].iov_len = 0;
++    }
++    pkt->raw_frags = 0;
++
++    pkt->hdr_len = 0;
++    pkt->packet_type = 0;
++    pkt->l4proto = 0;
++}
++
++static void net_tx_pkt_do_sw_csum(struct NetTxPkt *pkt)
++{
++    struct iovec *iov = &pkt->vec[NET_TX_PKT_L2HDR_FRAG];
++    uint32_t csum_cntr;
++    uint16_t csum = 0;
++    /* num of iovec without vhdr */
++    uint32_t iov_len = pkt->payload_frags + NET_TX_PKT_PL_START_FRAG - 1;
++    uint16_t csl;
++    struct ip_header *iphdr;
++    size_t csum_offset = pkt->virt_hdr.csum_start + pkt->virt_hdr.csum_offset;
++
++    /* Put zero to checksum field */
++    iov_from_buf(iov, iov_len, csum_offset, &csum, sizeof csum);
++
++    /* Calculate L4 TCP/UDP checksum */
++    csl = pkt->payload_len;
++
++    /* data checksum */
++    csum_cntr =
++        net_checksum_add_iov(iov, iov_len, pkt->virt_hdr.csum_start, csl);
++    /* add pseudo header to csum */
++    iphdr = pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_base;
++    csum_cntr += eth_calc_pseudo_hdr_csum(iphdr, csl);
++
++    /* Put the checksum obtained into the packet */
++    csum = cpu_to_be16(net_checksum_finish(csum_cntr));
++    iov_from_buf(iov, iov_len, csum_offset, &csum, sizeof csum);
++}
++
++enum {
++    NET_TX_PKT_FRAGMENT_L2_HDR_POS = 0,
++    NET_TX_PKT_FRAGMENT_L3_HDR_POS,
++    NET_TX_PKT_FRAGMENT_HEADER_NUM
++};
++
++#define NET_MAX_FRAG_SG_LIST (64)
++
++static size_t net_tx_pkt_fetch_fragment(struct NetTxPkt *pkt,
++    int *src_idx, size_t *src_offset, struct iovec *dst, int *dst_idx)
++{
++    size_t fetched = 0;
++    struct iovec *src = pkt->vec;
++
++    *dst_idx = NET_TX_PKT_FRAGMENT_HEADER_NUM;
++
++    while (fetched < pkt->virt_hdr.gso_size) {
++
++        /* no more place in fragment iov */
++        if (*dst_idx == NET_MAX_FRAG_SG_LIST) {
++            break;
++        }
++
++        /* no more data in iovec */
++        if (*src_idx == (pkt->payload_frags + NET_TX_PKT_PL_START_FRAG)) {
++            break;
++        }
++
++
++        dst[*dst_idx].iov_base = src[*src_idx].iov_base + *src_offset;
++        dst[*dst_idx].iov_len = MIN(src[*src_idx].iov_len - *src_offset,
++            pkt->virt_hdr.gso_size - fetched);
++
++        *src_offset += dst[*dst_idx].iov_len;
++        fetched += dst[*dst_idx].iov_len;
++
++        if (*src_offset == src[*src_idx].iov_len) {
++            *src_offset = 0;
++            (*src_idx)++;
++        }
++
++        (*dst_idx)++;
++    }
++
++    return fetched;
++}
++
++static bool net_tx_pkt_do_sw_fragmentation(struct NetTxPkt *pkt,
++    NetClientState *nc)
++{
++    struct iovec fragment[NET_MAX_FRAG_SG_LIST];
++    size_t fragment_len = 0;
++    bool more_frags = false;
++
++    /* some pointers for shorter code */
++    void *l2_iov_base, *l3_iov_base;
++    size_t l2_iov_len, l3_iov_len;
++    int src_idx =  NET_TX_PKT_PL_START_FRAG, dst_idx;
++    size_t src_offset = 0;
++    size_t fragment_offset = 0;
++
++    l2_iov_base = pkt->vec[NET_TX_PKT_L2HDR_FRAG].iov_base;
++    l2_iov_len = pkt->vec[NET_TX_PKT_L2HDR_FRAG].iov_len;
++    l3_iov_base = pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_base;
++    l3_iov_len = pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_len;
++
++    /* Copy headers */
++    fragment[NET_TX_PKT_FRAGMENT_L2_HDR_POS].iov_base = l2_iov_base;
++    fragment[NET_TX_PKT_FRAGMENT_L2_HDR_POS].iov_len = l2_iov_len;
++    fragment[NET_TX_PKT_FRAGMENT_L3_HDR_POS].iov_base = l3_iov_base;
++    fragment[NET_TX_PKT_FRAGMENT_L3_HDR_POS].iov_len = l3_iov_len;
++
++
++    /* Put as much data as possible and send */
++    do {
++        fragment_len = net_tx_pkt_fetch_fragment(pkt, &src_idx, &src_offset,
++            fragment, &dst_idx);
++
++        more_frags = (fragment_offset + fragment_len < pkt->payload_len);
++
++        eth_setup_ip4_fragmentation(l2_iov_base, l2_iov_len, l3_iov_base,
++            l3_iov_len, fragment_len, fragment_offset, more_frags);
++
++        eth_fix_ip4_checksum(l3_iov_base, l3_iov_len);
++
++        qemu_sendv_packet(nc, fragment, dst_idx);
++
++        fragment_offset += fragment_len;
++
++    } while (more_frags);
++
++    return true;
++}
++
++bool net_tx_pkt_send(struct NetTxPkt *pkt, NetClientState *nc)
++{
++    assert(pkt);
++
++    if (!pkt->has_virt_hdr &&
++        pkt->virt_hdr.flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) {
++        net_tx_pkt_do_sw_csum(pkt);
++    }
++
++    /*
++     * Since underlying infrastructure does not support IP datagrams longer
++     * than 64K we should drop such packets and don't even try to send
++     */
++    if (VIRTIO_NET_HDR_GSO_NONE != pkt->virt_hdr.gso_type) {
++        if (pkt->payload_len >
++            ETH_MAX_IP_DGRAM_LEN -
++            pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_len) {
++            return false;
++        }
++    }
++
++    if (pkt->has_virt_hdr ||
++        pkt->virt_hdr.gso_type == VIRTIO_NET_HDR_GSO_NONE) {
++        qemu_sendv_packet(nc, pkt->vec,
++            pkt->payload_frags + NET_TX_PKT_PL_START_FRAG);
++        return true;
++    }
++
++    return net_tx_pkt_do_sw_fragmentation(pkt, nc);
++}
+diff --git a/hw/net/net_tx_pkt.h b/hw/net/net_tx_pkt.h
+new file mode 100644
+index 0000000..be2e117
+--- /dev/null
++++ b/hw/net/net_tx_pkt.h
+@@ -0,0 +1,146 @@
++/*
++ * QEMU TX packets abstraction
++ *
++ * Copyright (c) 2012 Ravello Systems LTD (http://ravellosystems.com)
++ *
++ * Developed by Daynix Computing LTD (http://www.daynix.com)
++ *
++ * Authors:
++ * Dmitry Fleytman <dmitry@daynix.com>
++ * Tamir Shomer <tamirs@daynix.com>
++ * Yan Vugenfirer <yan@daynix.com>
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ *
++ */
++
++#ifndef NET_TX_PKT_H
++#define NET_TX_PKT_H
++
++#include "net/eth.h"
++#include "exec/hwaddr.h"
++
++/* define to enable packet dump functions */
++/*#define NET_TX_PKT_DEBUG*/
++
++struct NetTxPkt;
++
++/**
++ * Init function for tx packet functionality
++ *
++ * @pkt:            packet pointer
++ * @max_frags:      max tx ip fragments
++ * @has_virt_hdr:   device uses virtio header.
++ */
++void net_tx_pkt_init(struct NetTxPkt **pkt, uint32_t max_frags,
++    bool has_virt_hdr);
++
++/**
++ * Clean all tx packet resources.
++ *
++ * @pkt:            packet.
++ */
++void net_tx_pkt_uninit(struct NetTxPkt *pkt);
++
++/**
++ * get virtio header
++ *
++ * @pkt:            packet
++ * @ret:            virtio header
++ */
++struct virtio_net_hdr *net_tx_pkt_get_vhdr(struct NetTxPkt *pkt);
++
++/**
++ * build virtio header (will be stored in module context)
++ *
++ * @pkt:            packet
++ * @tso_enable:     TSO enabled
++ * @csum_enable:    CSO enabled
++ * @gso_size:       MSS size for TSO
++ *
++ */
++void net_tx_pkt_build_vheader(struct NetTxPkt *pkt, bool tso_enable,
++    bool csum_enable, uint32_t gso_size);
++
++/**
++ * updates vlan tag, and adds vlan header in case it is missing
++ *
++ * @pkt:            packet
++ * @vlan:           VLAN tag
++ *
++ */
++void net_tx_pkt_setup_vlan_header(struct NetTxPkt *pkt, uint16_t vlan);
++
++/**
++ * populate data fragment into pkt context.
++ *
++ * @pkt:            packet
++ * @pa:             physical address of fragment
++ * @len:            length of fragment
++ *
++ */
++bool net_tx_pkt_add_raw_fragment(struct NetTxPkt *pkt, hwaddr pa,
++    size_t len);
++
++/**
++ * fix ip header fields and calculate checksums needed.
++ *
++ * @pkt:            packet
++ *
++ */
++void net_tx_pkt_update_ip_checksums(struct NetTxPkt *pkt);
++
++/**
++ * get length of all populated data.
++ *
++ * @pkt:            packet
++ * @ret:            total data length
++ *
++ */
++size_t net_tx_pkt_get_total_len(struct NetTxPkt *pkt);
++
++/**
++ * get packet type
++ *
++ * @pkt:            packet
++ * @ret:            packet type
++ *
++ */
++eth_pkt_types_e net_tx_pkt_get_packet_type(struct NetTxPkt *pkt);
++
++/**
++ * prints packet data if debug is enabled
++ *
++ * @pkt:            packet
++ *
++ */
++void net_tx_pkt_dump(struct NetTxPkt *pkt);
++
++/**
++ * reset tx packet private context (needed to be called between packets)
++ *
++ * @pkt:            packet
++ *
++ */
++void net_tx_pkt_reset(struct NetTxPkt *pkt);
++
++/**
++ * Send packet to qemu. handles sw offloads if vhdr is not supported.
++ *
++ * @pkt:            packet
++ * @nc:             NetClientState
++ * @ret:            operation result
++ *
++ */
++bool net_tx_pkt_send(struct NetTxPkt *pkt, NetClientState *nc);
++
++/**
++ * parse raw packet data and analyze offload requirements.
++ *
++ * @pkt:            packet
++ *
++ */
++bool net_tx_pkt_parse(struct NetTxPkt *pkt);
++
++#endif
+diff --git a/hw/net/vmxnet3.c b/hw/net/vmxnet3.c
+index 26f6f90..378a2eb 100644
+--- a/hw/net/vmxnet3.c
++++ b/hw/net/vmxnet3.c
+@@ -30,8 +30,8 @@
+ #include "vmxnet3.h"
+ #include "vmxnet_debug.h"
+ #include "vmware_utils.h"
+-#include "vmxnet_tx_pkt.h"
+-#include "vmxnet_rx_pkt.h"
++#include "net_tx_pkt.h"
++#include "net_rx_pkt.h"
+ 
+ #define PCI_DEVICE_ID_VMWARE_VMXNET3_REVISION 0x1
+ #define VMXNET3_MSIX_BAR_SIZE 0x2000
+@@ -314,13 +314,13 @@ typedef struct {
+         bool peer_has_vhdr;
+ 
+         /* TX packets to QEMU interface */
+-        struct VmxnetTxPkt *tx_pkt;
++        struct NetTxPkt *tx_pkt;
+         uint32_t offload_mode;
+         uint32_t cso_or_gso_size;
+         uint16_t tci;
+         bool needs_vlan;
+ 
+-        struct VmxnetRxPkt *rx_pkt;
++        struct NetRxPkt *rx_pkt;
+ 
+         bool tx_sop;
+         bool skip_current_tx_pkt;
+@@ -546,18 +546,18 @@ vmxnet3_setup_tx_offloads(VMXNET3State *s)
+ {
+     switch (s->offload_mode) {
+     case VMXNET3_OM_NONE:
+-        vmxnet_tx_pkt_build_vheader(s->tx_pkt, false, false, 0);
++        net_tx_pkt_build_vheader(s->tx_pkt, false, false, 0);
+         break;
+ 
+     case VMXNET3_OM_CSUM:
+-        vmxnet_tx_pkt_build_vheader(s->tx_pkt, false, true, 0);
++        net_tx_pkt_build_vheader(s->tx_pkt, false, true, 0);
+         VMW_PKPRN("L4 CSO requested\n");
+         break;
+ 
+     case VMXNET3_OM_TSO:
+-        vmxnet_tx_pkt_build_vheader(s->tx_pkt, true, true,
++        net_tx_pkt_build_vheader(s->tx_pkt, true, true,
+             s->cso_or_gso_size);
+-        vmxnet_tx_pkt_update_ip_checksums(s->tx_pkt);
++        net_tx_pkt_update_ip_checksums(s->tx_pkt);
+         VMW_PKPRN("GSO offload requested.");
+         break;
+ 
+@@ -590,12 +590,12 @@ static void
+ vmxnet3_on_tx_done_update_stats(VMXNET3State *s, int qidx,
+     Vmxnet3PktStatus status)
+ {
+-    size_t tot_len = vmxnet_tx_pkt_get_total_len(s->tx_pkt);
++    size_t tot_len = net_tx_pkt_get_total_len(s->tx_pkt);
+     struct UPT1_TxStats *stats = &s->txq_descr[qidx].txq_stats;
+ 
+     switch (status) {
+     case VMXNET3_PKT_STATUS_OK:
+-        switch (vmxnet_tx_pkt_get_packet_type(s->tx_pkt)) {
++        switch (net_tx_pkt_get_packet_type(s->tx_pkt)) {
+         case ETH_PKT_BCAST:
+             stats->bcastPktsTxOK++;
+             stats->bcastBytesTxOK += tot_len;
+@@ -643,7 +643,7 @@ vmxnet3_on_rx_done_update_stats(VMXNET3State *s,
+                                 Vmxnet3PktStatus status)
+ {
+     struct UPT1_RxStats *stats = &s->rxq_descr[qidx].rxq_stats;
+-    size_t tot_len = vmxnet_rx_pkt_get_total_len(s->rx_pkt);
++    size_t tot_len = net_rx_pkt_get_total_len(s->rx_pkt);
+ 
+     switch (status) {
+     case VMXNET3_PKT_STATUS_OUT_OF_BUF:
+@@ -654,7 +654,7 @@ vmxnet3_on_rx_done_update_stats(VMXNET3State *s,
+         stats->pktsRxError++;
+         break;
+     case VMXNET3_PKT_STATUS_OK:
+-        switch (vmxnet_rx_pkt_get_packet_type(s->rx_pkt)) {
++        switch (net_rx_pkt_get_packet_type(s->rx_pkt)) {
+         case ETH_PKT_BCAST:
+             stats->bcastPktsRxOK++;
+             stats->bcastBytesRxOK += tot_len;
+@@ -715,10 +715,10 @@ vmxnet3_send_packet(VMXNET3State *s, uint32_t qidx)
+     }
+ 
+     /* debug prints */
+-    vmxnet3_dump_virt_hdr(vmxnet_tx_pkt_get_vhdr(s->tx_pkt));
+-    vmxnet_tx_pkt_dump(s->tx_pkt);
++    vmxnet3_dump_virt_hdr(net_tx_pkt_get_vhdr(s->tx_pkt));
++    net_tx_pkt_dump(s->tx_pkt);
+ 
+-    if (!vmxnet_tx_pkt_send(s->tx_pkt, qemu_get_queue(s->nic))) {
++    if (!net_tx_pkt_send(s->tx_pkt, qemu_get_queue(s->nic))) {
+         status = VMXNET3_PKT_STATUS_DISCARD;
+         goto func_exit;
+     }
+@@ -746,7 +746,7 @@ static void vmxnet3_process_tx_queue(VMXNET3State *s, int qidx)
+             data_len = (txd.len > 0) ? txd.len : VMXNET3_MAX_TX_BUF_SIZE;
+             data_pa = le64_to_cpu(txd.addr);
+ 
+-            if (!vmxnet_tx_pkt_add_raw_fragment(s->tx_pkt,
++            if (!net_tx_pkt_add_raw_fragment(s->tx_pkt,
+                                                 data_pa,
+                                                 data_len)) {
+                 s->skip_current_tx_pkt = true;
+@@ -759,9 +759,9 @@ static void vmxnet3_process_tx_queue(VMXNET3State *s, int qidx)
+         }
+ 
+         if (txd.eop) {
+-            if (!s->skip_current_tx_pkt && vmxnet_tx_pkt_parse(s->tx_pkt)) {
++            if (!s->skip_current_tx_pkt && net_tx_pkt_parse(s->tx_pkt)) {
+                 if (s->needs_vlan) {
+-                    vmxnet_tx_pkt_setup_vlan_header(s->tx_pkt, s->tci);
++                    net_tx_pkt_setup_vlan_header(s->tx_pkt, s->tci);
+                 }
+ 
+                 vmxnet3_send_packet(s, qidx);
+@@ -773,7 +773,7 @@ static void vmxnet3_process_tx_queue(VMXNET3State *s, int qidx)
+             vmxnet3_complete_packet(s, qidx, txd_idx);
+             s->tx_sop = true;
+             s->skip_current_tx_pkt = false;
+-            vmxnet_tx_pkt_reset(s->tx_pkt);
++            net_tx_pkt_reset(s->tx_pkt);
+         }
+     }
+ }
+@@ -928,7 +928,7 @@ vmxnet3_get_next_rx_descr(VMXNET3State *s, bool is_head,
+  * in the case the host OS performs forwarding, it will forward an
+  * incorrectly checksummed packet.
+  */
+-static void vmxnet3_rx_need_csum_calculate(struct VmxnetRxPkt *pkt,
++static void vmxnet3_rx_need_csum_calculate(struct NetRxPkt *pkt,
+                                            const void *pkt_data,
+                                            size_t pkt_len)
+ {
+@@ -937,16 +937,16 @@ static void vmxnet3_rx_need_csum_calculate(struct VmxnetRxPkt *pkt,
+     uint8_t *data;
+     int len;
+ 
+-    if (!vmxnet_rx_pkt_has_virt_hdr(pkt)) {
++    if (!net_rx_pkt_has_virt_hdr(pkt)) {
+         return;
+     }
+ 
+-    vhdr = vmxnet_rx_pkt_get_vhdr(pkt);
++    vhdr = net_rx_pkt_get_vhdr(pkt);
+     if (!VMXNET_FLAG_IS_SET(vhdr->flags, VIRTIO_NET_HDR_F_NEEDS_CSUM)) {
+         return;
+     }
+ 
+-    vmxnet_rx_pkt_get_protocols(pkt, &isip4, &isip6, &isudp, &istcp);
++    net_rx_pkt_get_protocols(pkt, &isip4, &isip6, &isudp, &istcp);
+     if (!(isip4 || isip6) || !(istcp || isudp)) {
+         return;
+     }
+@@ -970,7 +970,7 @@ static void vmxnet3_rx_need_csum_calculate(struct VmxnetRxPkt *pkt,
+     vhdr->flags |= VIRTIO_NET_HDR_F_DATA_VALID;
+ }
+ 
+-static void vmxnet3_rx_update_descr(struct VmxnetRxPkt *pkt,
++static void vmxnet3_rx_update_descr(struct NetRxPkt *pkt,
+     struct Vmxnet3_RxCompDesc *rxcd)
+ {
+     int csum_ok, is_gso;
+@@ -978,16 +978,16 @@ static void vmxnet3_rx_update_descr(struct VmxnetRxPkt *pkt,
+     struct virtio_net_hdr *vhdr;
+     uint8_t offload_type;
+ 
+-    if (vmxnet_rx_pkt_is_vlan_stripped(pkt)) {
++    if (net_rx_pkt_is_vlan_stripped(pkt)) {
+         rxcd->ts = 1;
+-        rxcd->tci = vmxnet_rx_pkt_get_vlan_tag(pkt);
++        rxcd->tci = net_rx_pkt_get_vlan_tag(pkt);
+     }
+ 
+-    if (!vmxnet_rx_pkt_has_virt_hdr(pkt)) {
++    if (!net_rx_pkt_has_virt_hdr(pkt)) {
+         goto nocsum;
+     }
+ 
+-    vhdr = vmxnet_rx_pkt_get_vhdr(pkt);
++    vhdr = net_rx_pkt_get_vhdr(pkt);
+     /*
+      * Checksum is valid when lower level tell so or when lower level
+      * requires checksum offload telling that packet produced/bridged
+@@ -1004,7 +1004,7 @@ static void vmxnet3_rx_update_descr(struct VmxnetRxPkt *pkt,
+         goto nocsum;
+     }
+ 
+-    vmxnet_rx_pkt_get_protocols(pkt, &isip4, &isip6, &isudp, &istcp);
++    net_rx_pkt_get_protocols(pkt, &isip4, &isip6, &isudp, &istcp);
+     if ((!istcp && !isudp) || (!isip4 && !isip6)) {
+         goto nocsum;
+     }
+@@ -1063,13 +1063,13 @@ vmxnet3_indicate_packet(VMXNET3State *s)
+     uint32_t new_rxcd_gen = VMXNET3_INIT_GEN;
+     hwaddr new_rxcd_pa = 0;
+     hwaddr ready_rxcd_pa = 0;
+-    struct iovec *data = vmxnet_rx_pkt_get_iovec(s->rx_pkt);
++    struct iovec *data = net_rx_pkt_get_iovec(s->rx_pkt);
+     size_t bytes_copied = 0;
+-    size_t bytes_left = vmxnet_rx_pkt_get_total_len(s->rx_pkt);
++    size_t bytes_left = net_rx_pkt_get_total_len(s->rx_pkt);
+     uint16_t num_frags = 0;
+     size_t chunk_size;
+ 
+-    vmxnet_rx_pkt_dump(s->rx_pkt);
++    net_rx_pkt_dump(s->rx_pkt);
+ 
+     while (bytes_left > 0) {
+ 
+@@ -1226,9 +1226,9 @@ static void vmxnet3_deactivate_device(VMXNET3State *s)
+ {
+     if (s->device_active) {
+         VMW_CBPRN("Deactivating vmxnet3...");
+-        vmxnet_tx_pkt_reset(s->tx_pkt);
+-        vmxnet_tx_pkt_uninit(s->tx_pkt);
+-        vmxnet_rx_pkt_uninit(s->rx_pkt);
++        net_tx_pkt_reset(s->tx_pkt);
++        net_tx_pkt_uninit(s->tx_pkt);
++        net_rx_pkt_uninit(s->rx_pkt);
+         s->device_active = false;
+     }
+ }
+@@ -1558,8 +1558,8 @@ static void vmxnet3_activate_device(VMXNET3State *s)
+ 
+     /* Preallocate TX packet wrapper */
+     VMW_CFPRN("Max TX fragments is %u", s->max_tx_frags);
+-    vmxnet_tx_pkt_init(&s->tx_pkt, s->max_tx_frags, s->peer_has_vhdr);
+-    vmxnet_rx_pkt_init(&s->rx_pkt, s->peer_has_vhdr);
++    net_tx_pkt_init(&s->tx_pkt, s->max_tx_frags, s->peer_has_vhdr);
++    net_rx_pkt_init(&s->rx_pkt, s->peer_has_vhdr);
+ 
+     /* Read rings memory locations for RX queues */
+     for (i = 0; i < s->rxq_num; i++) {
+@@ -1965,7 +1965,7 @@ vmxnet3_rx_filter_may_indicate(VMXNET3State *s, const void *data,
+         return false;
+     }
+ 
+-    switch (vmxnet_rx_pkt_get_packet_type(s->rx_pkt)) {
++    switch (net_rx_pkt_get_packet_type(s->rx_pkt)) {
+     case ETH_PKT_UCAST:
+         if (!VMXNET_FLAG_IS_SET(s->rx_mode, VMXNET3_RXM_UCAST)) {
+             return false;
+@@ -2013,7 +2013,7 @@ vmxnet3_receive(NetClientState *nc, const uint8_t *buf, size_t size)
+     }
+ 
+     if (s->peer_has_vhdr) {
+-        vmxnet_rx_pkt_set_vhdr(s->rx_pkt, (struct virtio_net_hdr *)buf);
++        net_rx_pkt_set_vhdr(s->rx_pkt, (struct virtio_net_hdr *)buf);
+         buf += sizeof(struct virtio_net_hdr);
+         size -= sizeof(struct virtio_net_hdr);
+     }
+@@ -2026,13 +2026,13 @@ vmxnet3_receive(NetClientState *nc, const uint8_t *buf, size_t size)
+         size = sizeof(min_buf);
+     }
+ 
+-    vmxnet_rx_pkt_set_packet_type(s->rx_pkt,
++    net_rx_pkt_set_packet_type(s->rx_pkt,
+         get_eth_packet_type(PKT_GET_ETH_HDR(buf)));
+ 
+     if (vmxnet3_rx_filter_may_indicate(s, buf, size)) {
+-        vmxnet_rx_pkt_set_protocols(s->rx_pkt, buf, size);
++        net_rx_pkt_set_protocols(s->rx_pkt, buf, size);
+         vmxnet3_rx_need_csum_calculate(s->rx_pkt, buf, size);
+-        vmxnet_rx_pkt_attach_data(s->rx_pkt, buf, size, s->rx_vlan_stripping);
++        net_rx_pkt_attach_data(s->rx_pkt, buf, size, s->rx_vlan_stripping);
+         bytes_indicated = vmxnet3_indicate_packet(s) ? size : -1;
+         if (bytes_indicated < size) {
+             VMW_PKPRN("RX: %zu of %zu bytes indicated", bytes_indicated, size);
+@@ -2536,8 +2536,8 @@ static int vmxnet3_post_load(void *opaque, int version_id)
+     VMXNET3State *s = opaque;
+     PCIDevice *d = PCI_DEVICE(s);
+ 
+-    vmxnet_tx_pkt_init(&s->tx_pkt, s->max_tx_frags, s->peer_has_vhdr);
+-    vmxnet_rx_pkt_init(&s->rx_pkt, s->peer_has_vhdr);
++    net_tx_pkt_init(&s->tx_pkt, s->max_tx_frags, s->peer_has_vhdr);
++    net_rx_pkt_init(&s->rx_pkt, s->peer_has_vhdr);
+ 
+     if (s->msix_used) {
+         if  (!vmxnet3_use_msix_vectors(s, VMXNET3_MAX_INTRS)) {
+diff --git a/hw/net/vmxnet_rx_pkt.c b/hw/net/vmxnet_rx_pkt.c
+deleted file mode 100644
+index 21bb46e..0000000
+--- a/hw/net/vmxnet_rx_pkt.c
++++ /dev/null
+@@ -1,187 +0,0 @@
+-/*
+- * QEMU VMWARE VMXNET* paravirtual NICs - RX packets abstractions
+- *
+- * Copyright (c) 2012 Ravello Systems LTD (http://ravellosystems.com)
+- *
+- * Developed by Daynix Computing LTD (http://www.daynix.com)
+- *
+- * Authors:
+- * Dmitry Fleytman <dmitry@daynix.com>
+- * Tamir Shomer <tamirs@daynix.com>
+- * Yan Vugenfirer <yan@daynix.com>
+- *
+- * This work is licensed under the terms of the GNU GPL, version 2 or later.
+- * See the COPYING file in the top-level directory.
+- *
+- */
+-
+-#include "qemu/osdep.h"
+-#include "vmxnet_rx_pkt.h"
+-#include "net/eth.h"
+-#include "qemu-common.h"
+-#include "qemu/iov.h"
+-#include "net/checksum.h"
+-#include "net/tap.h"
+-
+-/*
+- * RX packet may contain up to 2 fragments - rebuilt eth header
+- * in case of VLAN tag stripping
+- * and payload received from QEMU - in any case
+- */
+-#define VMXNET_MAX_RX_PACKET_FRAGMENTS (2)
+-
+-struct VmxnetRxPkt {
+-    struct virtio_net_hdr virt_hdr;
+-    uint8_t ehdr_buf[ETH_MAX_L2_HDR_LEN];
+-    struct iovec vec[VMXNET_MAX_RX_PACKET_FRAGMENTS];
+-    uint16_t vec_len;
+-    uint32_t tot_len;
+-    uint16_t tci;
+-    bool vlan_stripped;
+-    bool has_virt_hdr;
+-    eth_pkt_types_e packet_type;
+-
+-    /* Analysis results */
+-    bool isip4;
+-    bool isip6;
+-    bool isudp;
+-    bool istcp;
+-};
+-
+-void vmxnet_rx_pkt_init(struct VmxnetRxPkt **pkt, bool has_virt_hdr)
+-{
+-    struct VmxnetRxPkt *p = g_malloc0(sizeof *p);
+-    p->has_virt_hdr = has_virt_hdr;
+-    *pkt = p;
+-}
+-
+-void vmxnet_rx_pkt_uninit(struct VmxnetRxPkt *pkt)
+-{
+-    g_free(pkt);
+-}
+-
+-struct virtio_net_hdr *vmxnet_rx_pkt_get_vhdr(struct VmxnetRxPkt *pkt)
+-{
+-    assert(pkt);
+-    return &pkt->virt_hdr;
+-}
+-
+-void vmxnet_rx_pkt_attach_data(struct VmxnetRxPkt *pkt, const void *data,
+-                               size_t len, bool strip_vlan)
+-{
+-    uint16_t tci = 0;
+-    uint16_t ploff;
+-    assert(pkt);
+-    pkt->vlan_stripped = false;
+-
+-    if (strip_vlan) {
+-        pkt->vlan_stripped = eth_strip_vlan(data, pkt->ehdr_buf, &ploff, &tci);
+-    }
+-
+-    if (pkt->vlan_stripped) {
+-        pkt->vec[0].iov_base = pkt->ehdr_buf;
+-        pkt->vec[0].iov_len = ploff - sizeof(struct vlan_header);
+-        pkt->vec[1].iov_base = (uint8_t *) data + ploff;
+-        pkt->vec[1].iov_len = len - ploff;
+-        pkt->vec_len = 2;
+-        pkt->tot_len = len - ploff + sizeof(struct eth_header);
+-    } else {
+-        pkt->vec[0].iov_base = (void *)data;
+-        pkt->vec[0].iov_len = len;
+-        pkt->vec_len = 1;
+-        pkt->tot_len = len;
+-    }
+-
+-    pkt->tci = tci;
+-}
+-
+-void vmxnet_rx_pkt_dump(struct VmxnetRxPkt *pkt)
+-{
+-#ifdef VMXNET_RX_PKT_DEBUG
+-    VmxnetRxPkt *pkt = (VmxnetRxPkt *)pkt;
+-    assert(pkt);
+-
+-    printf("RX PKT: tot_len: %d, vlan_stripped: %d, vlan_tag: %d\n",
+-              pkt->tot_len, pkt->vlan_stripped, pkt->tci);
+-#endif
+-}
+-
+-void vmxnet_rx_pkt_set_packet_type(struct VmxnetRxPkt *pkt,
+-    eth_pkt_types_e packet_type)
+-{
+-    assert(pkt);
+-
+-    pkt->packet_type = packet_type;
+-
+-}
+-
+-eth_pkt_types_e vmxnet_rx_pkt_get_packet_type(struct VmxnetRxPkt *pkt)
+-{
+-    assert(pkt);
+-
+-    return pkt->packet_type;
+-}
+-
+-size_t vmxnet_rx_pkt_get_total_len(struct VmxnetRxPkt *pkt)
+-{
+-    assert(pkt);
+-
+-    return pkt->tot_len;
+-}
+-
+-void vmxnet_rx_pkt_set_protocols(struct VmxnetRxPkt *pkt, const void *data,
+-                                 size_t len)
+-{
+-    assert(pkt);
+-
+-    eth_get_protocols(data, len, &pkt->isip4, &pkt->isip6,
+-        &pkt->isudp, &pkt->istcp);
+-}
+-
+-void vmxnet_rx_pkt_get_protocols(struct VmxnetRxPkt *pkt,
+-                                 bool *isip4, bool *isip6,
+-                                 bool *isudp, bool *istcp)
+-{
+-    assert(pkt);
+-
+-    *isip4 = pkt->isip4;
+-    *isip6 = pkt->isip6;
+-    *isudp = pkt->isudp;
+-    *istcp = pkt->istcp;
+-}
+-
+-struct iovec *vmxnet_rx_pkt_get_iovec(struct VmxnetRxPkt *pkt)
+-{
+-    assert(pkt);
+-
+-    return pkt->vec;
+-}
+-
+-void vmxnet_rx_pkt_set_vhdr(struct VmxnetRxPkt *pkt,
+-                            struct virtio_net_hdr *vhdr)
+-{
+-    assert(pkt);
+-
+-    memcpy(&pkt->virt_hdr, vhdr, sizeof pkt->virt_hdr);
+-}
+-
+-bool vmxnet_rx_pkt_is_vlan_stripped(struct VmxnetRxPkt *pkt)
+-{
+-    assert(pkt);
+-
+-    return pkt->vlan_stripped;
+-}
+-
+-bool vmxnet_rx_pkt_has_virt_hdr(struct VmxnetRxPkt *pkt)
+-{
+-    assert(pkt);
+-
+-    return pkt->has_virt_hdr;
+-}
+-
+-uint16_t vmxnet_rx_pkt_get_vlan_tag(struct VmxnetRxPkt *pkt)
+-{
+-    assert(pkt);
+-
+-    return pkt->tci;
+-}
+diff --git a/hw/net/vmxnet_rx_pkt.h b/hw/net/vmxnet_rx_pkt.h
+deleted file mode 100644
+index 0a45c1b..0000000
+--- a/hw/net/vmxnet_rx_pkt.h
++++ /dev/null
+@@ -1,174 +0,0 @@
+-/*
+- * QEMU VMWARE VMXNET* paravirtual NICs - RX packets abstraction
+- *
+- * Copyright (c) 2012 Ravello Systems LTD (http://ravellosystems.com)
+- *
+- * Developed by Daynix Computing LTD (http://www.daynix.com)
+- *
+- * Authors:
+- * Dmitry Fleytman <dmitry@daynix.com>
+- * Tamir Shomer <tamirs@daynix.com>
+- * Yan Vugenfirer <yan@daynix.com>
+- *
+- * This work is licensed under the terms of the GNU GPL, version 2 or later.
+- * See the COPYING file in the top-level directory.
+- *
+- */
+-
+-#ifndef VMXNET_RX_PKT_H
+-#define VMXNET_RX_PKT_H
+-
+-#include "net/eth.h"
+-
+-/* defines to enable packet dump functions */
+-/*#define VMXNET_RX_PKT_DEBUG*/
+-
+-struct VmxnetRxPkt;
+-
+-/**
+- * Clean all rx packet resources
+- *
+- * @pkt:            packet
+- *
+- */
+-void vmxnet_rx_pkt_uninit(struct VmxnetRxPkt *pkt);
+-
+-/**
+- * Init function for rx packet functionality
+- *
+- * @pkt:            packet pointer
+- * @has_virt_hdr:   device uses virtio header
+- *
+- */
+-void vmxnet_rx_pkt_init(struct VmxnetRxPkt **pkt, bool has_virt_hdr);
+-
+-/**
+- * returns total length of data attached to rx context
+- *
+- * @pkt:            packet
+- *
+- * Return:  nothing
+- *
+- */
+-size_t vmxnet_rx_pkt_get_total_len(struct VmxnetRxPkt *pkt);
+-
+-/**
+- * parse and set packet analysis results
+- *
+- * @pkt:            packet
+- * @data:           pointer to the data buffer to be parsed
+- * @len:            data length
+- *
+- */
+-void vmxnet_rx_pkt_set_protocols(struct VmxnetRxPkt *pkt, const void *data,
+-                                 size_t len);
+-
+-/**
+- * fetches packet analysis results
+- *
+- * @pkt:            packet
+- * @isip4:          whether the packet given is IPv4
+- * @isip6:          whether the packet given is IPv6
+- * @isudp:          whether the packet given is UDP
+- * @istcp:          whether the packet given is TCP
+- *
+- */
+-void vmxnet_rx_pkt_get_protocols(struct VmxnetRxPkt *pkt,
+-                                 bool *isip4, bool *isip6,
+-                                 bool *isudp, bool *istcp);
+-
+-/**
+- * returns virtio header stored in rx context
+- *
+- * @pkt:            packet
+- * @ret:            virtio header
+- *
+- */
+-struct virtio_net_hdr *vmxnet_rx_pkt_get_vhdr(struct VmxnetRxPkt *pkt);
+-
+-/**
+- * returns packet type
+- *
+- * @pkt:            packet
+- * @ret:            packet type
+- *
+- */
+-eth_pkt_types_e vmxnet_rx_pkt_get_packet_type(struct VmxnetRxPkt *pkt);
+-
+-/**
+- * returns vlan tag
+- *
+- * @pkt:            packet
+- * @ret:            VLAN tag
+- *
+- */
+-uint16_t vmxnet_rx_pkt_get_vlan_tag(struct VmxnetRxPkt *pkt);
+-
+-/**
+- * tells whether vlan was stripped from the packet
+- *
+- * @pkt:            packet
+- * @ret:            VLAN stripped sign
+- *
+- */
+-bool vmxnet_rx_pkt_is_vlan_stripped(struct VmxnetRxPkt *pkt);
+-
+-/**
+- * notifies caller if the packet has virtio header
+- *
+- * @pkt:            packet
+- * @ret:            true if packet has virtio header, false otherwize
+- *
+- */
+-bool vmxnet_rx_pkt_has_virt_hdr(struct VmxnetRxPkt *pkt);
+-
+-/**
+- * attach data to rx packet
+- *
+- * @pkt:            packet
+- * @data:           pointer to the data buffer
+- * @len:            data length
+- * @strip_vlan:     should the module strip vlan from data
+- *
+- */
+-void vmxnet_rx_pkt_attach_data(struct VmxnetRxPkt *pkt, const void *data,
+-    size_t len, bool strip_vlan);
+-
+-/**
+- * returns io vector that holds the attached data
+- *
+- * @pkt:            packet
+- * @ret:            pointer to IOVec
+- *
+- */
+-struct iovec *vmxnet_rx_pkt_get_iovec(struct VmxnetRxPkt *pkt);
+-
+-/**
+- * prints rx packet data if debug is enabled
+- *
+- * @pkt:            packet
+- *
+- */
+-void vmxnet_rx_pkt_dump(struct VmxnetRxPkt *pkt);
+-
+-/**
+- * copy passed vhdr data to packet context
+- *
+- * @pkt:            packet
+- * @vhdr:           VHDR buffer
+- *
+- */
+-void vmxnet_rx_pkt_set_vhdr(struct VmxnetRxPkt *pkt,
+-    struct virtio_net_hdr *vhdr);
+-
+-/**
+- * save packet type in packet context
+- *
+- * @pkt:            packet
+- * @packet_type:    the packet type
+- *
+- */
+-void vmxnet_rx_pkt_set_packet_type(struct VmxnetRxPkt *pkt,
+-    eth_pkt_types_e packet_type);
+-
+-#endif
+diff --git a/hw/net/vmxnet_tx_pkt.c b/hw/net/vmxnet_tx_pkt.c
+deleted file mode 100644
+index 91e1e08..0000000
+--- a/hw/net/vmxnet_tx_pkt.c
++++ /dev/null
+@@ -1,581 +0,0 @@
+-/*
+- * QEMU VMWARE VMXNET* paravirtual NICs - TX packets abstractions
+- *
+- * Copyright (c) 2012 Ravello Systems LTD (http://ravellosystems.com)
+- *
+- * Developed by Daynix Computing LTD (http://www.daynix.com)
+- *
+- * Authors:
+- * Dmitry Fleytman <dmitry@daynix.com>
+- * Tamir Shomer <tamirs@daynix.com>
+- * Yan Vugenfirer <yan@daynix.com>
+- *
+- * This work is licensed under the terms of the GNU GPL, version 2 or later.
+- * See the COPYING file in the top-level directory.
+- *
+- */
+-
+-#include "qemu/osdep.h"
+-#include "hw/hw.h"
+-#include "vmxnet_tx_pkt.h"
+-#include "net/eth.h"
+-#include "qemu-common.h"
+-#include "qemu/iov.h"
+-#include "net/checksum.h"
+-#include "net/tap.h"
+-#include "net/net.h"
+-
+-enum {
+-    VMXNET_TX_PKT_VHDR_FRAG = 0,
+-    VMXNET_TX_PKT_L2HDR_FRAG,
+-    VMXNET_TX_PKT_L3HDR_FRAG,
+-    VMXNET_TX_PKT_PL_START_FRAG
+-};
+-
+-/* TX packet private context */
+-struct VmxnetTxPkt {
+-    struct virtio_net_hdr virt_hdr;
+-    bool has_virt_hdr;
+-
+-    struct iovec *raw;
+-    uint32_t raw_frags;
+-    uint32_t max_raw_frags;
+-
+-    struct iovec *vec;
+-
+-    uint8_t l2_hdr[ETH_MAX_L2_HDR_LEN];
+-
+-    uint32_t payload_len;
+-
+-    uint32_t payload_frags;
+-    uint32_t max_payload_frags;
+-
+-    uint16_t hdr_len;
+-    eth_pkt_types_e packet_type;
+-    uint8_t l4proto;
+-};
+-
+-void vmxnet_tx_pkt_init(struct VmxnetTxPkt **pkt, uint32_t max_frags,
+-    bool has_virt_hdr)
+-{
+-    struct VmxnetTxPkt *p = g_malloc0(sizeof *p);
+-
+-    p->vec = g_malloc((sizeof *p->vec) *
+-        (max_frags + VMXNET_TX_PKT_PL_START_FRAG));
+-
+-    p->raw = g_malloc((sizeof *p->raw) * max_frags);
+-
+-    p->max_payload_frags = max_frags;
+-    p->max_raw_frags = max_frags;
+-    p->has_virt_hdr = has_virt_hdr;
+-    p->vec[VMXNET_TX_PKT_VHDR_FRAG].iov_base = &p->virt_hdr;
+-    p->vec[VMXNET_TX_PKT_VHDR_FRAG].iov_len =
+-        p->has_virt_hdr ? sizeof p->virt_hdr : 0;
+-    p->vec[VMXNET_TX_PKT_L2HDR_FRAG].iov_base = &p->l2_hdr;
+-    p->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_base = NULL;
+-    p->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_len = 0;
+-
+-    *pkt = p;
+-}
+-
+-void vmxnet_tx_pkt_uninit(struct VmxnetTxPkt *pkt)
+-{
+-    if (pkt) {
+-        g_free(pkt->vec);
+-        g_free(pkt->raw);
+-        g_free(pkt);
+-    }
+-}
+-
+-void vmxnet_tx_pkt_update_ip_checksums(struct VmxnetTxPkt *pkt)
+-{
+-    uint16_t csum;
+-    uint32_t ph_raw_csum;
+-    assert(pkt);
+-    uint8_t gso_type = pkt->virt_hdr.gso_type & ~VIRTIO_NET_HDR_GSO_ECN;
+-    struct ip_header *ip_hdr;
+-
+-    if (VIRTIO_NET_HDR_GSO_TCPV4 != gso_type &&
+-        VIRTIO_NET_HDR_GSO_UDP != gso_type) {
+-        return;
+-    }
+-
+-    ip_hdr = pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_base;
+-
+-    if (pkt->payload_len + pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_len >
+-        ETH_MAX_IP_DGRAM_LEN) {
+-        return;
+-    }
+-
+-    ip_hdr->ip_len = cpu_to_be16(pkt->payload_len +
+-        pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_len);
+-
+-    /* Calculate IP header checksum                    */
+-    ip_hdr->ip_sum = 0;
+-    csum = net_raw_checksum((uint8_t *)ip_hdr,
+-        pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_len);
+-    ip_hdr->ip_sum = cpu_to_be16(csum);
+-
+-    /* Calculate IP pseudo header checksum             */
+-    ph_raw_csum = eth_calc_pseudo_hdr_csum(ip_hdr, pkt->payload_len);
+-    csum = cpu_to_be16(~net_checksum_finish(ph_raw_csum));
+-    iov_from_buf(&pkt->vec[VMXNET_TX_PKT_PL_START_FRAG], pkt->payload_frags,
+-                 pkt->virt_hdr.csum_offset, &csum, sizeof(csum));
+-}
+-
+-static void vmxnet_tx_pkt_calculate_hdr_len(struct VmxnetTxPkt *pkt)
+-{
+-    pkt->hdr_len = pkt->vec[VMXNET_TX_PKT_L2HDR_FRAG].iov_len +
+-        pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_len;
+-}
+-
+-static bool vmxnet_tx_pkt_parse_headers(struct VmxnetTxPkt *pkt)
+-{
+-    struct iovec *l2_hdr, *l3_hdr;
+-    size_t bytes_read;
+-    size_t full_ip6hdr_len;
+-    uint16_t l3_proto;
+-
+-    assert(pkt);
+-
+-    l2_hdr = &pkt->vec[VMXNET_TX_PKT_L2HDR_FRAG];
+-    l3_hdr = &pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG];
+-
+-    bytes_read = iov_to_buf(pkt->raw, pkt->raw_frags, 0, l2_hdr->iov_base,
+-                            ETH_MAX_L2_HDR_LEN);
+-    if (bytes_read < sizeof(struct eth_header)) {
+-        l2_hdr->iov_len = 0;
+-        return false;
+-    }
+-
+-    l2_hdr->iov_len = sizeof(struct eth_header);
+-    switch (be16_to_cpu(PKT_GET_ETH_HDR(l2_hdr->iov_base)->h_proto)) {
+-    case ETH_P_VLAN:
+-        l2_hdr->iov_len += sizeof(struct vlan_header);
+-        break;
+-    case ETH_P_DVLAN:
+-        l2_hdr->iov_len += 2 * sizeof(struct vlan_header);
+-        break;
+-    }
+-
+-    if (bytes_read < l2_hdr->iov_len) {
+-        l2_hdr->iov_len = 0;
+-        return false;
+-    }
+-
+-    l3_proto = eth_get_l3_proto(l2_hdr->iov_base, l2_hdr->iov_len);
+-
+-    switch (l3_proto) {
+-    case ETH_P_IP:
+-        l3_hdr->iov_base = g_malloc(ETH_MAX_IP4_HDR_LEN);
+-
+-        bytes_read = iov_to_buf(pkt->raw, pkt->raw_frags, l2_hdr->iov_len,
+-                                l3_hdr->iov_base, sizeof(struct ip_header));
+-
+-        if (bytes_read < sizeof(struct ip_header)) {
+-            l3_hdr->iov_len = 0;
+-            return false;
+-        }
+-
+-        l3_hdr->iov_len = IP_HDR_GET_LEN(l3_hdr->iov_base);
+-        pkt->l4proto = ((struct ip_header *) l3_hdr->iov_base)->ip_p;
+-
+-        /* copy optional IPv4 header data */
+-        bytes_read = iov_to_buf(pkt->raw, pkt->raw_frags,
+-                                l2_hdr->iov_len + sizeof(struct ip_header),
+-                                l3_hdr->iov_base + sizeof(struct ip_header),
+-                                l3_hdr->iov_len - sizeof(struct ip_header));
+-        if (bytes_read < l3_hdr->iov_len - sizeof(struct ip_header)) {
+-            l3_hdr->iov_len = 0;
+-            return false;
+-        }
+-        break;
+-
+-    case ETH_P_IPV6:
+-        if (!eth_parse_ipv6_hdr(pkt->raw, pkt->raw_frags, l2_hdr->iov_len,
+-                               &pkt->l4proto, &full_ip6hdr_len)) {
+-            l3_hdr->iov_len = 0;
+-            return false;
+-        }
+-
+-        l3_hdr->iov_base = g_malloc(full_ip6hdr_len);
+-
+-        bytes_read = iov_to_buf(pkt->raw, pkt->raw_frags, l2_hdr->iov_len,
+-                                l3_hdr->iov_base, full_ip6hdr_len);
+-
+-        if (bytes_read < full_ip6hdr_len) {
+-            l3_hdr->iov_len = 0;
+-            return false;
+-        } else {
+-            l3_hdr->iov_len = full_ip6hdr_len;
+-        }
+-        break;
+-
+-    default:
+-        l3_hdr->iov_len = 0;
+-        break;
+-    }
+-
+-    vmxnet_tx_pkt_calculate_hdr_len(pkt);
+-    pkt->packet_type = get_eth_packet_type(l2_hdr->iov_base);
+-    return true;
+-}
+-
+-static bool vmxnet_tx_pkt_rebuild_payload(struct VmxnetTxPkt *pkt)
+-{
+-    size_t payload_len = iov_size(pkt->raw, pkt->raw_frags) - pkt->hdr_len;
+-
+-    pkt->payload_frags = iov_copy(&pkt->vec[VMXNET_TX_PKT_PL_START_FRAG],
+-                                pkt->max_payload_frags,
+-                                pkt->raw, pkt->raw_frags,
+-                                pkt->hdr_len, payload_len);
+-
+-    if (pkt->payload_frags != (uint32_t) -1) {
+-        pkt->payload_len = payload_len;
+-        return true;
+-    } else {
+-        return false;
+-    }
+-}
+-
+-bool vmxnet_tx_pkt_parse(struct VmxnetTxPkt *pkt)
+-{
+-    return vmxnet_tx_pkt_parse_headers(pkt) &&
+-           vmxnet_tx_pkt_rebuild_payload(pkt);
+-}
+-
+-struct virtio_net_hdr *vmxnet_tx_pkt_get_vhdr(struct VmxnetTxPkt *pkt)
+-{
+-    assert(pkt);
+-    return &pkt->virt_hdr;
+-}
+-
+-static uint8_t vmxnet_tx_pkt_get_gso_type(struct VmxnetTxPkt *pkt,
+-                                          bool tso_enable)
+-{
+-    uint8_t rc = VIRTIO_NET_HDR_GSO_NONE;
+-    uint16_t l3_proto;
+-
+-    l3_proto = eth_get_l3_proto(pkt->vec[VMXNET_TX_PKT_L2HDR_FRAG].iov_base,
+-        pkt->vec[VMXNET_TX_PKT_L2HDR_FRAG].iov_len);
+-
+-    if (!tso_enable) {
+-        goto func_exit;
+-    }
+-
+-    rc = eth_get_gso_type(l3_proto, pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_base,
+-                          pkt->l4proto);
+-
+-func_exit:
+-    return rc;
+-}
+-
+-void vmxnet_tx_pkt_build_vheader(struct VmxnetTxPkt *pkt, bool tso_enable,
+-    bool csum_enable, uint32_t gso_size)
+-{
+-    struct tcp_hdr l4hdr;
+-    assert(pkt);
+-
+-    /* csum has to be enabled if tso is. */
+-    assert(csum_enable || !tso_enable);
+-
+-    pkt->virt_hdr.gso_type = vmxnet_tx_pkt_get_gso_type(pkt, tso_enable);
+-
+-    switch (pkt->virt_hdr.gso_type & ~VIRTIO_NET_HDR_GSO_ECN) {
+-    case VIRTIO_NET_HDR_GSO_NONE:
+-        pkt->virt_hdr.hdr_len = 0;
+-        pkt->virt_hdr.gso_size = 0;
+-        break;
+-
+-    case VIRTIO_NET_HDR_GSO_UDP:
+-        pkt->virt_hdr.gso_size = IP_FRAG_ALIGN_SIZE(gso_size);
+-        pkt->virt_hdr.hdr_len = pkt->hdr_len + sizeof(struct udp_header);
+-        break;
+-
+-    case VIRTIO_NET_HDR_GSO_TCPV4:
+-    case VIRTIO_NET_HDR_GSO_TCPV6:
+-        iov_to_buf(&pkt->vec[VMXNET_TX_PKT_PL_START_FRAG], pkt->payload_frags,
+-                   0, &l4hdr, sizeof(l4hdr));
+-        pkt->virt_hdr.hdr_len = pkt->hdr_len + l4hdr.th_off * sizeof(uint32_t);
+-        pkt->virt_hdr.gso_size = IP_FRAG_ALIGN_SIZE(gso_size);
+-        break;
+-
+-    default:
+-        g_assert_not_reached();
+-    }
+-
+-    if (csum_enable) {
+-        switch (pkt->l4proto) {
+-        case IP_PROTO_TCP:
+-            pkt->virt_hdr.flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+-            pkt->virt_hdr.csum_start = pkt->hdr_len;
+-            pkt->virt_hdr.csum_offset = offsetof(struct tcp_hdr, th_sum);
+-            break;
+-        case IP_PROTO_UDP:
+-            pkt->virt_hdr.flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
+-            pkt->virt_hdr.csum_start = pkt->hdr_len;
+-            pkt->virt_hdr.csum_offset = offsetof(struct udp_hdr, uh_sum);
+-            break;
+-        default:
+-            break;
+-        }
+-    }
+-}
+-
+-void vmxnet_tx_pkt_setup_vlan_header(struct VmxnetTxPkt *pkt, uint16_t vlan)
+-{
+-    bool is_new;
+-    assert(pkt);
+-
+-    eth_setup_vlan_headers(pkt->vec[VMXNET_TX_PKT_L2HDR_FRAG].iov_base,
+-        vlan, &is_new);
+-
+-    /* update l2hdrlen */
+-    if (is_new) {
+-        pkt->hdr_len += sizeof(struct vlan_header);
+-        pkt->vec[VMXNET_TX_PKT_L2HDR_FRAG].iov_len +=
+-            sizeof(struct vlan_header);
+-    }
+-}
+-
+-bool vmxnet_tx_pkt_add_raw_fragment(struct VmxnetTxPkt *pkt, hwaddr pa,
+-    size_t len)
+-{
+-    hwaddr mapped_len = 0;
+-    struct iovec *ventry;
+-    assert(pkt);
+-    assert(pkt->max_raw_frags > pkt->raw_frags);
+-
+-    if (!len) {
+-        return true;
+-     }
+-
+-    ventry = &pkt->raw[pkt->raw_frags];
+-    mapped_len = len;
+-
+-    ventry->iov_base = cpu_physical_memory_map(pa, &mapped_len, false);
+-    ventry->iov_len = mapped_len;
+-    pkt->raw_frags += !!ventry->iov_base;
+-
+-    if ((ventry->iov_base == NULL) || (len != mapped_len)) {
+-        return false;
+-    }
+-
+-    return true;
+-}
+-
+-eth_pkt_types_e vmxnet_tx_pkt_get_packet_type(struct VmxnetTxPkt *pkt)
+-{
+-    assert(pkt);
+-
+-    return pkt->packet_type;
+-}
+-
+-size_t vmxnet_tx_pkt_get_total_len(struct VmxnetTxPkt *pkt)
+-{
+-    assert(pkt);
+-
+-    return pkt->hdr_len + pkt->payload_len;
+-}
+-
+-void vmxnet_tx_pkt_dump(struct VmxnetTxPkt *pkt)
+-{
+-#ifdef VMXNET_TX_PKT_DEBUG
+-    assert(pkt);
+-
+-    printf("TX PKT: hdr_len: %d, pkt_type: 0x%X, l2hdr_len: %lu, "
+-        "l3hdr_len: %lu, payload_len: %u\n", pkt->hdr_len, pkt->packet_type,
+-        pkt->vec[VMXNET_TX_PKT_L2HDR_FRAG].iov_len,
+-        pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_len, pkt->payload_len);
+-#endif
+-}
+-
+-void vmxnet_tx_pkt_reset(struct VmxnetTxPkt *pkt)
+-{
+-    int i;
+-
+-    /* no assert, as reset can be called before tx_pkt_init */
+-    if (!pkt) {
+-        return;
+-    }
+-
+-    memset(&pkt->virt_hdr, 0, sizeof(pkt->virt_hdr));
+-
+-    g_free(pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_base);
+-    pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_base = NULL;
+-
+-    assert(pkt->vec);
+-    for (i = VMXNET_TX_PKT_L2HDR_FRAG;
+-         i < pkt->payload_frags + VMXNET_TX_PKT_PL_START_FRAG; i++) {
+-        pkt->vec[i].iov_len = 0;
+-    }
+-    pkt->payload_len = 0;
+-    pkt->payload_frags = 0;
+-
+-    assert(pkt->raw);
+-    for (i = 0; i < pkt->raw_frags; i++) {
+-        assert(pkt->raw[i].iov_base);
+-        cpu_physical_memory_unmap(pkt->raw[i].iov_base, pkt->raw[i].iov_len,
+-                                  false, pkt->raw[i].iov_len);
+-        pkt->raw[i].iov_len = 0;
+-    }
+-    pkt->raw_frags = 0;
+-
+-    pkt->hdr_len = 0;
+-    pkt->packet_type = 0;
+-    pkt->l4proto = 0;
+-}
+-
+-static void vmxnet_tx_pkt_do_sw_csum(struct VmxnetTxPkt *pkt)
+-{
+-    struct iovec *iov = &pkt->vec[VMXNET_TX_PKT_L2HDR_FRAG];
+-    uint32_t csum_cntr;
+-    uint16_t csum = 0;
+-    /* num of iovec without vhdr */
+-    uint32_t iov_len = pkt->payload_frags + VMXNET_TX_PKT_PL_START_FRAG - 1;
+-    uint16_t csl;
+-    struct ip_header *iphdr;
+-    size_t csum_offset = pkt->virt_hdr.csum_start + pkt->virt_hdr.csum_offset;
+-
+-    /* Put zero to checksum field */
+-    iov_from_buf(iov, iov_len, csum_offset, &csum, sizeof csum);
+-
+-    /* Calculate L4 TCP/UDP checksum */
+-    csl = pkt->payload_len;
+-
+-    /* data checksum */
+-    csum_cntr =
+-        net_checksum_add_iov(iov, iov_len, pkt->virt_hdr.csum_start, csl);
+-    /* add pseudo header to csum */
+-    iphdr = pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_base;
+-    csum_cntr += eth_calc_pseudo_hdr_csum(iphdr, csl);
+-
+-    /* Put the checksum obtained into the packet */
+-    csum = cpu_to_be16(net_checksum_finish(csum_cntr));
+-    iov_from_buf(iov, iov_len, csum_offset, &csum, sizeof csum);
+-}
+-
+-enum {
+-    VMXNET_TX_PKT_FRAGMENT_L2_HDR_POS = 0,
+-    VMXNET_TX_PKT_FRAGMENT_L3_HDR_POS,
+-    VMXNET_TX_PKT_FRAGMENT_HEADER_NUM
+-};
+-
+-#define VMXNET_MAX_FRAG_SG_LIST (64)
+-
+-static size_t vmxnet_tx_pkt_fetch_fragment(struct VmxnetTxPkt *pkt,
+-    int *src_idx, size_t *src_offset, struct iovec *dst, int *dst_idx)
+-{
+-    size_t fetched = 0;
+-    struct iovec *src = pkt->vec;
+-
+-    *dst_idx = VMXNET_TX_PKT_FRAGMENT_HEADER_NUM;
+-
+-    while (fetched < pkt->virt_hdr.gso_size) {
+-
+-        /* no more place in fragment iov */
+-        if (*dst_idx == VMXNET_MAX_FRAG_SG_LIST) {
+-            break;
+-        }
+-
+-        /* no more data in iovec */
+-        if (*src_idx == (pkt->payload_frags + VMXNET_TX_PKT_PL_START_FRAG)) {
+-            break;
+-        }
+-
+-
+-        dst[*dst_idx].iov_base = src[*src_idx].iov_base + *src_offset;
+-        dst[*dst_idx].iov_len = MIN(src[*src_idx].iov_len - *src_offset,
+-            pkt->virt_hdr.gso_size - fetched);
+-
+-        *src_offset += dst[*dst_idx].iov_len;
+-        fetched += dst[*dst_idx].iov_len;
+-
+-        if (*src_offset == src[*src_idx].iov_len) {
+-            *src_offset = 0;
+-            (*src_idx)++;
+-        }
+-
+-        (*dst_idx)++;
+-    }
+-
+-    return fetched;
+-}
+-
+-static bool vmxnet_tx_pkt_do_sw_fragmentation(struct VmxnetTxPkt *pkt,
+-    NetClientState *nc)
+-{
+-    struct iovec fragment[VMXNET_MAX_FRAG_SG_LIST];
+-    size_t fragment_len = 0;
+-    bool more_frags = false;
+-
+-    /* some pointers for shorter code */
+-    void *l2_iov_base, *l3_iov_base;
+-    size_t l2_iov_len, l3_iov_len;
+-    int src_idx =  VMXNET_TX_PKT_PL_START_FRAG, dst_idx;
+-    size_t src_offset = 0;
+-    size_t fragment_offset = 0;
+-
+-    l2_iov_base = pkt->vec[VMXNET_TX_PKT_L2HDR_FRAG].iov_base;
+-    l2_iov_len = pkt->vec[VMXNET_TX_PKT_L2HDR_FRAG].iov_len;
+-    l3_iov_base = pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_base;
+-    l3_iov_len = pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_len;
+-
+-    /* Copy headers */
+-    fragment[VMXNET_TX_PKT_FRAGMENT_L2_HDR_POS].iov_base = l2_iov_base;
+-    fragment[VMXNET_TX_PKT_FRAGMENT_L2_HDR_POS].iov_len = l2_iov_len;
+-    fragment[VMXNET_TX_PKT_FRAGMENT_L3_HDR_POS].iov_base = l3_iov_base;
+-    fragment[VMXNET_TX_PKT_FRAGMENT_L3_HDR_POS].iov_len = l3_iov_len;
+-
+-
+-    /* Put as much data as possible and send */
+-    do {
+-        fragment_len = vmxnet_tx_pkt_fetch_fragment(pkt, &src_idx, &src_offset,
+-            fragment, &dst_idx);
+-
+-        more_frags = (fragment_offset + fragment_len < pkt->payload_len);
+-
+-        eth_setup_ip4_fragmentation(l2_iov_base, l2_iov_len, l3_iov_base,
+-            l3_iov_len, fragment_len, fragment_offset, more_frags);
+-
+-        eth_fix_ip4_checksum(l3_iov_base, l3_iov_len);
+-
+-        qemu_sendv_packet(nc, fragment, dst_idx);
+-
+-        fragment_offset += fragment_len;
+-
+-    } while (more_frags);
+-
+-    return true;
+-}
+-
+-bool vmxnet_tx_pkt_send(struct VmxnetTxPkt *pkt, NetClientState *nc)
+-{
+-    assert(pkt);
+-
+-    if (!pkt->has_virt_hdr &&
+-        pkt->virt_hdr.flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) {
+-        vmxnet_tx_pkt_do_sw_csum(pkt);
+-    }
+-
+-    /*
+-     * Since underlying infrastructure does not support IP datagrams longer
+-     * than 64K we should drop such packets and don't even try to send
+-     */
+-    if (VIRTIO_NET_HDR_GSO_NONE != pkt->virt_hdr.gso_type) {
+-        if (pkt->payload_len >
+-            ETH_MAX_IP_DGRAM_LEN -
+-            pkt->vec[VMXNET_TX_PKT_L3HDR_FRAG].iov_len) {
+-            return false;
+-        }
+-    }
+-
+-    if (pkt->has_virt_hdr ||
+-        pkt->virt_hdr.gso_type == VIRTIO_NET_HDR_GSO_NONE) {
+-        qemu_sendv_packet(nc, pkt->vec,
+-            pkt->payload_frags + VMXNET_TX_PKT_PL_START_FRAG);
+-        return true;
+-    }
+-
+-    return vmxnet_tx_pkt_do_sw_fragmentation(pkt, nc);
+-}
+diff --git a/hw/net/vmxnet_tx_pkt.h b/hw/net/vmxnet_tx_pkt.h
+deleted file mode 100644
+index f51e98a..0000000
+--- a/hw/net/vmxnet_tx_pkt.h
++++ /dev/null
+@@ -1,146 +0,0 @@
+-/*
+- * QEMU VMWARE VMXNET* paravirtual NICs - TX packets abstraction
+- *
+- * Copyright (c) 2012 Ravello Systems LTD (http://ravellosystems.com)
+- *
+- * Developed by Daynix Computing LTD (http://www.daynix.com)
+- *
+- * Authors:
+- * Dmitry Fleytman <dmitry@daynix.com>
+- * Tamir Shomer <tamirs@daynix.com>
+- * Yan Vugenfirer <yan@daynix.com>
+- *
+- * This work is licensed under the terms of the GNU GPL, version 2 or later.
+- * See the COPYING file in the top-level directory.
+- *
+- */
+-
+-#ifndef VMXNET_TX_PKT_H
+-#define VMXNET_TX_PKT_H
+-
+-#include "net/eth.h"
+-#include "exec/hwaddr.h"
+-
+-/* define to enable packet dump functions */
+-/*#define VMXNET_TX_PKT_DEBUG*/
+-
+-struct VmxnetTxPkt;
+-
+-/**
+- * Init function for tx packet functionality
+- *
+- * @pkt:            packet pointer
+- * @max_frags:      max tx ip fragments
+- * @has_virt_hdr:   device uses virtio header.
+- */
+-void vmxnet_tx_pkt_init(struct VmxnetTxPkt **pkt, uint32_t max_frags,
+-    bool has_virt_hdr);
+-
+-/**
+- * Clean all tx packet resources.
+- *
+- * @pkt:            packet.
+- */
+-void vmxnet_tx_pkt_uninit(struct VmxnetTxPkt *pkt);
+-
+-/**
+- * get virtio header
+- *
+- * @pkt:            packet
+- * @ret:            virtio header
+- */
+-struct virtio_net_hdr *vmxnet_tx_pkt_get_vhdr(struct VmxnetTxPkt *pkt);
+-
+-/**
+- * build virtio header (will be stored in module context)
+- *
+- * @pkt:            packet
+- * @tso_enable:     TSO enabled
+- * @csum_enable:    CSO enabled
+- * @gso_size:       MSS size for TSO
+- *
+- */
+-void vmxnet_tx_pkt_build_vheader(struct VmxnetTxPkt *pkt, bool tso_enable,
+-    bool csum_enable, uint32_t gso_size);
+-
+-/**
+- * updates vlan tag, and adds vlan header in case it is missing
+- *
+- * @pkt:            packet
+- * @vlan:           VLAN tag
+- *
+- */
+-void vmxnet_tx_pkt_setup_vlan_header(struct VmxnetTxPkt *pkt, uint16_t vlan);
+-
+-/**
+- * populate data fragment into pkt context.
+- *
+- * @pkt:            packet
+- * @pa:             physical address of fragment
+- * @len:            length of fragment
+- *
+- */
+-bool vmxnet_tx_pkt_add_raw_fragment(struct VmxnetTxPkt *pkt, hwaddr pa,
+-    size_t len);
+-
+-/**
+- * fix ip header fields and calculate checksums needed.
+- *
+- * @pkt:            packet
+- *
+- */
+-void vmxnet_tx_pkt_update_ip_checksums(struct VmxnetTxPkt *pkt);
+-
+-/**
+- * get length of all populated data.
+- *
+- * @pkt:            packet
+- * @ret:            total data length
+- *
+- */
+-size_t vmxnet_tx_pkt_get_total_len(struct VmxnetTxPkt *pkt);
+-
+-/**
+- * get packet type
+- *
+- * @pkt:            packet
+- * @ret:            packet type
+- *
+- */
+-eth_pkt_types_e vmxnet_tx_pkt_get_packet_type(struct VmxnetTxPkt *pkt);
+-
+-/**
+- * prints packet data if debug is enabled
+- *
+- * @pkt:            packet
+- *
+- */
+-void vmxnet_tx_pkt_dump(struct VmxnetTxPkt *pkt);
+-
+-/**
+- * reset tx packet private context (needed to be called between packets)
+- *
+- * @pkt:            packet
+- *
+- */
+-void vmxnet_tx_pkt_reset(struct VmxnetTxPkt *pkt);
+-
+-/**
+- * Send packet to qemu. handles sw offloads if vhdr is not supported.
+- *
+- * @pkt:            packet
+- * @nc:             NetClientState
+- * @ret:            operation result
+- *
+- */
+-bool vmxnet_tx_pkt_send(struct VmxnetTxPkt *pkt, NetClientState *nc);
+-
+-/**
+- * parse raw packet data and analyze offload requirements.
+- *
+- * @pkt:            packet
+- *
+- */
+-bool vmxnet_tx_pkt_parse(struct VmxnetTxPkt *pkt);
+-
+-#endif
+diff --git a/tests/Makefile b/tests/Makefile
+index d7bafb0..7ce3ff2 100644
+--- a/tests/Makefile
++++ b/tests/Makefile
+@@ -177,8 +177,8 @@ check-qtest-i386-y += tests/tco-test$(EXESUF)
+ gcov-files-i386-y += hw/watchdog/watchdog.c hw/watchdog/wdt_ib700.c
+ check-qtest-i386-y += $(check-qtest-pci-y)
+ gcov-files-i386-y += $(gcov-files-pci-y)
+-gcov-files-i386-y += hw/net/vmxnet_rx_pkt.c
+-gcov-files-i386-y += hw/net/vmxnet_tx_pkt.c
++gcov-files-i386-y += hw/net/net_rx_pkt.c
++gcov-files-i386-y += hw/net/net_tx_pkt.c
+ check-qtest-i386-y += tests/pvpanic-test$(EXESUF)
+ gcov-files-i386-y += i386-softmmu/hw/misc/pvpanic.c
+ check-qtest-i386-y += tests/i82801b11-test$(EXESUF)
+-- 
+1.8.3.1
+

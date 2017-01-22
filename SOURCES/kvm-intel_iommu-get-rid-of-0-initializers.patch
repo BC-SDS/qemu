@@ -1,0 +1,62 @@
+From b6132a45f674fa8612d960ed2b5bb8fc19a3308e Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:35 +0200
+Subject: [PATCH 17/37] intel_iommu: get rid of {0} initializers
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-17-git-send-email-peterx@redhat.com>
+Patchwork-id: 72001
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 16/34] intel_iommu: get rid of {0} initializers
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+From: "Michael S. Tsirkin" <mst@redhat.com>
+
+Correct and portable in theory, but triggers warnings with older gcc
+versions when -Wmissing-braces is enabled.
+See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=53119
+
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 09cd058a2cf77bb7a3b10ff93c1f80ed88bca364)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/intel_iommu.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index 2e57396..ccfcc69 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -2024,7 +2024,7 @@ static int vtd_irte_get(IntelIOMMUState *iommu, uint16_t index,
+ /* Fetch IRQ information of specific IR index */
+ static int vtd_remap_irq_get(IntelIOMMUState *iommu, uint16_t index, VTDIrq *irq)
+ {
+-    VTD_IRTE irte = { 0 };
++    VTD_IRTE irte = {};
+     int ret = 0;
+ 
+     ret = vtd_irte_get(iommu, index, &irte);
+@@ -2082,7 +2082,7 @@ static int vtd_interrupt_remap_msi(IntelIOMMUState *iommu,
+     int ret = 0;
+     VTD_IR_MSIAddress addr;
+     uint16_t index;
+-    VTDIrq irq = {0};
++    VTDIrq irq = {};
+ 
+     assert(origin && translated);
+ 
+@@ -2176,7 +2176,7 @@ static MemTxResult vtd_mem_ir_write(void *opaque, hwaddr addr,
+                                     MemTxAttrs attrs)
+ {
+     int ret = 0;
+-    MSIMessage from = {0}, to = {0};
++    MSIMessage from = {}, to = {};
+ 
+     from.address = (uint64_t) addr + VTD_INTERRUPT_ADDR_FIRST;
+     from.data = (uint32_t) value;
+-- 
+1.8.3.1
+

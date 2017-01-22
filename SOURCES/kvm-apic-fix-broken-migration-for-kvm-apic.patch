@@ -1,0 +1,57 @@
+From c7e37d46585cdc58294e65af2d2d95a32693f718 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Fri, 5 Aug 2016 06:08:52 +0200
+Subject: [PATCH 84/99] apic: fix broken migration for kvm-apic
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470377332-130718-1-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71865
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 79/78] apic: fix broken migration for kvm-apic
+Bugzilla: 1087672
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+
+commit f6e98444 (apic: Use apic_id as apic's migration instance_id)
+breaks migration when in kernel irqchip is used for 2.6 and older
+machine types.
+
+It applies compat property only for userspace 'apic' type
+instead of applying it to all apic types inherited from
+'apic-common' type as it was supposed to do.
+
+Fix it by setting compat property 'legacy-instance-id' for
+'apic-common' type which affects inherited types (i.e. not
+only 'apic' but also 'kvm-apic' types)
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Message-Id: <1469800542-11402-1-git-send-email-imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit 7298d4fd515c190b1b6c1266735f6212300313ae)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	include/hw/i386/pc.h
+             - due  to lack of PC_COMPAT_2_6 downstream
+             and need to fix PC_RHEL7_2_COMPAT
+---
+ include/hw/i386/pc.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index f28483c..73cf6f7 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -960,7 +960,7 @@ extern void igd_passthrough_isa_bridge_create(PCIBus *bus, uint16_t gpu_dev_id);
+             .value = "off",\
+         },\
+         { /* PC_RHEL7_2_COMPAT */ \
+-            .driver   = "apic",\
++            .driver   = "apic-common",\
+             .property = "legacy-instance-id",\
+             .value    = "on",\
+         },
+-- 
+1.8.3.1
+

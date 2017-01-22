@@ -1,0 +1,55 @@
+From d74b703144e2b869a8d64c6c379fc79b0f73a6b5 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Mon, 8 Aug 2016 09:04:26 +0200
+Subject: [PATCH 07/10] throttle: Don't allow burst limits to be lower than the
+ normal limits
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1470647067-30569-2-git-send-email-stefanha@redhat.com>
+Patchwork-id: 71881
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 1/2] throttle: Don't allow burst limits to be lower than the normal limits
+Bugzilla: 1355665
+RH-Acked-by: Max Reitz <mreitz@redhat.com>
+RH-Acked-by: John Snow <jsnow@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+
+From: Alberto Garcia <berto@igalia.com>
+
+Setting FOO_max to a value that is lower than FOO does not make
+sense, and it produces odd results depending on the value of
+FOO_max_length. Although the user should not set that configuration
+in the first place it's better to reject it explicitly.
+
+https://bugzilla.redhat.com/show_bug.cgi?id=1355665
+
+Signed-off-by: Alberto Garcia <berto@igalia.com>
+Reported-by: Gu Nini <ngu@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Message-id: 663d5aca406060e31f80d8113f77b6feee63b919.1469693110.git.berto@igalia.com
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+(cherry picked from commit aaa1e77ffae5255fb2a35284e7fc721742bb41c8)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ util/throttle.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/util/throttle.c b/util/throttle.c
+index 654f95c..3817d9b 100644
+--- a/util/throttle.c
++++ b/util/throttle.c
+@@ -348,6 +348,11 @@ bool throttle_is_valid(ThrottleConfig *cfg, Error **errp)
+                        " bps/iops values");
+             return false;
+         }
++
++        if (cfg->buckets[i].max && cfg->buckets[i].max < cfg->buckets[i].avg) {
++            error_setg(errp, "bps_max/iops_max cannot be lower than bps/iops");
++            return false;
++        }
+     }
+ 
+     return true;
+-- 
+1.8.3.1
+

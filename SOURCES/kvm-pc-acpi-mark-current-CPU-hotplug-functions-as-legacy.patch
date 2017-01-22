@@ -1,0 +1,159 @@
+From 6218f872498e601fc34370613b52cbcbd36ed531 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:16 +0200
+Subject: [PATCH 16/99] pc: acpi: mark current CPU hotplug functions as legacy
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-12-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71627
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 11/78] pc: acpi: mark current CPU hotplug functions as legacy
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+(cherry picked from commit 96e3e12bff14a16e27072619f571bc7b400145c3)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/cpu_hotplug.c            |  8 ++++----
+ hw/acpi/cpu_hotplug_acpi_table.c |  4 ++--
+ hw/acpi/ich9.c                   |  7 ++++---
+ hw/acpi/piix4.c                  |  6 +++---
+ hw/i386/acpi-build.c             |  3 ++-
+ include/hw/acpi/cpu_hotplug.h    | 12 ++++++------
+ 6 files changed, 21 insertions(+), 19 deletions(-)
+
+diff --git a/hw/acpi/cpu_hotplug.c b/hw/acpi/cpu_hotplug.c
+index 4d86743..ba9d903 100644
+--- a/hw/acpi/cpu_hotplug.c
++++ b/hw/acpi/cpu_hotplug.c
+@@ -54,8 +54,8 @@ static void acpi_set_cpu_present_bit(AcpiCpuHotplug *g, CPUState *cpu,
+     g->sts[cpu_id / 8] |= (1 << (cpu_id % 8));
+ }
+ 
+-void acpi_cpu_plug_cb(ACPIREGS *ar, qemu_irq irq,
+-                      AcpiCpuHotplug *g, DeviceState *dev, Error **errp)
++void legacy_acpi_cpu_plug_cb(ACPIREGS *ar, qemu_irq irq,
++                             AcpiCpuHotplug *g, DeviceState *dev, Error **errp)
+ {
+     acpi_set_cpu_present_bit(g, CPU(dev), errp);
+     if (*errp != NULL) {
+@@ -65,8 +65,8 @@ void acpi_cpu_plug_cb(ACPIREGS *ar, qemu_irq irq,
+     acpi_send_gpe_event(ar, irq, ACPI_CPU_HOTPLUG_STATUS);
+ }
+ 
+-void acpi_cpu_hotplug_init(MemoryRegion *parent, Object *owner,
+-                           AcpiCpuHotplug *gpe_cpu, uint16_t base)
++void legacy_acpi_cpu_hotplug_init(MemoryRegion *parent, Object *owner,
++                                  AcpiCpuHotplug *gpe_cpu, uint16_t base)
+ {
+     CPUState *cpu;
+ 
+diff --git a/hw/acpi/cpu_hotplug_acpi_table.c b/hw/acpi/cpu_hotplug_acpi_table.c
+index 9fdde6d..fc79c54 100644
+--- a/hw/acpi/cpu_hotplug_acpi_table.c
++++ b/hw/acpi/cpu_hotplug_acpi_table.c
+@@ -24,8 +24,8 @@
+ #define CPU_STATUS_MAP "PRS"
+ #define CPU_SCAN_METHOD "PRSC"
+ 
+-void build_cpu_hotplug_aml(Aml *ctx, MachineState *machine,
+-                           uint16_t io_base, uint16_t io_len)
++void build_legacy_cpu_hotplug_aml(Aml *ctx, MachineState *machine,
++                                  uint16_t io_base, uint16_t io_len)
+ {
+     Aml *dev;
+     Aml *crs;
+diff --git a/hw/acpi/ich9.c b/hw/acpi/ich9.c
+index 27e978f..af340d0 100644
+--- a/hw/acpi/ich9.c
++++ b/hw/acpi/ich9.c
+@@ -273,8 +273,8 @@ void ich9_pm_init(PCIDevice *lpc_pci, ICH9LPCPMRegs *pm,
+     pm->powerdown_notifier.notify = pm_powerdown_req;
+     qemu_register_powerdown_notifier(&pm->powerdown_notifier);
+ 
+-    acpi_cpu_hotplug_init(pci_address_space_io(lpc_pci), OBJECT(lpc_pci),
+-                          &pm->gpe_cpu, ICH9_CPU_HOTPLUG_IO_BASE);
++    legacy_acpi_cpu_hotplug_init(pci_address_space_io(lpc_pci),
++        OBJECT(lpc_pci), &pm->gpe_cpu, ICH9_CPU_HOTPLUG_IO_BASE);
+ 
+     if (pm->acpi_memory_hotplug.is_enabled) {
+         acpi_memory_hotplug_init(pci_address_space_io(lpc_pci), OBJECT(lpc_pci),
+@@ -437,7 +437,8 @@ void ich9_pm_device_plug_cb(ICH9LPCPMRegs *pm, DeviceState *dev, Error **errp)
+         acpi_memory_plug_cb(&pm->acpi_regs, pm->irq, &pm->acpi_memory_hotplug,
+                             dev, errp);
+     } else if (object_dynamic_cast(OBJECT(dev), TYPE_CPU)) {
+-        acpi_cpu_plug_cb(&pm->acpi_regs, pm->irq, &pm->gpe_cpu, dev, errp);
++        legacy_acpi_cpu_plug_cb(&pm->acpi_regs, pm->irq,
++                                &pm->gpe_cpu, dev, errp);
+     } else {
+         error_setg(errp, "acpi: device plug request for not supported device"
+                    " type: %s", object_get_typename(OBJECT(dev)));
+diff --git a/hw/acpi/piix4.c b/hw/acpi/piix4.c
+index c39bcda..47bbcbe 100644
+--- a/hw/acpi/piix4.c
++++ b/hw/acpi/piix4.c
+@@ -352,7 +352,7 @@ static void piix4_device_plug_cb(HotplugHandler *hotplug_dev,
+         acpi_pcihp_device_plug_cb(&s->ar, s->irq, &s->acpi_pci_hotplug, dev,
+                                   errp);
+     } else if (object_dynamic_cast(OBJECT(dev), TYPE_CPU)) {
+-        acpi_cpu_plug_cb(&s->ar, s->irq, &s->gpe_cpu, dev, errp);
++        legacy_acpi_cpu_plug_cb(&s->ar, s->irq, &s->gpe_cpu, dev, errp);
+     } else {
+         error_setg(errp, "acpi: device plug request for not supported device"
+                    " type: %s", object_get_typename(OBJECT(dev)));
+@@ -570,8 +570,8 @@ static void piix4_acpi_system_hot_add_init(MemoryRegion *parent,
+     acpi_pcihp_init(OBJECT(s), &s->acpi_pci_hotplug, bus, parent,
+                     s->use_acpi_pci_hotplug);
+ 
+-    acpi_cpu_hotplug_init(parent, OBJECT(s), &s->gpe_cpu,
+-                          PIIX4_CPU_HOTPLUG_IO_BASE);
++    legacy_acpi_cpu_hotplug_init(parent, OBJECT(s), &s->gpe_cpu,
++                                 PIIX4_CPU_HOTPLUG_IO_BASE);
+ 
+     if (s->acpi_memory_hotplug.is_enabled) {
+         acpi_memory_hotplug_init(parent, OBJECT(s), &s->acpi_memory_hotplug);
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index 8369273..b0407aa 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -1985,7 +1985,8 @@ build_dsdt(GArray *table_data, BIOSLinker *linker,
+         build_q35_pci0_int(dsdt);
+     }
+ 
+-    build_cpu_hotplug_aml(dsdt, machine, pm->cpu_hp_io_base, pm->cpu_hp_io_len);
++    build_legacy_cpu_hotplug_aml(dsdt, machine, pm->cpu_hp_io_base,
++                                 pm->cpu_hp_io_len);
+     build_memory_hotplug_aml(dsdt, nr_mem, pm->mem_hp_io_base,
+                              pm->mem_hp_io_len);
+ 
+diff --git a/include/hw/acpi/cpu_hotplug.h b/include/hw/acpi/cpu_hotplug.h
+index 565f96c..241b50f 100644
+--- a/include/hw/acpi/cpu_hotplug.h
++++ b/include/hw/acpi/cpu_hotplug.h
+@@ -21,12 +21,12 @@ typedef struct AcpiCpuHotplug {
+     uint8_t sts[ACPI_GPE_PROC_LEN];
+ } AcpiCpuHotplug;
+ 
+-void acpi_cpu_plug_cb(ACPIREGS *ar, qemu_irq irq,
+-                      AcpiCpuHotplug *g, DeviceState *dev, Error **errp);
++void legacy_acpi_cpu_plug_cb(ACPIREGS *ar, qemu_irq irq,
++                             AcpiCpuHotplug *g, DeviceState *dev, Error **errp);
+ 
+-void acpi_cpu_hotplug_init(MemoryRegion *parent, Object *owner,
+-                           AcpiCpuHotplug *gpe_cpu, uint16_t base);
++void legacy_acpi_cpu_hotplug_init(MemoryRegion *parent, Object *owner,
++                                  AcpiCpuHotplug *gpe_cpu, uint16_t base);
+ 
+-void build_cpu_hotplug_aml(Aml *ctx, MachineState *machine,
+-                           uint16_t io_base, uint16_t io_len);
++void build_legacy_cpu_hotplug_aml(Aml *ctx, MachineState *machine,
++                                  uint16_t io_base, uint16_t io_len);
+ #endif
+-- 
+1.8.3.1
+

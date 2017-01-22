@@ -1,0 +1,1263 @@
+From ea18abc187433cfef65733dc0406efe43575cfd9 Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Mon, 11 Jan 2016 11:53:33 +0100
+Subject: Enable/disable devices for RHEL 7
+
+This commit adds all changes related to changes in supported devices
+up to qemu-kvm-rhev-2.1.2-16.el7.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Rebase note (2.3.0):
+ - Added USB=y in 2.3-rc2 (used instead of downstream version fora aarch64)
+
+Rebase note (2.4.0):
+ - fixed types
+ - include CONFIG_PLATFORM_BUS for aarch64
+ - disable failing virtio-scsi-test
+
+Included patches (2.4.0):
+ - fa4fd10 AArch64: Enable ACPI
+ - 1219d52 ivshmem: RHEL-only: remove unsupported code
+ - 5f6d954 ivshmem: RHEL-only: explicitly remove dead code
+ - b88bbf0 Revert "rhel: Drop "ivshmem" device"
+ - 8f0aadf Split serial-isa into its own config option
+ - 01bff0f rhel: Disable "info irq" and "info pic" for Power
+ - b915077 RHEL: Disable remaining unsupported devices for ppc
+ - 64cbdc5 Mark onboard devices as cannot_instantiate_with_device_add_yet
+ - 4792566 Disable sdhci device
+ - bda8169 Disable Educational device
+ - a17a8fb rhel: Revert unwanted cannot_instantiate_with_device_add_yet changes
+ - 91c76c5 Remove intel-iommu device
+ - ec1615d Disable additional e1000 models
+
+Merged commit (2.6.0):
+ - ce3206a qemu-iotests: Fix broken test cases
+   - Reduced to disabling test 071 only
+ - bb34585 qemu-iotests: Disable 099 (requires blkverify)
+ - 81be408 build: reenable local builds to pass --enable-debug (downstream only)
+---
+ default-configs/aarch64-softmmu.mak     | 16 ++++++++--
+ default-configs/alpha-softmmu.mak       |  1 +
+ default-configs/arm-softmmu.mak         |  4 +--
+ default-configs/i386-softmmu.mak        |  3 +-
+ default-configs/mips-softmmu-common.mak |  2 +-
+ default-configs/pci.mak                 | 16 ----------
+ default-configs/ppc-softmmu.mak         |  2 +-
+ default-configs/ppc64-softmmu.mak       | 56 +++++++--------------------------
+ default-configs/ppcemb-softmmu.mak      | 14 +++++++++
+ default-configs/sh4-softmmu.mak         |  1 +
+ default-configs/sh4eb-softmmu.mak       |  1 +
+ default-configs/sound.mak               |  4 ---
+ default-configs/sparc64-softmmu.mak     |  1 +
+ default-configs/usb.mak                 |  7 -----
+ default-configs/x86_64-softmmu.mak      | 10 ++----
+ hmp-commands-info.hx                    |  2 +-
+ hw/block/fdc.c                          |  2 ++
+ hw/block/pflash_cfi01.c                 |  1 +
+ hw/char/Makefile.objs                   |  3 +-
+ hw/char/serial-pci.c                    |  4 +++
+ hw/display/cirrus_vga.c                 |  2 ++
+ hw/i386/kvm/clock.c                     |  1 +
+ hw/i386/kvm/ioapic.c                    |  1 +
+ hw/i386/kvmvapic.c                      |  1 +
+ hw/i386/pc.c                            |  3 +-
+ hw/ide/ahci.c                           |  1 +
+ hw/ide/piix.c                           |  5 ++-
+ hw/ide/via.c                            |  2 ++
+ hw/input/pckbd.c                        |  2 ++
+ hw/intc/ioapic.c                        |  1 +
+ hw/isa/Makefile.objs                    |  2 +-
+ hw/isa/isa-bus.c                        |  1 +
+ hw/misc/ivshmem.c                       |  2 ++
+ hw/net/e1000.c                          |  2 ++
+ hw/nvram/fw_cfg.c                       |  3 ++
+ hw/pci-host/piix.c                      |  1 +
+ hw/pci-host/q35.c                       |  1 +
+ hw/ppc/Makefile.objs                    |  1 -
+ hw/usb/ccid-card-emulated.c             |  2 ++
+ hw/virtio/virtio-mmio.c                 |  1 +
+ qemu-options.hx                         |  5 ---
+ redhat/qemu-kvm.spec.template           | 14 ++++++---
+ stubs/Makefile.objs                     |  1 +
+ stubs/ide-isa.c                         | 13 ++++++++
+ target-arm/cpu.c                        |  3 +-
+ tests/Makefile                          | 26 ---------------
+ tests/boot-order-test.c                 |  7 +++++
+ tests/e1000-test.c                      |  2 ++
+ tests/endianness-test.c                 |  2 ++
+ tests/qemu-iotests/051                  | 20 ++++++------
+ tests/qemu-iotests/group                |  4 +--
+ tests/usb-hcd-xhci-test.c               |  5 ++-
+ tests/virtio-scsi-test.c                | 10 +++---
+ vl.c                                    |  2 +-
+ 54 files changed, 152 insertions(+), 147 deletions(-)
+ create mode 100644 stubs/ide-isa.c
+
+diff --git a/default-configs/aarch64-softmmu.mak b/default-configs/aarch64-softmmu.mak
+index de58c3b..97b6176 100644
+--- a/default-configs/aarch64-softmmu.mak
++++ b/default-configs/aarch64-softmmu.mak
+@@ -1,8 +1,18 @@
+ # Default configuration for aarch64-softmmu
+ 
+-# We support all the 32 bit boards so need all their config
+-include arm-softmmu.mak
+-
+ CONFIG_XLNX_ZYNQMP=y
++CONFIG_PCI=y
++CONFIG_VIRTIO_PCI=y
++CONFIG_VIRTIO=y
++CONFIG_STELLARIS=y
++CONFIG_ARM_GIC=y
++CONFIG_ARM_GIC_KVM=$(CONFIG_KVM)
++CONFIG_PL011=y
++CONFIG_PL031=y
++CONFIG_PFLASH_CFI01=y
++CONFIG_PCI_GENERIC=y
++CONFIG_ACPI=y
++CONFIG_PLATFORM_BUS=y
++CONFIG_SMBIOS=y
+ CONFIG_PL061=y
+ CONFIG_GPIO_KEY=y
+diff --git a/default-configs/alpha-softmmu.mak b/default-configs/alpha-softmmu.mak
+index 7f6161e..e0d75e3 100644
+--- a/default-configs/alpha-softmmu.mak
++++ b/default-configs/alpha-softmmu.mak
+@@ -3,6 +3,7 @@
+ include pci.mak
+ include usb.mak
+ CONFIG_SERIAL=y
++CONFIG_SERIAL_ISA=y
+ CONFIG_I8254=y
+ CONFIG_PCKBD=y
+ CONFIG_VGA_CIRRUS=y
+diff --git a/default-configs/arm-softmmu.mak b/default-configs/arm-softmmu.mak
+index 35ff38f..0e9bd4e 100644
+--- a/default-configs/arm-softmmu.mak
++++ b/default-configs/arm-softmmu.mak
+@@ -7,6 +7,7 @@ CONFIG_ISA_MMIO=y
+ CONFIG_NAND=y
+ CONFIG_ECC=y
+ CONFIG_SERIAL=y
++CONFIG_SERIAL_ISA=y
+ CONFIG_PTIMER=y
+ CONFIG_SD=y
+ CONFIG_MAX7310=y
+@@ -87,9 +88,6 @@ CONFIG_STM32F2XX_USART=y
+ CONFIG_STM32F2XX_SYSCFG=y
+ CONFIG_STM32F205_SOC=y
+ 
+-CONFIG_VERSATILE_PCI=y
+-CONFIG_VERSATILE_I2C=y
+-
+ CONFIG_PCI_GENERIC=y
+ 
+ CONFIG_SDHCI=y
+diff --git a/default-configs/i386-softmmu.mak b/default-configs/i386-softmmu.mak
+index b177e52..d7eae13 100644
+--- a/default-configs/i386-softmmu.mak
++++ b/default-configs/i386-softmmu.mak
+@@ -15,6 +15,7 @@ CONFIG_IPMI_EXTERN=y
+ CONFIG_ISA_IPMI_KCS=y
+ CONFIG_ISA_IPMI_BT=y
+ CONFIG_SERIAL=y
++CONFIG_SERIAL_ISA=y
+ CONFIG_PARALLEL=y
+ CONFIG_I8254=y
+ CONFIG_PCSPK=y
+@@ -29,7 +30,6 @@ CONFIG_APM=y
+ CONFIG_I8257=y
+ CONFIG_IDE_ISA=y
+ CONFIG_IDE_PIIX=y
+-CONFIG_NE2000_ISA=y
+ CONFIG_PIIX_PCI=y
+ CONFIG_HPET=y
+ CONFIG_APPLESMC=y
+@@ -41,6 +41,7 @@ CONFIG_PAM=y
+ CONFIG_PCI_PIIX=y
+ CONFIG_WDT_IB700=y
+ CONFIG_XEN_I386=$(CONFIG_XEN)
++CONFIG_ISA_BUS=y
+ CONFIG_ISA_DEBUG=y
+ CONFIG_ISA_TESTDEV=y
+ CONFIG_VMPORT=y
+diff --git a/default-configs/mips-softmmu-common.mak b/default-configs/mips-softmmu-common.mak
+index 0394514..cecdcf2 100644
+--- a/default-configs/mips-softmmu-common.mak
++++ b/default-configs/mips-softmmu-common.mak
+@@ -9,6 +9,7 @@ CONFIG_VGA_ISA_MM=y
+ CONFIG_VGA_CIRRUS=y
+ CONFIG_VMWARE_VGA=y
+ CONFIG_SERIAL=y
++CONFIG_SERIAL_ISA=y
+ CONFIG_PARALLEL=y
+ CONFIG_I8254=y
+ CONFIG_PCSPK=y
+@@ -23,7 +24,6 @@ CONFIG_I8257=y
+ CONFIG_PIIX4=y
+ CONFIG_IDE_ISA=y
+ CONFIG_IDE_PIIX=y
+-CONFIG_NE2000_ISA=y
+ CONFIG_MIPSNET=y
+ CONFIG_PFLASH_CFI01=y
+ CONFIG_I8259=y
+diff --git a/default-configs/pci.mak b/default-configs/pci.mak
+index 9c8bc68..223059b 100644
+--- a/default-configs/pci.mak
++++ b/default-configs/pci.mak
+@@ -2,38 +2,22 @@ CONFIG_PCI=y
+ CONFIG_VIRTIO_PCI=y
+ CONFIG_VIRTIO=y
+ CONFIG_USB_UHCI=y
+-CONFIG_USB_OHCI=y
+ CONFIG_USB_EHCI=y
+ CONFIG_USB_XHCI=y
+-CONFIG_NE2000_PCI=y
+-CONFIG_EEPRO100_PCI=y
+-CONFIG_PCNET_PCI=y
+-CONFIG_PCNET_COMMON=y
+ CONFIG_AC97=y
+ CONFIG_HDA=y
+-CONFIG_ES1370=y
+-CONFIG_LSI_SCSI_PCI=y
+-CONFIG_VMW_PVSCSI_SCSI_PCI=y
+-CONFIG_MEGASAS_SCSI_PCI=y
+ CONFIG_MPTSAS_SCSI_PCI=y
+ CONFIG_RTL8139_PCI=y
+ CONFIG_E1000_PCI=y
+-CONFIG_VMXNET3_PCI=y
+ CONFIG_IDE_CORE=y
+ CONFIG_IDE_QDEV=y
+ CONFIG_IDE_PCI=y
+ CONFIG_AHCI=y
+-CONFIG_ESP=y
+-CONFIG_ESP_PCI=y
+ CONFIG_SERIAL=y
+ CONFIG_SERIAL_PCI=y
+-CONFIG_IPACK=y
+ CONFIG_WDT_IB6300ESB=y
+ CONFIG_PCI_TESTDEV=y
+-CONFIG_NVME_PCI=y
+ CONFIG_SD=y
+-CONFIG_SDHCI=y
+-CONFIG_EDU=y
+ CONFIG_VGA=y
+ CONFIG_VGA_PCI=y
+ CONFIG_IVSHMEM=$(CONFIG_EVENTFD)
+diff --git a/default-configs/ppc-softmmu.mak b/default-configs/ppc-softmmu.mak
+index 4befde3..6ece4c6 100644
+--- a/default-configs/ppc-softmmu.mak
++++ b/default-configs/ppc-softmmu.mak
+@@ -31,7 +31,6 @@ CONFIG_PPCE500_PCI=y
+ CONFIG_IDE_ISA=y
+ CONFIG_IDE_CMD646=y
+ CONFIG_IDE_MACIO=y
+-CONFIG_NE2000_ISA=y
+ CONFIG_PFLASH_CFI01=y
+ CONFIG_PFLASH_CFI02=y
+ CONFIG_PTIMER=y
+@@ -46,5 +45,6 @@ CONFIG_PLATFORM_BUS=y
+ CONFIG_ETSEC=y
+ CONFIG_LIBDECNUMBER=y
+ # For PReP
++CONFIG_SERIAL_ISA=y
+ CONFIG_MC146818RTC=y
+ CONFIG_ISA_TESTDEV=y
+diff --git a/default-configs/ppc64-softmmu.mak b/default-configs/ppc64-softmmu.mak
+index bb71b23..71045fb 100644
+--- a/default-configs/ppc64-softmmu.mak
++++ b/default-configs/ppc64-softmmu.mak
+@@ -1,56 +1,24 @@
+ # Default configuration for ppc64-softmmu
+ 
+-include pci.mak
++# PCI configuration - cut down from the defaults in pci.mak
++CONFIG_PCI=y
++CONFIG_VIRTIO_PCI=y
++CONFIG_VIRTIO=y
++CONFIG_USB_EHCI=y
++CONFIG_USB_XHCI=y
++CONFIG_WDT_IB6300ESB=y
++CONFIG_PCI_TESTDEV=y
++
+ include sound.mak
+ include usb.mak
+ CONFIG_VIRTIO_VGA=y
+-CONFIG_ISA_MMIO=y
+-CONFIG_ESCC=y
+-CONFIG_M48T59=y
++CONFIG_VGA=y
++CONFIG_VGA_PCI=y
+ CONFIG_SERIAL=y
+-CONFIG_PARALLEL=y
+-CONFIG_I8254=y
+-CONFIG_PCKBD=y
+-CONFIG_FDC=y
+-CONFIG_I8257=y
+-CONFIG_I82374=y
+-CONFIG_OPENPIC=y
+-CONFIG_PREP_PCI=y
+-CONFIG_I82378=y
+-CONFIG_PC87312=y
+-CONFIG_MACIO=y
+-CONFIG_PCSPK=y
+-CONFIG_CUDA=y
+-CONFIG_ADB=y
+-CONFIG_MAC_NVRAM=y
+-CONFIG_MAC_DBDMA=y
+-CONFIG_HEATHROW_PIC=y
+-CONFIG_GRACKLE_PCI=y
+-CONFIG_UNIN_PCI=y
+-CONFIG_DEC_PCI=y
+-CONFIG_PPCE500_PCI=y
+-CONFIG_IDE_ISA=y
+-CONFIG_IDE_CMD646=y
+-CONFIG_IDE_MACIO=y
+-CONFIG_NE2000_ISA=y
+-CONFIG_PFLASH_CFI01=y
+-CONFIG_PFLASH_CFI02=y
+-CONFIG_PTIMER=y
+-CONFIG_I8259=y
+-CONFIG_XILINX=y
+-CONFIG_XILINX_ETHLITE=y
+ CONFIG_PSERIES=y
+-CONFIG_PREP=y
+-CONFIG_MAC=y
+-CONFIG_E500=y
+-CONFIG_OPENPIC_KVM=$(and $(CONFIG_E500),$(CONFIG_KVM))
+-CONFIG_PLATFORM_BUS=y
+-CONFIG_ETSEC=y
+ CONFIG_LIBDECNUMBER=y
++CONFIG_USB_OHCI=y
+ # For pSeries
+ CONFIG_XICS=$(CONFIG_PSERIES)
+ CONFIG_XICS_KVM=$(and $(CONFIG_PSERIES),$(CONFIG_KVM))
+-# For PReP
+-CONFIG_MC146818RTC=y
+-CONFIG_ISA_TESTDEV=y
+ CONFIG_MEM_HOTPLUG=y
+diff --git a/default-configs/ppcemb-softmmu.mak b/default-configs/ppcemb-softmmu.mak
+index 54acc4d..b261e07 100644
+--- a/default-configs/ppcemb-softmmu.mak
++++ b/default-configs/ppcemb-softmmu.mak
+@@ -5,8 +5,22 @@ include sound.mak
+ include usb.mak
+ CONFIG_M48T59=y
+ CONFIG_SERIAL=y
++CONFIG_SERIAL_ISA=y
+ CONFIG_I8257=y
+ CONFIG_OPENPIC=y
++CONFIG_MACIO=y
++CONFIG_CUDA=y
++CONFIG_ADB=y
++CONFIG_MAC_NVRAM=y
++CONFIG_MAC_DBDMA=y
++CONFIG_HEATHROW_PIC=y
++CONFIG_GRACKLE_PCI=y
++CONFIG_UNIN_PCI=y
++CONFIG_DEC_PCI=y
++CONFIG_PPCE500_PCI=y
++CONFIG_IDE_ISA=y
++CONFIG_IDE_CMD646=y
++CONFIG_IDE_MACIO=y
+ CONFIG_PFLASH_CFI01=y
+ CONFIG_PFLASH_CFI02=y
+ CONFIG_PTIMER=y
+diff --git a/default-configs/sh4-softmmu.mak b/default-configs/sh4-softmmu.mak
+index 8e00390..546d855 100644
+--- a/default-configs/sh4-softmmu.mak
++++ b/default-configs/sh4-softmmu.mak
+@@ -3,6 +3,7 @@
+ include pci.mak
+ include usb.mak
+ CONFIG_SERIAL=y
++CONFIG_SERIAL_ISA=y
+ CONFIG_PTIMER=y
+ CONFIG_PFLASH_CFI02=y
+ CONFIG_SH4=y
+diff --git a/default-configs/sh4eb-softmmu.mak b/default-configs/sh4eb-softmmu.mak
+index efdd058..2d3fd49 100644
+--- a/default-configs/sh4eb-softmmu.mak
++++ b/default-configs/sh4eb-softmmu.mak
+@@ -3,6 +3,7 @@
+ include pci.mak
+ include usb.mak
+ CONFIG_SERIAL=y
++CONFIG_SERIAL_ISA=y
+ CONFIG_PTIMER=y
+ CONFIG_PFLASH_CFI02=y
+ CONFIG_SH4=y
+diff --git a/default-configs/sound.mak b/default-configs/sound.mak
+index 4f22c34..e69de29 100644
+--- a/default-configs/sound.mak
++++ b/default-configs/sound.mak
+@@ -1,4 +0,0 @@
+-CONFIG_SB16=y
+-CONFIG_ADLIB=y
+-CONFIG_GUS=y
+-CONFIG_CS4231A=y
+diff --git a/default-configs/sparc64-softmmu.mak b/default-configs/sparc64-softmmu.mak
+index 123bb99..b79272c 100644
+--- a/default-configs/sparc64-softmmu.mak
++++ b/default-configs/sparc64-softmmu.mak
+@@ -6,6 +6,7 @@ CONFIG_ISA_MMIO=y
+ CONFIG_M48T59=y
+ CONFIG_PTIMER=y
+ CONFIG_SERIAL=y
++CONFIG_SERIAL_ISA=y
+ CONFIG_PARALLEL=y
+ CONFIG_PCKBD=y
+ CONFIG_FDC=y
+diff --git a/default-configs/usb.mak b/default-configs/usb.mak
+index f4b8568..4726c3e 100644
+--- a/default-configs/usb.mak
++++ b/default-configs/usb.mak
+@@ -1,10 +1,3 @@
+ CONFIG_USB=y
+-CONFIG_USB_TABLET_WACOM=y
+ CONFIG_USB_STORAGE_BOT=y
+-CONFIG_USB_STORAGE_UAS=y
+-CONFIG_USB_STORAGE_MTP=y
+ CONFIG_USB_SMARTCARD=y
+-CONFIG_USB_AUDIO=y
+-CONFIG_USB_SERIAL=y
+-CONFIG_USB_NETWORK=y
+-CONFIG_USB_BLUETOOTH=y
+diff --git a/default-configs/x86_64-softmmu.mak b/default-configs/x86_64-softmmu.mak
+index 6e3b312..135226e 100644
+--- a/default-configs/x86_64-softmmu.mak
++++ b/default-configs/x86_64-softmmu.mak
+@@ -4,9 +4,8 @@ include pci.mak
+ include sound.mak
+ include usb.mak
+ CONFIG_QXL=$(CONFIG_SPICE)
+-CONFIG_VGA_ISA=y
++CONFIG_VGA_PCI=y
+ CONFIG_VGA_CIRRUS=y
+-CONFIG_VMWARE_VGA=y
+ CONFIG_VIRTIO_VGA=y
+ CONFIG_VMMOUSE=y
+ CONFIG_IPMI=y
+@@ -15,7 +14,7 @@ CONFIG_IPMI_EXTERN=y
+ CONFIG_ISA_IPMI_KCS=y
+ CONFIG_ISA_IPMI_BT=y
+ CONFIG_SERIAL=y
+-CONFIG_PARALLEL=y
++CONFIG_SERIAL_ISA=y
+ CONFIG_I8254=y
+ CONFIG_PCSPK=y
+ CONFIG_PCKBD=y
+@@ -27,12 +26,8 @@ CONFIG_ACPI_MEMORY_HOTPLUG=y
+ CONFIG_ACPI_CPU_HOTPLUG=y
+ CONFIG_APM=y
+ CONFIG_I8257=y
+-CONFIG_IDE_ISA=y
+ CONFIG_IDE_PIIX=y
+-CONFIG_NE2000_ISA=y
+ CONFIG_PIIX_PCI=y
+-CONFIG_HPET=y
+-CONFIG_APPLESMC=y
+ CONFIG_I8259=y
+ CONFIG_PFLASH_CFI01=y
+ CONFIG_TPM_TIS=$(CONFIG_TPM)
+@@ -41,6 +36,7 @@ CONFIG_PAM=y
+ CONFIG_PCI_PIIX=y
+ CONFIG_WDT_IB700=y
+ CONFIG_XEN_I386=$(CONFIG_XEN)
++CONFIG_ISA_BUS=y
+ CONFIG_ISA_DEBUG=y
+ CONFIG_ISA_TESTDEV=y
+ CONFIG_VMPORT=y
+diff --git a/hmp-commands-info.hx b/hmp-commands-info.hx
+index 52539c3..117ba8a 100644
+--- a/hmp-commands-info.hx
++++ b/hmp-commands-info.hx
+@@ -172,7 +172,7 @@ STEXI
+ Show the command line history.
+ ETEXI
+ 
+-#if defined(TARGET_I386) || defined(TARGET_PPC) || defined(TARGET_MIPS) || \
++#if defined(TARGET_I386) || defined(TARGET_MIPS) || \
+     defined(TARGET_LM32) || (defined(TARGET_SPARC) && !defined(TARGET_SPARC64))
+     {
+         .name       = "irq",
+diff --git a/hw/block/fdc.c b/hw/block/fdc.c
+index 3722275..5151e8f 100644
+--- a/hw/block/fdc.c
++++ b/hw/block/fdc.c
+@@ -2673,6 +2673,7 @@ static void sysbus_fdc_class_init(ObjectClass *klass, void *data)
+     DeviceClass *dc = DEVICE_CLASS(klass);
+ 
+     dc->props = sysbus_fdc_properties;
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+     set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
+ }
+ 
+@@ -2699,6 +2700,7 @@ static void sun4m_fdc_class_init(ObjectClass *klass, void *data)
+     DeviceClass *dc = DEVICE_CLASS(klass);
+ 
+     dc->props = sun4m_fdc_properties;
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+     set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
+ }
+ 
+diff --git a/hw/block/pflash_cfi01.c b/hw/block/pflash_cfi01.c
+index 106a775..4b65721 100644
+--- a/hw/block/pflash_cfi01.c
++++ b/hw/block/pflash_cfi01.c
+@@ -895,6 +895,7 @@ static void pflash_cfi01_class_init(ObjectClass *klass, void *data)
+     dc->realize = pflash_cfi01_realize;
+     dc->props = pflash_cfi01_properties;
+     dc->vmsd = &vmstate_pflash;
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+     set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
+ }
+ 
+diff --git a/hw/char/Makefile.objs b/hw/char/Makefile.objs
+index 69a553c..6ea76fe 100644
+--- a/hw/char/Makefile.objs
++++ b/hw/char/Makefile.objs
+@@ -2,7 +2,8 @@ common-obj-$(CONFIG_IPACK) += ipoctal232.o
+ common-obj-$(CONFIG_ESCC) += escc.o
+ common-obj-$(CONFIG_PARALLEL) += parallel.o
+ common-obj-$(CONFIG_PL011) += pl011.o
+-common-obj-$(CONFIG_SERIAL) += serial.o serial-isa.o
++common-obj-$(CONFIG_SERIAL) += serial.o
++common-obj-$(CONFIG_SERIAL_ISA) += serial-isa.o
+ common-obj-$(CONFIG_SERIAL_PCI) += serial-pci.o
+ common-obj-$(CONFIG_VIRTIO) += virtio-console.o
+ common-obj-$(CONFIG_XILINX) += xilinx_uartlite.o
+diff --git a/hw/char/serial-pci.c b/hw/char/serial-pci.c
+index 303104d..bfa90ac 100644
+--- a/hw/char/serial-pci.c
++++ b/hw/char/serial-pci.c
+@@ -228,6 +228,8 @@ static void multi_2x_serial_pci_class_initfn(ObjectClass *klass, void *data)
+     dc->vmsd = &vmstate_pci_multi_serial;
+     dc->props = multi_2x_serial_pci_properties;
+     set_bit(DEVICE_CATEGORY_INPUT, dc->categories);
++    /* Disabled for Red Hat Enterprise Linux: */
++    dc->cannot_instantiate_with_device_add_yet = true;
+ }
+ 
+ static void multi_4x_serial_pci_class_initfn(ObjectClass *klass, void *data)
+@@ -243,6 +245,8 @@ static void multi_4x_serial_pci_class_initfn(ObjectClass *klass, void *data)
+     dc->vmsd = &vmstate_pci_multi_serial;
+     dc->props = multi_4x_serial_pci_properties;
+     set_bit(DEVICE_CATEGORY_INPUT, dc->categories);
++    /* Disabled for Red Hat Enterprise Linux: */
++    dc->cannot_instantiate_with_device_add_yet = true;
+ }
+ 
+ static const TypeInfo serial_pci_info = {
+diff --git a/hw/display/cirrus_vga.c b/hw/display/cirrus_vga.c
+index 4c2851c..eee1145 100644
+--- a/hw/display/cirrus_vga.c
++++ b/hw/display/cirrus_vga.c
+@@ -2997,6 +2997,8 @@ static void isa_cirrus_vga_class_init(ObjectClass *klass, void *data)
+     dc->realize = isa_cirrus_vga_realizefn;
+     dc->props = isa_cirrus_vga_properties;
+     set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
++    /* Disabled for Red Hat Enterprise Linux: */
++    dc->cannot_instantiate_with_device_add_yet = true;
+ }
+ 
+ static const TypeInfo isa_cirrus_vga_info = {
+diff --git a/hw/i386/kvm/clock.c b/hw/i386/kvm/clock.c
+index a3b300c..e713162 100644
+--- a/hw/i386/kvm/clock.c
++++ b/hw/i386/kvm/clock.c
+@@ -167,6 +167,7 @@ static void kvmclock_class_init(ObjectClass *klass, void *data)
+ 
+     dc->realize = kvmclock_realize;
+     dc->vmsd = &kvmclock_vmsd;
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+ }
+ 
+ static const TypeInfo kvmclock_info = {
+diff --git a/hw/i386/kvm/ioapic.c b/hw/i386/kvm/ioapic.c
+index 8eb2c7a..087d355 100644
+--- a/hw/i386/kvm/ioapic.c
++++ b/hw/i386/kvm/ioapic.c
+@@ -162,6 +162,7 @@ static void kvm_ioapic_class_init(ObjectClass *klass, void *data)
+     k->post_load = kvm_ioapic_put;
+     dc->reset    = kvm_ioapic_reset;
+     dc->props    = kvm_ioapic_properties;
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+ }
+ 
+ static const TypeInfo kvm_ioapic_info = {
+diff --git a/hw/i386/kvmvapic.c b/hw/i386/kvmvapic.c
+index c69f374..dc4d5da 100644
+--- a/hw/i386/kvmvapic.c
++++ b/hw/i386/kvmvapic.c
+@@ -849,6 +849,7 @@ static void vapic_class_init(ObjectClass *klass, void *data)
+     dc->reset   = vapic_reset;
+     dc->vmsd    = &vmstate_vapic;
+     dc->realize = vapic_realize;
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+ }
+ 
+ static const TypeInfo vapic_type = {
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 99437e0..7c57c8f 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1509,8 +1509,9 @@ void pc_basic_device_init(ISABus *isa_bus, qemu_irq *gsi,
+     }
+ 
+     serial_hds_isa_init(isa_bus, MAX_SERIAL_PORTS);
++#if 0 /* Disabled for Red Hat Enterprise Linux 7 */
+     parallel_hds_isa_init(isa_bus, MAX_PARALLEL_PORTS);
+-
++#endif
+     a20_line = qemu_allocate_irqs(handle_a20_line_change, first_cpu, 2);
+     i8042 = isa_create_simple(isa_bus, "i8042");
+     i8042_setup_a20_line(i8042, &a20_line[0]);
+diff --git a/hw/ide/ahci.c b/hw/ide/ahci.c
+index f244bc0..bcb6a07 100644
+--- a/hw/ide/ahci.c
++++ b/hw/ide/ahci.c
+@@ -1703,6 +1703,7 @@ static void sysbus_ahci_class_init(ObjectClass *klass, void *data)
+     dc->vmsd = &vmstate_sysbus_ahci;
+     dc->props = sysbus_ahci_properties;
+     dc->reset = sysbus_ahci_reset;
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+     set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
+ }
+ 
+diff --git a/hw/ide/piix.c b/hw/ide/piix.c
+index 6d76ce9..ff7b906 100644
+--- a/hw/ide/piix.c
++++ b/hw/ide/piix.c
+@@ -250,7 +250,8 @@ static void piix3_ide_class_init(ObjectClass *klass, void *data)
+     k->device_id = PCI_DEVICE_ID_INTEL_82371SB_1;
+     k->class_id = PCI_CLASS_STORAGE_IDE;
+     set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
+-    dc->hotpluggable = false;
++    /* Disabled for Red Hat Enterprise Linux: */
++    dc->cannot_instantiate_with_device_add_yet = true;
+ }
+ 
+ static const TypeInfo piix3_ide_info = {
+@@ -277,6 +278,8 @@ static void piix4_ide_class_init(ObjectClass *klass, void *data)
+     k->class_id = PCI_CLASS_STORAGE_IDE;
+     set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
+     dc->hotpluggable = false;
++    /* Disabled for Red Hat Enterprise Linux: */
++    dc->cannot_instantiate_with_device_add_yet = true;
+ }
+ 
+ static const TypeInfo piix4_ide_info = {
+diff --git a/hw/ide/via.c b/hw/ide/via.c
+index d3f7226..e958cd6 100644
+--- a/hw/ide/via.c
++++ b/hw/ide/via.c
+@@ -220,6 +220,8 @@ static void via_ide_class_init(ObjectClass *klass, void *data)
+     k->revision = 0x06;
+     k->class_id = PCI_CLASS_STORAGE_IDE;
+     set_bit(DEVICE_CATEGORY_STORAGE, dc->categories);
++    /* Disabled for Red Hat Enterprise Linux: */
++    dc->cannot_instantiate_with_device_add_yet = true;
+ }
+ 
+ static const TypeInfo via_ide_info = {
+diff --git a/hw/input/pckbd.c b/hw/input/pckbd.c
+index 1d932ec..7ee113b 100644
+--- a/hw/input/pckbd.c
++++ b/hw/input/pckbd.c
+@@ -577,6 +577,8 @@ static void i8042_class_initfn(ObjectClass *klass, void *data)
+ 
+     dc->realize = i8042_realizefn;
+     dc->vmsd = &vmstate_kbd_isa;
++    /* Disabled for Red Hat Enterprise Linux: */
++    dc->cannot_instantiate_with_device_add_yet = true;
+ }
+ 
+ static const TypeInfo i8042_info = {
+diff --git a/hw/intc/ioapic.c b/hw/intc/ioapic.c
+index 378e663..10da90d 100644
+--- a/hw/intc/ioapic.c
++++ b/hw/intc/ioapic.c
+@@ -321,6 +321,7 @@ static void ioapic_class_init(ObjectClass *klass, void *data)
+ 
+     k->realize = ioapic_realize;
+     dc->reset = ioapic_reset_common;
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+ }
+ 
+ static const TypeInfo ioapic_info = {
+diff --git a/hw/isa/Makefile.objs b/hw/isa/Makefile.objs
+index 9164556..fb37c55 100644
+--- a/hw/isa/Makefile.objs
++++ b/hw/isa/Makefile.objs
+@@ -1,4 +1,4 @@
+-common-obj-y += isa-bus.o
++common-obj-$(CONFIG_ISA_BUS) += isa-bus.o
+ common-obj-$(CONFIG_APM) += apm.o
+ common-obj-$(CONFIG_I82378) += i82378.o
+ common-obj-$(CONFIG_PC87312) += pc87312.o
+diff --git a/hw/isa/isa-bus.c b/hw/isa/isa-bus.c
+index 7aa115c..60cea35 100644
+--- a/hw/isa/isa-bus.c
++++ b/hw/isa/isa-bus.c
+@@ -217,6 +217,7 @@ static void isabus_bridge_class_init(ObjectClass *klass, void *data)
+     DeviceClass *dc = DEVICE_CLASS(klass);
+ 
+     dc->fw_name = "isa";
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+ }
+ 
+ static const TypeInfo isabus_bridge_info = {
+diff --git a/hw/misc/ivshmem.c b/hw/misc/ivshmem.c
+index e40f23b..ecb5f5a 100644
+--- a/hw/misc/ivshmem.c
++++ b/hw/misc/ivshmem.c
+@@ -142,6 +142,7 @@ static inline bool ivshmem_is_master(IVShmemState *s)
+     return s->master == ON_OFF_AUTO_ON;
+ }
+ 
++
+ static void ivshmem_update_irq(IVShmemState *s)
+ {
+     PCIDevice *d = PCI_DEVICE(s);
+@@ -817,6 +818,7 @@ static void ivshmem_disable_irqfd(IVShmemState *s)
+     }
+ 
+     msix_unset_vector_notifiers(pdev);
++    return;
+ }
+ 
+ static void ivshmem_write_config(PCIDevice *pdev, uint32_t address,
+diff --git a/hw/net/e1000.c b/hw/net/e1000.c
+index 8a4a273..864a9c8 100644
+--- a/hw/net/e1000.c
++++ b/hw/net/e1000.c
+@@ -1933,6 +1933,7 @@ static const E1000Info e1000_devices[] = {
+         .revision  = 0x03,
+         .phy_id2   = E1000_PHY_ID2_8254xx_DEFAULT,
+     },
++#if 0 /* Disabled for Red Hat Enterprise Linux 7 */
+     {
+         .name      = "e1000-82544gc",
+         .device_id = E1000_DEV_ID_82544GC_COPPER,
+@@ -1945,6 +1946,7 @@ static const E1000Info e1000_devices[] = {
+         .revision  = 0x03,
+         .phy_id2   = E1000_PHY_ID2_8254xx_DEFAULT,
+     },
++#endif
+ };
+ 
+ static void e1000_register_types(void)
+diff --git a/hw/nvram/fw_cfg.c b/hw/nvram/fw_cfg.c
+index 999f480..31a8aa0 100644
+--- a/hw/nvram/fw_cfg.c
++++ b/hw/nvram/fw_cfg.c
+@@ -978,6 +978,7 @@ static void fw_cfg_class_init(ObjectClass *klass, void *data)
+ 
+     dc->reset = fw_cfg_reset;
+     dc->vmsd = &vmstate_fw_cfg;
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+ }
+ 
+ static const TypeInfo fw_cfg_info = {
+@@ -1022,6 +1023,7 @@ static void fw_cfg_io_class_init(ObjectClass *klass, void *data)
+ 
+     dc->realize = fw_cfg_io_realize;
+     dc->props = fw_cfg_io_properties;
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+ }
+ 
+ static const TypeInfo fw_cfg_io_info = {
+@@ -1079,6 +1081,7 @@ static void fw_cfg_mem_class_init(ObjectClass *klass, void *data)
+ 
+     dc->realize = fw_cfg_mem_realize;
+     dc->props = fw_cfg_mem_properties;
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+ }
+ 
+ static const TypeInfo fw_cfg_mem_info = {
+diff --git a/hw/pci-host/piix.c b/hw/pci-host/piix.c
+index df2b0e2..c189011 100644
+--- a/hw/pci-host/piix.c
++++ b/hw/pci-host/piix.c
+@@ -865,6 +865,7 @@ static void i440fx_pcihost_class_init(ObjectClass *klass, void *data)
+     dc->realize = i440fx_pcihost_realize;
+     dc->fw_name = "pci";
+     dc->props = i440fx_props;
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+ }
+ 
+ static const TypeInfo i440fx_pcihost_info = {
+diff --git a/hw/pci-host/q35.c b/hw/pci-host/q35.c
+index 70f897e..d70bafa 100644
+--- a/hw/pci-host/q35.c
++++ b/hw/pci-host/q35.c
+@@ -140,6 +140,7 @@ static void q35_host_class_init(ObjectClass *klass, void *data)
+     dc->props = mch_props;
+     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
+     dc->fw_name = "pci";
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+ }
+ 
+ static void q35_host_initfn(Object *obj)
+diff --git a/hw/ppc/Makefile.objs b/hw/ppc/Makefile.objs
+index 9242899..67e4285 100644
+--- a/hw/ppc/Makefile.objs
++++ b/hw/ppc/Makefile.objs
+@@ -9,7 +9,6 @@ obj-y += spapr_pci_vfio.o
+ endif
+ # PowerPC 4xx boards
+ obj-y += ppc4xx_devs.o ppc405_uc.o
+-obj-y += ppc4xx_pci.o
+ # PReP
+ obj-$(CONFIG_PREP) += prep.o
+ # OldWorld PowerMac
+diff --git a/hw/usb/ccid-card-emulated.c b/hw/usb/ccid-card-emulated.c
+index 3213f9f..8813c34 100644
+--- a/hw/usb/ccid-card-emulated.c
++++ b/hw/usb/ccid-card-emulated.c
+@@ -589,6 +589,8 @@ static void emulated_class_initfn(ObjectClass *klass, void *data)
+     set_bit(DEVICE_CATEGORY_INPUT, dc->categories);
+     dc->desc = "emulated smartcard";
+     dc->props = emulated_card_properties;
++    /* Disabled for Red Hat Enterprise Linux: */
++    dc->cannot_instantiate_with_device_add_yet = true;
+ }
+ 
+ static const TypeInfo emulated_card_info = {
+diff --git a/hw/virtio/virtio-mmio.c b/hw/virtio/virtio-mmio.c
+index d4cd91f..d634044 100644
+--- a/hw/virtio/virtio-mmio.c
++++ b/hw/virtio/virtio-mmio.c
+@@ -538,6 +538,7 @@ static void virtio_mmio_class_init(ObjectClass *klass, void *data)
+ 
+     dc->realize = virtio_mmio_realizefn;
+     dc->reset = virtio_mmio_reset;
++    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
+ }
+ 
+diff --git a/qemu-options.hx b/qemu-options.hx
+index 6106520..7068a51 100644
+--- a/qemu-options.hx
++++ b/qemu-options.hx
+@@ -1459,11 +1459,6 @@ ETEXI
+ 
+ DEF("no-hpet", 0, QEMU_OPTION_no_hpet,
+     "-no-hpet        disable HPET\n", QEMU_ARCH_I386)
+-STEXI
+-@item -no-hpet
+-@findex -no-hpet
+-Disable HPET support.
+-ETEXI
+ 
+ DEF("acpitable", HAS_ARG, QEMU_OPTION_acpitable,
+     "-acpitable [sig=str][,rev=n][,oem_id=str][,oem_table_id=str][,oem_rev=n][,asl_compiler_id=str][,asl_compiler_rev=n][,{data|file}=file1[:file2]...]\n"
+diff --git a/stubs/Makefile.objs b/stubs/Makefile.objs
+index 4b258a6..233b028 100644
+--- a/stubs/Makefile.objs
++++ b/stubs/Makefile.objs
+@@ -41,3 +41,4 @@ stub-obj-y += target-monitor-defs.o
+ stub-obj-y += target-get-monitor-def.o
+ stub-obj-y += vhost.o
+ stub-obj-y += iohandler.o
++stub-obj-y += ide-isa.o
+diff --git a/stubs/ide-isa.c b/stubs/ide-isa.c
+new file mode 100644
+index 0000000..5dacaa5
+--- /dev/null
++++ b/stubs/ide-isa.c
+@@ -0,0 +1,13 @@
++#include <qemu/osdep.h>
++#include <hw/ide.h>
++#include <stdlib.h>
++
++ISADevice *isa_ide_init(ISABus *bus, int iobase, int iobase2, int isairq,
++                        DriveInfo *hd0, DriveInfo *hd1)
++{
++    /*
++     * In theory the real isa_ide_init() function can return NULL, but no
++     * caller actually checks for that. Make sure we go out with a clear bang.
++     */
++    abort();
++}
+diff --git a/target-arm/cpu.c b/target-arm/cpu.c
+index e48e83a..2c72381 100644
+--- a/target-arm/cpu.c
++++ b/target-arm/cpu.c
+@@ -1523,7 +1523,8 @@ static void arm_cpu_register_types(void)
+     type_register_static(&arm_cpu_type_info);
+ 
+     while (info->name) {
+-        cpu_register(info);
++        if (!strcmp(info->name, "cortex-a15"))
++	    cpu_register(info);
+         info++;
+     }
+ }
+diff --git a/tests/Makefile b/tests/Makefile
+index 9194f18..db93e59 100644
+--- a/tests/Makefile
++++ b/tests/Makefile
+@@ -111,8 +111,6 @@ check-qtest-generic-y = tests/device-introspect-test$(EXESUF)
+ gcov-files-generic-y = qdev-monitor.c qmp.c
+ 
+ gcov-files-ipack-y += hw/ipack/ipack.c
+-check-qtest-ipack-y += tests/ipoctal232-test$(EXESUF)
+-gcov-files-ipack-y += hw/char/ipoctal232.c
+ 
+ check-qtest-virtioserial-y += tests/virtio-console-test$(EXESUF)
+ gcov-files-virtioserial-y += hw/char/virtio-console.c
+@@ -142,23 +140,10 @@ check-qtest-pci-y += tests/e1000-test$(EXESUF)
+ gcov-files-pci-y += hw/net/e1000.c
+ check-qtest-pci-y += tests/rtl8139-test$(EXESUF)
+ gcov-files-pci-y += hw/net/rtl8139.c
+-check-qtest-pci-y += tests/pcnet-test$(EXESUF)
+-gcov-files-pci-y += hw/net/pcnet.c
+-gcov-files-pci-y += hw/net/pcnet-pci.c
+-check-qtest-pci-y += tests/eepro100-test$(EXESUF)
+-gcov-files-pci-y += hw/net/eepro100.c
+-check-qtest-pci-y += tests/ne2000-test$(EXESUF)
+-gcov-files-pci-y += hw/net/ne2000.c
+-check-qtest-pci-y += tests/nvme-test$(EXESUF)
+-gcov-files-pci-y += hw/block/nvme.c
+ check-qtest-pci-y += tests/ac97-test$(EXESUF)
+ gcov-files-pci-y += hw/audio/ac97.c
+-check-qtest-pci-y += tests/es1370-test$(EXESUF)
+-gcov-files-pci-y += hw/audio/es1370.c
+ check-qtest-pci-y += $(check-qtest-virtio-y)
+ gcov-files-pci-y += $(gcov-files-virtio-y) hw/virtio/virtio-pci.c
+-check-qtest-pci-y += tests/tpci200-test$(EXESUF)
+-gcov-files-pci-y += hw/ipack/tpci200.c
+ check-qtest-pci-y += $(check-qtest-ipack-y)
+ gcov-files-pci-y += $(gcov-files-ipack-y)
+ check-qtest-pci-y += tests/display-vga-test$(EXESUF)
+@@ -194,8 +179,6 @@ check-qtest-i386-y += tests/tco-test$(EXESUF)
+ gcov-files-i386-y += hw/watchdog/watchdog.c hw/watchdog/wdt_ib700.c
+ check-qtest-i386-y += $(check-qtest-pci-y)
+ gcov-files-i386-y += $(gcov-files-pci-y)
+-check-qtest-i386-y += tests/vmxnet3-test$(EXESUF)
+-gcov-files-i386-y += hw/net/vmxnet3.c
+ gcov-files-i386-y += hw/net/vmxnet_rx_pkt.c
+ gcov-files-i386-y += hw/net/vmxnet_tx_pkt.c
+ check-qtest-i386-y += tests/pvpanic-test$(EXESUF)
+@@ -204,8 +187,6 @@ check-qtest-i386-y += tests/i82801b11-test$(EXESUF)
+ gcov-files-i386-y += hw/pci-bridge/i82801b11.c
+ check-qtest-i386-y += tests/ioh3420-test$(EXESUF)
+ gcov-files-i386-y += hw/pci-bridge/ioh3420.c
+-check-qtest-i386-y += tests/usb-hcd-ohci-test$(EXESUF)
+-gcov-files-i386-y += hw/usb/hcd-ohci.c
+ check-qtest-i386-y += tests/usb-hcd-uhci-test$(EXESUF)
+ gcov-files-i386-y += hw/usb/hcd-uhci.c
+ check-qtest-i386-y += tests/usb-hcd-ehci-test$(EXESUF)
+@@ -547,10 +528,7 @@ tests/q35-test$(EXESUF): tests/q35-test.o $(libqos-pc-obj-y)
+ tests/fw_cfg-test$(EXESUF): tests/fw_cfg-test.o $(libqos-pc-obj-y)
+ tests/e1000-test$(EXESUF): tests/e1000-test.o
+ tests/rtl8139-test$(EXESUF): tests/rtl8139-test.o $(libqos-pc-obj-y)
+-tests/pcnet-test$(EXESUF): tests/pcnet-test.o
+ tests/eepro100-test$(EXESUF): tests/eepro100-test.o
+-tests/vmxnet3-test$(EXESUF): tests/vmxnet3-test.o
+-tests/ne2000-test$(EXESUF): tests/ne2000-test.o
+ tests/wdt_ib700-test$(EXESUF): tests/wdt_ib700-test.o
+ tests/tco-test$(EXESUF): tests/tco-test.o $(libqos-pc-obj-y)
+ tests/virtio-balloon-test$(EXESUF): tests/virtio-balloon-test.o
+@@ -561,20 +539,16 @@ tests/virtio-scsi-test$(EXESUF): tests/virtio-scsi-test.o $(libqos-virtio-obj-y)
+ tests/virtio-9p-test$(EXESUF): tests/virtio-9p-test.o
+ tests/virtio-serial-test$(EXESUF): tests/virtio-serial-test.o
+ tests/virtio-console-test$(EXESUF): tests/virtio-console-test.o
+-tests/tpci200-test$(EXESUF): tests/tpci200-test.o
+ tests/display-vga-test$(EXESUF): tests/display-vga-test.o
+ tests/ipoctal232-test$(EXESUF): tests/ipoctal232-test.o
+ tests/qom-test$(EXESUF): tests/qom-test.o
+ tests/drive_del-test$(EXESUF): tests/drive_del-test.o $(libqos-pc-obj-y)
+ tests/qdev-monitor-test$(EXESUF): tests/qdev-monitor-test.o $(libqos-pc-obj-y)
+-tests/nvme-test$(EXESUF): tests/nvme-test.o
+ tests/pvpanic-test$(EXESUF): tests/pvpanic-test.o
+ tests/i82801b11-test$(EXESUF): tests/i82801b11-test.o
+ tests/ac97-test$(EXESUF): tests/ac97-test.o
+-tests/es1370-test$(EXESUF): tests/es1370-test.o
+ tests/intel-hda-test$(EXESUF): tests/intel-hda-test.o
+ tests/ioh3420-test$(EXESUF): tests/ioh3420-test.o
+-tests/usb-hcd-ohci-test$(EXESUF): tests/usb-hcd-ohci-test.o $(libqos-usb-obj-y)
+ tests/usb-hcd-uhci-test$(EXESUF): tests/usb-hcd-uhci-test.o $(libqos-usb-obj-y)
+ tests/usb-hcd-ehci-test$(EXESUF): tests/usb-hcd-ehci-test.o $(libqos-usb-obj-y)
+ tests/usb-hcd-xhci-test$(EXESUF): tests/usb-hcd-xhci-test.o $(libqos-usb-obj-y)
+diff --git a/tests/boot-order-test.c b/tests/boot-order-test.c
+index a6d8bd5..bff0d6f 100644
+--- a/tests/boot-order-test.c
++++ b/tests/boot-order-test.c
+@@ -110,6 +110,7 @@ static void test_pc_boot_order(void)
+     test_boot_orders(NULL, read_boot_order_pc, test_cases_pc);
+ }
+ 
++#if 0 /* Disabled for RHEL, since CONFIG_MAC and CONFIG_PREP are not enabled */
+ static uint8_t read_m48t59(uint64_t addr, uint16_t reg)
+ {
+     writeb(addr, reg & 0xff);
+@@ -140,6 +141,7 @@ static uint64_t read_boot_order_pmac(void)
+ 
+     return qfw_cfg_get_u16(fw_cfg, FW_CFG_BOOT_DEVICE);
+ }
++#endif /* Disabled for RHEL, since CONFIG_MAC and CONFIG_PREP are not enabled */
+ 
+ static const boot_order_test test_cases_fw_cfg[] = {
+     { "", 'c', 'c' },
+@@ -149,6 +151,7 @@ static const boot_order_test test_cases_fw_cfg[] = {
+     {}
+ };
+ 
++#if 0 /* Disabled for RHEL, since CONFIG_MAC and CONFIG_PREP are not enabled */
+ static void test_pmac_oldworld_boot_order(void)
+ {
+     test_boot_orders("g3beige", read_boot_order_pmac, test_cases_fw_cfg);
+@@ -157,7 +160,9 @@ static void test_pmac_oldworld_boot_order(void)
+ static void test_pmac_newworld_boot_order(void)
+ {
+     test_boot_orders("mac99", read_boot_order_pmac, test_cases_fw_cfg);
++
+ }
++#endif /* Disabled for RHEL, since CONFIG_MAC and CONFIG_PREP are not enabled */
+ 
+ static uint64_t read_boot_order_sun4m(void)
+ {
+@@ -192,11 +197,13 @@ int main(int argc, char *argv[])
+     if (strcmp(arch, "i386") == 0 || strcmp(arch, "x86_64") == 0) {
+         qtest_add_func("boot-order/pc", test_pc_boot_order);
+     } else if (strcmp(arch, "ppc") == 0 || strcmp(arch, "ppc64") == 0) {
++#if 0 /* Disabled for RHEL, since CONFIG_MAC and CONFIG_PREP are not enabled */
+         qtest_add_func("boot-order/prep", test_prep_boot_order);
+         qtest_add_func("boot-order/pmac_oldworld",
+                        test_pmac_oldworld_boot_order);
+         qtest_add_func("boot-order/pmac_newworld",
+                        test_pmac_newworld_boot_order);
++#endif /* Disabled for RHEL, since CONFIG_MAC and CONFIG_PREP are not enabled */
+     } else if (strcmp(arch, "sparc") == 0) {
+         qtest_add_func("boot-order/sun4m", test_sun4m_boot_order);
+     } else if (strcmp(arch, "sparc64") == 0) {
+diff --git a/tests/e1000-test.c b/tests/e1000-test.c
+index a42b381..5debec0 100644
+--- a/tests/e1000-test.c
++++ b/tests/e1000-test.c
+@@ -30,8 +30,10 @@ static void test_device(gconstpointer data)
+ static const char *models[] = {
+     "e1000",
+     "e1000-82540em",
++#if 0 /* Disabled in Red Hat Enterprise Linux 7 */
+     "e1000-82544gc",
+     "e1000-82545em",
++#endif
+ };
+ 
+ int main(int argc, char **argv)
+diff --git a/tests/endianness-test.c b/tests/endianness-test.c
+index cc5bccd..b553dde 100644
+--- a/tests/endianness-test.c
++++ b/tests/endianness-test.c
+@@ -35,12 +35,14 @@ static const TestCase test_cases[] = {
+     { "mips64", "mips", 0x14000000, .bswap = true },
+     { "mips64", "malta", 0x10000000, .bswap = true },
+     { "mips64el", "fulong2e", 0x1fd00000 },
++#if 0 /* Disabled for RHEL, since ISA is not enabled */
+     { "ppc", "g3beige", 0xfe000000, .bswap = true, .superio = "i82378" },
+     { "ppc", "prep", 0x80000000, .bswap = true },
+     { "ppc", "bamboo", 0xe8000000, .bswap = true, .superio = "i82378" },
+     { "ppc64", "mac99", 0xf2000000, .bswap = true, .superio = "i82378" },
+     { "ppc64", "pseries", 0x10080000000ULL,
+       .bswap = true, .superio = "i82378" },
++#endif /* Disabled for RHEL, since ISA is not enabled */
+     { "sh4", "r2d", 0xfe240000, .superio = "i82378" },
+     { "sh4eb", "r2d", 0xfe240000, .bswap = true, .superio = "i82378" },
+     { "sparc64", "sun4u", 0x1fe02000000LL, .bswap = true },
+diff --git a/tests/qemu-iotests/051 b/tests/qemu-iotests/051
+index 630cb7a..4377199 100755
+--- a/tests/qemu-iotests/051
++++ b/tests/qemu-iotests/051
+@@ -144,9 +144,9 @@ case "$QEMU_DEFAULT_MACHINE" in
+     pc)
+         run_qemu -drive if=floppy
+         run_qemu -drive if=ide,media=cdrom
+-        run_qemu -drive if=scsi,media=cdrom
++#        run_qemu -drive if=scsi,media=cdrom
+         run_qemu -drive if=ide
+-        run_qemu -drive if=scsi
++#        run_qemu -drive if=scsi
+         ;;
+      *)
+         ;;
+@@ -157,11 +157,11 @@ run_qemu -drive if=virtio
+ case "$QEMU_DEFAULT_MACHINE" in
+     pc)
+         run_qemu -drive if=none,id=disk -device ide-cd,drive=disk
+-        run_qemu -drive if=none,id=disk -device lsi53c895a -device scsi-cd,drive=disk
++#        run_qemu -drive if=none,id=disk -device lsi53c895a -device scsi-cd,drive=disk
+         run_qemu -drive if=none,id=disk -device ide-drive,drive=disk
+         run_qemu -drive if=none,id=disk -device ide-hd,drive=disk
+-        run_qemu -drive if=none,id=disk -device lsi53c895a -device scsi-disk,drive=disk
+-        run_qemu -drive if=none,id=disk -device lsi53c895a -device scsi-hd,drive=disk
++#        run_qemu -drive if=none,id=disk -device lsi53c895a -device scsi-disk,drive=disk
++#        run_qemu -drive if=none,id=disk -device lsi53c895a -device scsi-hd,drive=disk
+         ;;
+      *)
+         ;;
+@@ -175,9 +175,9 @@ case "$QEMU_DEFAULT_MACHINE" in
+     pc)
+         run_qemu -drive file="$TEST_IMG",if=floppy,readonly=on
+         run_qemu -drive file="$TEST_IMG",if=ide,media=cdrom,readonly=on
+-        run_qemu -drive file="$TEST_IMG",if=scsi,media=cdrom,readonly=on
++#        run_qemu -drive file="$TEST_IMG",if=scsi,media=cdrom,readonly=on
+         run_qemu -drive file="$TEST_IMG",if=ide,readonly=on
+-        run_qemu -drive file="$TEST_IMG",if=scsi,readonly=on
++#        run_qemu -drive file="$TEST_IMG",if=scsi,readonly=on
+         ;;
+      *)
+         ;;
+@@ -188,11 +188,11 @@ run_qemu -drive file="$TEST_IMG",if=virtio,readonly=on
+ case "$QEMU_DEFAULT_MACHINE" in
+     pc)
+         run_qemu -drive file="$TEST_IMG",if=none,id=disk,readonly=on -device ide-cd,drive=disk
+-        run_qemu -drive file="$TEST_IMG",if=none,id=disk,readonly=on -device lsi53c895a -device scsi-cd,drive=disk
++#        run_qemu -drive file="$TEST_IMG",if=none,id=disk,readonly=on -device lsi53c895a -device scsi-cd,drive=disk
+         run_qemu -drive file="$TEST_IMG",if=none,id=disk,readonly=on -device ide-drive,drive=disk
+         run_qemu -drive file="$TEST_IMG",if=none,id=disk,readonly=on -device ide-hd,drive=disk
+-        run_qemu -drive file="$TEST_IMG",if=none,id=disk,readonly=on -device lsi53c895a -device scsi-disk,drive=disk
+-        run_qemu -drive file="$TEST_IMG",if=none,id=disk,readonly=on -device lsi53c895a -device scsi-hd,drive=disk
++#        run_qemu -drive file="$TEST_IMG",if=none,id=disk,readonly=on -device lsi53c895a -device scsi-disk,drive=disk
++#        run_qemu -drive file="$TEST_IMG",if=none,id=disk,readonly=on -device lsi53c895a -device scsi-hd,drive=disk
+         ;;
+      *)
+         ;;
+diff --git a/tests/qemu-iotests/group b/tests/qemu-iotests/group
+index 822953b..c2fe743 100644
+--- a/tests/qemu-iotests/group
++++ b/tests/qemu-iotests/group
+@@ -77,7 +77,7 @@
+ 068 rw auto quick
+ 069 rw auto quick
+ 070 rw auto quick
+-071 rw auto quick
++# 071 rw auto quick -- requires whitelisted blkverify
+ 072 rw auto quick
+ 073 rw auto quick
+ 074 rw auto quick
+@@ -105,7 +105,7 @@
+ 096 rw auto quick
+ 097 rw auto backing
+ 098 rw auto backing quick
+-099 rw auto quick
++# 099 rw auto quick  -- requires whitelisted blkverify
+ 100 rw auto quick
+ 101 rw auto quick
+ 102 rw auto quick
+diff --git a/tests/usb-hcd-xhci-test.c b/tests/usb-hcd-xhci-test.c
+index 7e2e212..032bb13 100644
+--- a/tests/usb-hcd-xhci-test.c
++++ b/tests/usb-hcd-xhci-test.c
+@@ -22,6 +22,7 @@ static void test_xhci_hotplug(void)
+     usb_test_hotplug("xhci", 1, NULL);
+ }
+ 
++#if 0 /* Disabled for Red Hat Enterprise Linux 7 */
+ static void test_usb_uas_hotplug(void)
+ {
+     QDict *response;
+@@ -78,6 +79,7 @@ static void test_usb_uas_hotplug(void)
+     g_assert(!strcmp(qdict_get_str(response, "event"), "DEVICE_DELETED"));
+     QDECREF(response);
+ }
++#endif
+ 
+ int main(int argc, char **argv)
+ {
+@@ -87,8 +89,9 @@ int main(int argc, char **argv)
+ 
+     qtest_add_func("/xhci/pci/init", test_xhci_init);
+     qtest_add_func("/xhci/pci/hotplug", test_xhci_hotplug);
++#if 0 /* Disabled for Red Hat Enterprise Linux 7 */
+     qtest_add_func("/xhci/pci/hotplug/usb-uas", test_usb_uas_hotplug);
+-
++#endif
+     qtest_start("-device nec-usb-xhci,id=xhci"
+                 " -drive id=drive0,if=none,file=/dev/null,format=raw");
+     ret = g_test_run();
+diff --git a/tests/virtio-scsi-test.c b/tests/virtio-scsi-test.c
+index d78747a..c68e280 100644
+--- a/tests/virtio-scsi-test.c
++++ b/tests/virtio-scsi-test.c
+@@ -69,6 +69,7 @@ static void qvirtio_scsi_stop(void)
+ {
+     qtest_end();
+ }
++#if 0
+ 
+ static void qvirtio_scsi_pci_free(QVirtIOSCSI *vs)
+ {
+@@ -82,7 +83,6 @@ static void qvirtio_scsi_pci_free(QVirtIOSCSI *vs)
+     g_free(vs->dev);
+     qpci_free_pc(vs->bus);
+ }
+-
+ static uint64_t qvirtio_scsi_alloc(QVirtIOSCSI *vs, size_t alloc_size,
+                                    const void *data)
+ {
+@@ -95,7 +95,6 @@ static uint64_t qvirtio_scsi_alloc(QVirtIOSCSI *vs, size_t alloc_size,
+ 
+     return addr;
+ }
+-
+ static uint8_t virtio_scsi_do_command(QVirtIOSCSI *vs, const uint8_t *cdb,
+                                       const uint8_t *data_in,
+                                       size_t data_in_len,
+@@ -197,6 +196,7 @@ static QVirtIOSCSI *qvirtio_scsi_pci_init(int slot)
+     return vs;
+ }
+ 
++#endif
+ /* Tests only initialization so far. TODO: Replace with functional tests */
+ static void pci_nop(void)
+ {
+@@ -233,6 +233,7 @@ static void hotplug(void)
+     qvirtio_scsi_stop();
+ }
+ 
++#if 0
+ /* Test WRITE SAME with the lba not aligned */
+ static void test_unaligned_write_same(void)
+ {
+@@ -258,7 +259,7 @@ static void test_unaligned_write_same(void)
+     qvirtio_scsi_pci_free(vs);
+     qvirtio_scsi_stop();
+ }
+-
++#endif
+ int main(int argc, char **argv)
+ {
+     int ret;
+@@ -266,9 +267,10 @@ int main(int argc, char **argv)
+     g_test_init(&argc, &argv, NULL);
+     qtest_add_func("/virtio/scsi/pci/nop", pci_nop);
+     qtest_add_func("/virtio/scsi/pci/hotplug", hotplug);
++#if 0
+     qtest_add_func("/virtio/scsi/pci/scsi-disk/unaligned-write-same",
+                    test_unaligned_write_same);
+-
++#endif
+     ret = g_test_run();
+ 
+     return ret;
+diff --git a/vl.c b/vl.c
+index 5fd22cb..b2a3488 100644
+--- a/vl.c
++++ b/vl.c
+@@ -160,7 +160,7 @@ int max_cpus = 0;
+ int smp_cores = 1;
+ int smp_threads = 1;
+ int acpi_enabled = 1;
+-int no_hpet = 0;
++int no_hpet = 1; /* Always disabled for Red Hat Enterprise Linux */
+ int fd_bootchk = 1;
+ static int no_reboot;
+ int no_shutdown = 0;
+-- 
+2.5.5
+

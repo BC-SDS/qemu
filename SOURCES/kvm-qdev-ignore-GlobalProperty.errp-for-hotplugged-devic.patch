@@ -1,0 +1,72 @@
+From ed3140f590ed3fcb871e1592c20ca8e4ac30d3f4 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:22 +0200
+Subject: [PATCH 82/99] qdev: ignore GlobalProperty.errp for hotplugged devices
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-78-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71693
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 77/78] qdev: ignore GlobalProperty.errp for hotplugged devices
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Greg Kurz <groug@kaod.org>
+
+This patch ensures QEMU won't terminate while hotplugging a device if the
+global property cannot be set and errp points to error_fatal or error_abort.
+
+While here, it also fixes indentation of the typename argument.
+
+Suggested-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Greg Kurz <groug@kaod.org>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit b3443f43f45e06971d87c985bb0316c1e40259c9)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/core/qdev-properties.c | 4 ++--
+ include/hw/qdev-core.h    | 4 +++-
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/hw/core/qdev-properties.c b/hw/core/qdev-properties.c
+index 3c20c8e..54679b1 100644
+--- a/hw/core/qdev-properties.c
++++ b/hw/core/qdev-properties.c
+@@ -1071,7 +1071,7 @@ int qdev_prop_check_globals(void)
+ }
+ 
+ static void qdev_prop_set_globals_for_type(DeviceState *dev,
+-                                const char *typename)
++                                           const char *typename)
+ {
+     GList *l;
+ 
+@@ -1087,7 +1087,7 @@ static void qdev_prop_set_globals_for_type(DeviceState *dev,
+         if (err != NULL) {
+             error_prepend(&err, "can't apply global %s.%s=%s: ",
+                           prop->driver, prop->property, prop->value);
+-            if (prop->errp) {
++            if (!dev->hotplugged && prop->errp) {
+                 error_propagate(prop->errp, err);
+             } else {
+                 assert(prop->user_provided);
+diff --git a/include/hw/qdev-core.h b/include/hw/qdev-core.h
+index 1d1f861..4b4b33b 100644
+--- a/include/hw/qdev-core.h
++++ b/include/hw/qdev-core.h
+@@ -261,7 +261,9 @@ struct PropertyInfo {
+  * @used: Set to true if property was used when initializing a device.
+  * @errp: Error destination, used like first argument of error_setg()
+  *        in case property setting fails later. If @errp is NULL, we
+- *        print warnings instead of ignoring errors silently.
++ *        print warnings instead of ignoring errors silently. For
++ *        hotplugged devices, errp is always ignored and warnings are
++ *        printed instead.
+  */
+ typedef struct GlobalProperty {
+     const char *driver;
+-- 
+1.8.3.1
+

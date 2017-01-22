@@ -1,0 +1,45 @@
+From 3f9349b4ae7d13092833385ff168522a22f6a838 Mon Sep 17 00:00:00 2001
+From: Amit Shah <amit.shah@redhat.com>
+Date: Fri, 5 Aug 2016 11:16:24 +0200
+Subject: [PATCH 95/99] q35: disable s3/s4 by default
+
+RH-Author: Amit Shah <amit.shah@redhat.com>
+Message-id: <e0b394531f225266c8ce9456a9b8518011ba7e1c.1470213559.git.amit.shah@redhat.com>
+Patchwork-id: 71806
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/1] q35: disable s3/s4 by default
+Bugzilla: 1357202
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+
+Ensure we don't advertise s3 and s4 for the Q35 machine type.
+
+This commit is a forward port of the patch from the 7.1 tree (commit
+5df10a6127a2c91a9c0413a9ad7645f4fd623b07 there).
+
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/ich9.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/hw/acpi/ich9.c b/hw/acpi/ich9.c
+index e5a3c18..58ef5cd 100644
+--- a/hw/acpi/ich9.c
++++ b/hw/acpi/ich9.c
+@@ -446,8 +446,8 @@ void ich9_pm_add_properties(Object *obj, ICH9LPCPMRegs *pm, Error **errp)
+     static const uint32_t gpe0_len = ICH9_PMIO_GPE0_LEN;
+     pm->acpi_memory_hotplug.is_enabled = true;
+     pm->cpu_hotplug_legacy = true;
+-    pm->disable_s3 = 0;
+-    pm->disable_s4 = 0;
++    pm->disable_s3 = 1;
++    pm->disable_s4 = 1;
+     pm->s4_val = 2;
+ 
+     object_property_add_uint32_ptr(obj, ACPI_PM_PROP_PM_IO_BASE,
+-- 
+1.8.3.1
+

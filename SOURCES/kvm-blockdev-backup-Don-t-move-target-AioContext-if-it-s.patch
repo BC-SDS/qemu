@@ -1,0 +1,65 @@
+From e975d4724f8582bc7714056cfbe2df81e5aad743 Mon Sep 17 00:00:00 2001
+From: Fam Zheng <famz@redhat.com>
+Date: Wed, 22 Jun 2016 02:20:36 +0200
+Subject: [PATCH 5/8] blockdev-backup: Don't move target AioContext if it's
+ attached
+
+RH-Author: Fam Zheng <famz@redhat.com>
+Message-id: <20160622022038.17679-3-famz@redhat.com>
+Patchwork-id: 70733
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/4] blockdev-backup: Don't move target AioContext if it's attached
+Bugzilla: 1336310 1339498
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+
+If the BDS is attached, it will want to stay on the AioContext where its
+BlockBackend is. Don't call bdrv_set_aio_context in this case.
+
+Signed-off-by: Fam Zheng <famz@redhat.com>
+Message-id: 1463969978-24970-3-git-send-email-famz@redhat.com
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+(cherry picked from commit efd7556708bdfb61dab259e08bd71fbe5680ddcd)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	blockdev.c
+
+Context conflict because downstream doesn't have 5c438bc6 (backup: Use
+BlockBackend for I/O).
+
+Also, downstream doesn't have bdrv_has_blk, so just check the bs->blk
+pointer.
+
+Signed-off-by: Fam Zheng <famz@redhat.com>
+---
+ blockdev.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/blockdev.c b/blockdev.c
+index 3bef7c0..46fe7b4 100644
+--- a/blockdev.c
++++ b/blockdev.c
+@@ -3412,7 +3412,18 @@ void do_blockdev_backup(const char *device, const char *target,
+     }
+ 
+     bdrv_ref(target_bs);
+-    bdrv_set_aio_context(target_bs, aio_context);
++    if (bdrv_get_aio_context(target_bs) != aio_context) {
++        if (!target_bs->blk) {
++            /* The target BDS is not attached, we can safely move it to another
++             * AioContext. */
++            bdrv_set_aio_context(target_bs, aio_context);
++        } else {
++            bdrv_unref(target_bs);
++            error_setg(errp, "Target is attached to a different thread from "
++                             "source.");
++            goto out;
++        }
++    }
+     backup_start(bs, target_bs, speed, sync, NULL, on_source_error,
+                  on_target_error, block_job_cb, bs, txn, &local_err);
+     if (local_err != NULL) {
+-- 
+1.8.3.1
+

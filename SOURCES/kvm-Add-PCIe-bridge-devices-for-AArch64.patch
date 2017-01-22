@@ -1,0 +1,39 @@
+From 6a7d8ec681340f7de35aa77cc30bd641a17d9b43 Mon Sep 17 00:00:00 2001
+From: Wei Huang <wei@redhat.com>
+Date: Sat, 28 May 2016 02:55:42 +0200
+Subject: [PATCH 07/24] Add PCIe bridge devices for AArch64
+
+RH-Author: Wei Huang <wei@redhat.com>
+Message-id: <1464404143-31188-2-git-send-email-wei@redhat.com>
+Patchwork-id: 70497
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH V2 1/2] Add PCIe bridge devices for AArch64
+Bugzilla: 1326420
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+Old AArch64 QEMU only supports virtio-mmio devices. Because of this we
+disabled many PCIe bridge devices. But in RHEL 7.3, we are expanding
+the support for virtio-pci. This patch enables XIO and IOH devices to
+support building either PCIe root port or PCIe switch.
+
+Signed-off-by: Wei Huang <wei@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ default-configs/aarch64-softmmu.mak | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/default-configs/aarch64-softmmu.mak b/default-configs/aarch64-softmmu.mak
+index 97b6176..7c1659a 100644
+--- a/default-configs/aarch64-softmmu.mak
++++ b/default-configs/aarch64-softmmu.mak
+@@ -16,3 +16,6 @@ CONFIG_PLATFORM_BUS=y
+ CONFIG_SMBIOS=y
+ CONFIG_PL061=y
+ CONFIG_GPIO_KEY=y
++
++CONFIG_XIO3130=y
++CONFIG_IOH3420=y
+-- 
+1.8.3.1
+

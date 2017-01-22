@@ -1,0 +1,64 @@
+From 08b005d211883c6b0e4f9b2a6c812b32df12b136 Mon Sep 17 00:00:00 2001
+From: Laurent Vivier <lvivier@redhat.com>
+Date: Wed, 10 Aug 2016 15:27:48 +0200
+Subject: [PATCH 07/17] ppc64: fix compressed dump with pseries kernel
+
+RH-Author: Laurent Vivier <lvivier@redhat.com>
+Message-id: <1470842868-21355-1-git-send-email-lvivier@redhat.com>
+Patchwork-id: 71912
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH] ppc64: fix compressed dump with pseries kernel
+Bugzilla: 1240497
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+If we don't provide the page size in target-ppc:cpu_get_dump_info(),
+the default one (TARGET_PAGE_SIZE, 4KB) is used to create
+the compressed dump. It works fine with Macintosh, but not with
+pseries as the kernel default page size is 64KB.
+
+Without this patch, if we generate a compressed dump in the QEMU monitor:
+
+    (qemu) dump-guest-memory -z qemu.dump
+
+This dump cannot be read by crash:
+
+    # crash vmlinux qemu.dump
+    ...
+    WARNING: cannot translate vmemmap kernel virtual addresses:
+             commands requiring page structure contents will fail
+    ...
+
+Page_size is used to determine the dumpfile's block size. The
+block size needs to be at least the page size, but a multiple of page
+size works fine too. For PPC64, linux supports either 4KB or 64KB software
+page size. So we define the page_size to 64KB.
+
+Signed-off-by: Laurent Vivier <lvivier@redhat.com>
+Reviewed-by: Andrew Jones <drjones@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 760d88d1d0c409f1afe6f1c91539487413e8b2a9)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-ppc/arch_dump.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/target-ppc/arch_dump.c b/target-ppc/arch_dump.c
+index df1fd8c..40282a1 100644
+--- a/target-ppc/arch_dump.c
++++ b/target-ppc/arch_dump.c
+@@ -220,6 +220,11 @@ int cpu_get_dump_info(ArchDumpInfo *info,
+     } else {
+         info->d_endian = ELFDATA2LSB;
+     }
++    /* 64KB is the max page size for pseries kernel */
++    if (strncmp(object_get_typename(qdev_get_machine()),
++                "pseries-", 8) == 0) {
++        info->page_size = (1U << 16);
++    }
+ 
+     return 0;
+ }
+-- 
+1.8.3.1
+

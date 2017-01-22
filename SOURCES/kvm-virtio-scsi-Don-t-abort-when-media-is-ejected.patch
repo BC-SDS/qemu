@@ -1,0 +1,73 @@
+From 3d1325b8f24fec1cb85980e618e5fcf73b092fd2 Mon Sep 17 00:00:00 2001
+From: Fam Zheng <famz@redhat.com>
+Date: Wed, 14 Sep 2016 10:44:23 +0200
+Subject: [PATCH 09/18] virtio-scsi: Don't abort when media is ejected
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Fam Zheng <famz@redhat.com>
+Message-id: <1473849863-30819-3-git-send-email-famz@redhat.com>
+Patchwork-id: 72313
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 2/2] virtio-scsi: Don't abort when media is ejected
+Bugzilla: 1374251
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Marc-André Lureau <mlureau@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+With an ejected block backend, blk_get_aio_context() would return
+qemu_aio_context. In this case don't assert.
+
+Signed-off-by: Fam Zheng <famz@redhat.com>
+Message-Id: <1473848224-24809-3-git-send-email-famz@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit 2a2d69f490c1b1dc6b6d2aef385ee7b654497a77)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/scsi/virtio-scsi.c | 15 +++++++++------
+ 1 file changed, 9 insertions(+), 6 deletions(-)
+
+diff --git a/hw/scsi/virtio-scsi.c b/hw/scsi/virtio-scsi.c
+index d26f490..717013d 100644
+--- a/hw/scsi/virtio-scsi.c
++++ b/hw/scsi/virtio-scsi.c
+@@ -236,6 +236,13 @@ static void virtio_scsi_cancel_notify(Notifier *notifier, void *data)
+     g_free(n);
+ }
+ 
++static inline void virtio_scsi_ctx_check(VirtIOSCSI *s, SCSIDevice *d)
++{
++    if (s->dataplane_started && d && blk_is_available(d->conf.blk)) {
++        assert(blk_get_aio_context(d->conf.blk) == s->ctx);
++    }
++}
++
+ /* Return 0 if the request is ready to be completed and return to guest;
+  * -EINPROGRESS if the request is submitted and will be completed later, in the
+  *  case of async cancellation. */
+@@ -247,9 +254,7 @@ static int virtio_scsi_do_tmf(VirtIOSCSI *s, VirtIOSCSIReq *req)
+     int target;
+     int ret = 0;
+ 
+-    if (s->dataplane_started && d) {
+-        assert(blk_get_aio_context(d->conf.blk) == s->ctx);
+-    }
++    virtio_scsi_ctx_check(s, d);
+     /* Here VIRTIO_SCSI_S_OK means "FUNCTION COMPLETE".  */
+     req->resp.tmf.response = VIRTIO_SCSI_S_OK;
+ 
+@@ -539,9 +544,7 @@ static bool virtio_scsi_handle_cmd_req_prepare(VirtIOSCSI *s, VirtIOSCSIReq *req
+         virtio_scsi_complete_cmd_req(req);
+         return false;
+     }
+-    if (s->dataplane_started) {
+-        assert(blk_get_aio_context(d->conf.blk) == s->ctx);
+-    }
++    virtio_scsi_ctx_check(s, d);
+     req->sreq = scsi_req_new(d, req->req.cmd.tag,
+                              virtio_scsi_get_lun(req->req.cmd.lun),
+                              req->req.cmd.cdb, req);
+-- 
+1.8.3.1
+

@@ -1,0 +1,64 @@
+From 647dea5cb910c482c4ebfb1759e690490d2c544d Mon Sep 17 00:00:00 2001
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Tue, 6 Sep 2016 13:51:36 +0200
+Subject: [PATCH 7/8] vl: Delay initialization of memory backends
+
+RH-Author: Eduardo Habkost <ehabkost@redhat.com>
+Message-id: <1473169896-17789-3-git-send-email-ehabkost@redhat.com>
+Patchwork-id: 72162
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 2/2] vl: Delay initialization of memory backends
+Bugzilla: 1371211
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+Initialization of memory backends may take a while when
+prealloc=yes is used, depending on their size. Initializing
+memory backends before chardevs may delay the creation of monitor
+sockets, and trigger timeouts on management software that waits
+until the monitor socket is created by QEMU. See, for example,
+the bug report at:
+https://bugzilla.redhat.com/show_bug.cgi?id=1371211
+
+In addition to that, allocating memory before calling
+configure_accelerator() breaks the tcg_enabled() checks at
+memory_region_init_*().
+
+This patch fixes those problems by adding "memory-backend-*"
+classes to the delayed-initialization list.
+
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 6546d0dba6c211c1a3eac1252a4f50a0c151a08a)
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ vl.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/vl.c b/vl.c
+index 3ccffaa..862b13d 100644
+--- a/vl.c
++++ b/vl.c
+@@ -2867,6 +2867,19 @@ static bool object_create_initial(const char *type)
+         return false;
+     }
+ 
++    /* Memory allocation by backends needs to be done
++     * after configure_accelerator() (due to the tcg_enabled()
++     * checks at memory_region_init_*()).
++     *
++     * Also, allocation of large amounts of memory may delay
++     * chardev initialization for too long, and trigger timeouts
++     * on software that waits for a monitor socket to be created
++     * (e.g. libvirt).
++     */
++    if (g_str_has_prefix(type, "memory-backend-")) {
++        return false;
++    }
++
+     return true;
+ }
+ 
+-- 
+1.8.3.1
+

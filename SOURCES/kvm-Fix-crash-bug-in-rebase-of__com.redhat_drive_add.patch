@@ -1,0 +1,130 @@
+From a28dcc50552c0ca2bbb5be10b15f4df8f3d85d53 Mon Sep 17 00:00:00 2001
+From: Markus Armbruster <armbru@redhat.com>
+Date: Fri, 22 Jul 2016 16:02:37 +0200
+Subject: [PATCH 31/34] Fix crash bug in rebase of__com.redhat_drive_add
+
+RH-Author: Markus Armbruster <armbru@redhat.com>
+Message-id: <1469203357-18900-2-git-send-email-armbru@redhat.com>
+Patchwork-id: 71333
+O-Subject: [RHEV-7.2 qemu-kvm-rhev PATCH] Fix crash bug in rebase of__com.redhat_drive_add
+Bugzilla: 1352865
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+
+The traditional monitor command function type is
+
+    void (*)(Monitor *mon, const QDict *qdict);
+
+A new type was added for QMP:
+
+    void (*)(QDict *params, QObject **ret_data, Error **errp);
+
+The struct describing commands has both types in a union.
+
+The plan back then was to convert everything to this type.  Seemed
+sensible at the time, because it let us use the same function for both
+the QMP and the HMP command.  That turned out to be a bad idea, and we
+moved to separate command definitions.  The (relatively few) HMP
+commands using the second type were eventually converted back to the
+first one.  Support for HMP commands implemented as the second type
+was dropped in upstream commit 8a4f501.  Since then, the monitor core
+calls all HMP commands through union member with the first type.
+
+Meanwhile, we created __com.redhat_drive_add for RHEL-6 (commit
+545d0d8).  Its command handler simple_drive_add() conforms to the
+second type.
+
+This got forward ported to RHEL-7, then rebased a couple of times.
+The last rebase (commit 0806196) is wrong: since we failed to notice
+the semantic conflict with upstream commit 8a4f501, we happily
+continue to initialize the second union member to simple_drive_add,
+even though the monitor core now calls it through the first member.
+Oops.
+
+We fixed the same bug for __com.redhat_drive_del in commit 85786e0 for
+BZ 1341531.  Fix this one the same way: create a separate HMP command
+handler hmp_simple_drive_add(), calling qmp_simple_drive_add(),
+renamed from simple_drive_add().
+
+No more uses of cmd_new in hmp-commands.hx remain.
+
+Signed-off-by: Markus Armbruster <armbru@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ device-hotplug.c          | 12 +++++++++++-
+ hmp-commands.hx           |  2 +-
+ include/sysemu/blockdev.h |  4 +++-
+ qmp-commands.hx           |  2 +-
+ 4 files changed, 16 insertions(+), 4 deletions(-)
+
+diff --git a/device-hotplug.c b/device-hotplug.c
+index 883346e..29f9a64 100644
+--- a/device-hotplug.c
++++ b/device-hotplug.c
+@@ -117,7 +117,7 @@ static void check_parm(const char *key, QObject *obj, void *opaque)
+     }
+ }
+ 
+-void simple_drive_add(QDict *qdict, QObject **ret_data, Error **errp)
++void qmp_simple_drive_add(QDict *qdict, QObject **ret_data, Error **errp)
+ {
+     int stopped;
+     Error *local_err = NULL;
+@@ -152,3 +152,13 @@ void simple_drive_add(QDict *qdict, QObject **ret_data, Error **errp)
+ 
+     return;
+ }
++
++void hmp_simple_drive_add(Monitor *mon, const QDict *qdict)
++{
++    Error *err = NULL;
++
++    qmp_simple_drive_add((QDict *)qdict, NULL, &err);
++    if (err) {
++        error_report_err(err);
++    }
++}
+diff --git a/hmp-commands.hx b/hmp-commands.hx
+index c0bb962..164a0f4 100644
+--- a/hmp-commands.hx
++++ b/hmp-commands.hx
+@@ -1239,7 +1239,7 @@ ETEXI
+         .args_type  = "simple-drive:O",
+         .params     = "id=name,[file=file][,format=f][,media=d]...",
+         .help       = "Create a drive similar to -device if=none.",
+-        .mhandler.cmd_new = simple_drive_add,
++        .mhandler.cmd = hmp_simple_drive_add,
+     },
+ 
+ STEXI
+diff --git a/include/sysemu/blockdev.h b/include/sysemu/blockdev.h
+index 977ffe2..23c125a 100644
+--- a/include/sysemu/blockdev.h
++++ b/include/sysemu/blockdev.h
+@@ -66,5 +66,7 @@ void hmp_commit(Monitor *mon, const QDict *qdict);
+ void hmp_drive_del(Monitor *mon, const QDict *qdict);
+ void qmp_drive_del(QDict *qdict, QObject **ret_data, Error **errp);
+ 
+-void simple_drive_add(QDict *qdict, QObject **ret_data, Error **errp);
++void hmp_simple_drive_add(Monitor *mon, const QDict *qdict);
++void qmp_simple_drive_add(QDict *qdict, QObject **ret_data, Error **errp);
++
+ #endif
+diff --git a/qmp-commands.hx b/qmp-commands.hx
+index c38fc2c..67bce5c 100644
+--- a/qmp-commands.hx
++++ b/qmp-commands.hx
+@@ -111,7 +111,7 @@ EQMP
+         .args_type  = "simple-drive:O",
+         .params     = "id=name,[file=file][,format=f][,media=d]...",
+         .help       = "Create a drive similar to -device if=none.",
+-        .mhandler.cmd_new = simple_drive_add,
++        .mhandler.cmd_new = qmp_simple_drive_add,
+     },
+ 
+ SQMP
+-- 
+1.8.3.1
+

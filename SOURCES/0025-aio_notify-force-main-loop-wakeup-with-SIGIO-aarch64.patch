@@ -1,0 +1,69 @@
+From 3e531f1d6e28940329d7e8e9bc018622cca53004 Mon Sep 17 00:00:00 2001
+From: Laszlo Ersek <lersek@redhat.com>
+Date: Thu, 5 Feb 2015 15:35:06 +0100
+Subject: aio_notify(): force main loop wakeup with SIGIO (aarch64 host only)
+
+Patchwork-id: 63729
+O-Subject: [RHELSA qemu-kvm-rhev PATCH 1/2] aio_notify(): force main loop wakeup with SIGIO (aarch64 host only)
+Bugzilla: 1184405
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Richard Jones <rjones@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+This should be happening, before the patch:
+
+  thread pool worker thread                                 main iothread
+  -------------------------                                 -------------
+        aio_notify()
+             |
+          write() ------------------[eventfd]---------------> g_poll()
+
+But g_poll is not woken(). The notification is lost on aarch64/KVM, and we
+don't know why.
+
+The patch introduces the following (theoretically superfluous) additional
+notification chain, activated under the same circumstances:
+
+  thread pool worker thread     sigwait_compat() thread     main iothread
+  -------------------------     -----------------------     -------------
+        aio_notify()
+             |
+           kill() -----[SIGIO]-----> sigwait()
+                                        |
+                                      write() -----[pipe]---> g_poll()
+
+(The SIGIO signal is generated for the entire process, but it can only be
+consumed by the sigwait() call in sigwait_compat(), because that's the
+only thread and section of code where SIGIO is unblocked.
+
+After the main iothread wakes, it dispatches the sigfd_compat_info
+received over the pipe to the sigfd_handler() function, which (seeing the
+SIG_DFL disposition for SIGIO, which coincides with NULL) simply throws it
+away.)
+
+This patch should make no difference (beyond a minuscule performance hit),
+but in practice it makes the hang go away, by reliably waking g_poll().
+
+Signed-off-by: Laszlo Ersek <lersek@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ async.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/async.c b/async.c
+index b4bf205..d910559 100644
+--- a/async.c
++++ b/async.c
+@@ -291,6 +291,9 @@ void aio_notify(AioContext *ctx)
+     if (ctx->notify_me) {
+         event_notifier_set(&ctx->notifier);
+         atomic_mb_set(&ctx->notified, true);
++#ifdef HOST_AARCH64
++        kill(getpid(), SIGIO);
++#endif
+     }
+ }
+ 
+-- 
+2.5.5
+

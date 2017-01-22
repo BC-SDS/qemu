@@ -1,0 +1,87 @@
+From edf66c8fb74cb84fa4f887b134b1d470bfdc1099 Mon Sep 17 00:00:00 2001
+From: John Snow <jsnow@redhat.com>
+Date: Fri, 8 Jul 2016 16:35:21 +0200
+Subject: [PATCH 11/11] iotests: add small-granularity mirror test
+
+RH-Author: John Snow <jsnow@redhat.com>
+Message-id: <1467995721-12563-4-git-send-email-jsnow@redhat.com>
+Patchwork-id: 71085
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 3/3] iotests: add small-granularity mirror test
+Bugzilla: 1336705
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Max Reitz <mreitz@redhat.com>
+
+Signed-off-by: John Snow <jsnow@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Message-id: 1466625064-11280-4-git-send-email-jsnow@redhat.com
+Signed-off-by: Jeff Cody <jcody@redhat.com>
+(cherry picked from commit ccee3d8f97781515ed40356f1e6a7a233dd466b8)
+Signed-off-by: John Snow <jsnow@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+ 041.out: Upstream, we have 76 tests. Downstream, we have 77.
+          Upstream we removed TestBlockdevAttached.
+---
+ tests/qemu-iotests/041     | 30 ++++++++++++++++++++++++++++++
+ tests/qemu-iotests/041.out |  4 ++--
+ 2 files changed, 32 insertions(+), 2 deletions(-)
+
+diff --git a/tests/qemu-iotests/041 b/tests/qemu-iotests/041
+index b1c542f..c9eeb0c 100755
+--- a/tests/qemu-iotests/041
++++ b/tests/qemu-iotests/041
+@@ -754,6 +754,36 @@ class TestUnbackedSource(iotests.QMPTestCase):
+         self.complete_and_wait()
+         self.assert_no_active_block_jobs()
+ 
++class TestGranularity(iotests.QMPTestCase):
++    image_len = 10 * 1024 * 1024 # MB
++
++    def setUp(self):
++        qemu_img('create', '-f', iotests.imgfmt, test_img,
++                 str(TestGranularity.image_len))
++        qemu_io('-c', 'write 0 %d' % (self.image_len),
++                test_img)
++        self.vm = iotests.VM().add_drive(test_img)
++        self.vm.launch()
++
++    def tearDown(self):
++        self.vm.shutdown()
++        self.assertTrue(iotests.compare_images(test_img, target_img),
++                        'target image does not match source after mirroring')
++        os.remove(test_img)
++        os.remove(target_img)
++
++    def test_granularity(self):
++        self.assert_no_active_block_jobs()
++        result = self.vm.qmp('drive-mirror', device='drive0',
++                             sync='full', target=target_img,
++                             mode='absolute-paths', granularity=8192)
++        self.assert_qmp(result, 'return', {})
++        event = self.vm.get_qmp_event(wait=60.0)
++        # Failures will manifest as COMPLETED/ERROR.
++        self.assert_qmp(event, 'event', 'BLOCK_JOB_READY')
++        self.complete_and_wait(drive='drive0', wait_ready=False)
++        self.assert_no_active_block_jobs()
++
+ class TestRepairQuorum(iotests.QMPTestCase):
+     """ This class test quorum file repair using drive-mirror.
+         It's mostly a fork of TestSingleDrive """
+diff --git a/tests/qemu-iotests/041.out b/tests/qemu-iotests/041.out
+index b67d050..85c6e8a 100644
+--- a/tests/qemu-iotests/041.out
++++ b/tests/qemu-iotests/041.out
+@@ -1,5 +1,5 @@
+-............................................................................
++.............................................................................
+ ----------------------------------------------------------------------
+-Ran 76 tests
++Ran 77 tests
+ 
+ OK
+-- 
+1.8.3.1
+

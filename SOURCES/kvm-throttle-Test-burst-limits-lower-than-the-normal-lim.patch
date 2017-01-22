@@ -1,0 +1,56 @@
+From e9c1e133b437ea0e4569bbb4b8b0c8c0b09e6a45 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Mon, 8 Aug 2016 09:04:27 +0200
+Subject: [PATCH 08/10] throttle: Test burst limits lower than the normal
+ limits
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1470647067-30569-3-git-send-email-stefanha@redhat.com>
+Patchwork-id: 71882
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 2/2] throttle: Test burst limits lower than the normal limits
+Bugzilla: 1355665
+RH-Acked-by: Max Reitz <mreitz@redhat.com>
+RH-Acked-by: John Snow <jsnow@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+
+From: Alberto Garcia <berto@igalia.com>
+
+This checks that making FOO_max lower than FOO is not allowed.
+
+We could also forbid having FOO_max == FOO, but that doesn't have
+any odd side effects and it would require us to update several other
+tests, so let's keep it simple.
+
+Signed-off-by: Alberto Garcia <berto@igalia.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Message-id: 2f90f9ee58aa14b7bd985f67c5996b06e0ab6c19.1469693110.git.berto@igalia.com
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+(cherry picked from commit 5fc8c052ce0ab8cc476a4a3888cc31d52783c315)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ tests/test-throttle.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/tests/test-throttle.c b/tests/test-throttle.c
+index 526e0b1..cf82ed6 100644
+--- a/tests/test-throttle.c
++++ b/tests/test-throttle.c
+@@ -394,6 +394,14 @@ static void test_max_is_missing_limit(void)
+         cfg.buckets[i].max = 0;
+         cfg.buckets[i].avg = 100;
+         g_assert(throttle_is_valid(&cfg, NULL));
++
++        cfg.buckets[i].max = 30;
++        cfg.buckets[i].avg = 100;
++        g_assert(!throttle_is_valid(&cfg, NULL));
++
++        cfg.buckets[i].max = 100;
++        cfg.buckets[i].avg = 100;
++        g_assert(throttle_is_valid(&cfg, NULL));
+     }
+ }
+ 
+-- 
+1.8.3.1
+

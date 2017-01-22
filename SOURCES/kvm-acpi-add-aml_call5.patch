@@ -1,0 +1,71 @@
+From ec8729fcb9970a393c120b036496cbe5f07bda00 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 24 Jun 2016 18:55:50 +0200
+Subject: [PATCH 21/33] acpi: add aml_call5
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466794559-27963-14-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70780
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 13/22] acpi: add aml_call5
+Bugzilla: 1270345
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+
+It will be used by NVDIMM ACPI
+
+Signed-off-by: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+Reviewed-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 052889b8e96d24625043cd5901ab91dd38aca49f)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/aml-build.c         | 14 ++++++++++++++
+ include/hw/acpi/aml-build.h |  2 ++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/hw/acpi/aml-build.c b/hw/acpi/aml-build.c
+index ba6eb3c..bf0cb07 100644
+--- a/hw/acpi/aml-build.c
++++ b/hw/acpi/aml-build.c
+@@ -656,6 +656,20 @@ Aml *aml_call4(const char *method, Aml *arg1, Aml *arg2, Aml *arg3, Aml *arg4)
+     return var;
+ }
+ 
++/* helper to call method with 5 arguments */
++Aml *aml_call5(const char *method, Aml *arg1, Aml *arg2, Aml *arg3, Aml *arg4,
++               Aml *arg5)
++{
++    Aml *var = aml_alloc();
++    build_append_namestring(var->buf, "%s", method);
++    aml_append(var, arg1);
++    aml_append(var, arg2);
++    aml_append(var, arg3);
++    aml_append(var, arg4);
++    aml_append(var, arg5);
++    return var;
++}
++
+ /*
+  * ACPI 5.0: 6.4.3.8.1 GPIO Connection Descriptor
+  * Type 1, Large Item Name 0xC
+diff --git a/include/hw/acpi/aml-build.h b/include/hw/acpi/aml-build.h
+index 305edcf..3748c03 100644
+--- a/include/hw/acpi/aml-build.h
++++ b/include/hw/acpi/aml-build.h
+@@ -270,6 +270,8 @@ Aml *aml_call1(const char *method, Aml *arg1);
+ Aml *aml_call2(const char *method, Aml *arg1, Aml *arg2);
+ Aml *aml_call3(const char *method, Aml *arg1, Aml *arg2, Aml *arg3);
+ Aml *aml_call4(const char *method, Aml *arg1, Aml *arg2, Aml *arg3, Aml *arg4);
++Aml *aml_call5(const char *method, Aml *arg1, Aml *arg2, Aml *arg3, Aml *arg4,
++               Aml *arg5);
+ Aml *aml_gpio_int(AmlConsumerAndProducer con_and_pro,
+                   AmlLevelAndEdge edge_level,
+                   AmlActiveHighAndLow active_level, AmlShared shared,
+-- 
+1.8.3.1
+

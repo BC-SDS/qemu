@@ -1,0 +1,110 @@
+From 508892b6cfd9df4442f1040c5611d58be8da094d Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:09 +0200
+Subject: [PATCH 69/99] apic: move MAX_APICS check to 'apic' class
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-65-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71680
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 64/78] apic: move MAX_APICS check to 'apic' class
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+MAX_APICS is only used by child 'apic' class and not
+by its parent TYPE_APIC_COMMON or any other derived
+class.
+
+Move check into end user 'apic' class so it won't
+get in the way of other APIC implementations
+if they support more then MAX_APICS.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Radim Krčmář <rkrcmar@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 889211b18b8d0acc814fbbe01b986f07b229a8c9)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/intc/apic.c                  | 10 ++++++++++
+ hw/intc/apic_common.c           |  8 --------
+ include/hw/i386/apic_internal.h |  4 +---
+ 3 files changed, 11 insertions(+), 11 deletions(-)
+
+diff --git a/hw/intc/apic.c b/hw/intc/apic.c
+index 28c2ea5..a9d2117 100644
+--- a/hw/intc/apic.c
++++ b/hw/intc/apic.c
+@@ -26,7 +26,9 @@
+ #include "trace.h"
+ #include "hw/i386/pc.h"
+ #include "hw/i386/apic-msidef.h"
++#include "qapi/error.h"
+ 
++#define MAX_APICS 255
+ #define MAX_APIC_WORDS 8
+ 
+ #define SYNC_FROM_VAPIC                 0x1
+@@ -867,6 +869,14 @@ static const MemoryRegionOps apic_io_ops = {
+ static void apic_realize(DeviceState *dev, Error **errp)
+ {
+     APICCommonState *s = APIC_COMMON(dev);
++    static int apic_no;
++
++    if (apic_no >= MAX_APICS) {
++        error_setg(errp, "%s initialization failed.",
++                   object_get_typename(OBJECT(dev)));
++        return;
++    }
++    s->idx = apic_no++;
+ 
+     memory_region_init_io(&s->io_memory, OBJECT(s), &apic_io_ops, s, "apic-msi",
+                           APIC_SPACE_SIZE);
+diff --git a/hw/intc/apic_common.c b/hw/intc/apic_common.c
+index 4abe145..fb556cb 100644
+--- a/hw/intc/apic_common.c
++++ b/hw/intc/apic_common.c
+@@ -297,14 +297,6 @@ static void apic_common_realize(DeviceState *dev, Error **errp)
+     APICCommonState *s = APIC_COMMON(dev);
+     APICCommonClass *info;
+     static DeviceState *vapic;
+-    static int apic_no;
+-
+-    if (apic_no >= MAX_APICS) {
+-        error_setg(errp, "%s initialization failed.",
+-                   object_get_typename(OBJECT(dev)));
+-        return;
+-    }
+-    s->idx = apic_no++;
+ 
+     info = APIC_COMMON_GET_CLASS(s);
+     info->realize(dev, errp);
+diff --git a/include/hw/i386/apic_internal.h b/include/hw/i386/apic_internal.h
+index 74fe935..5d3be9a 100644
+--- a/include/hw/i386/apic_internal.h
++++ b/include/hw/i386/apic_internal.h
+@@ -120,8 +120,6 @@
+ #define VAPIC_ENABLE_BIT                0
+ #define VAPIC_ENABLE_MASK               (1 << VAPIC_ENABLE_BIT)
+ 
+-#define MAX_APICS 255
+-
+ typedef struct APICCommonState APICCommonState;
+ 
+ #define TYPE_APIC_COMMON "apic-common"
+@@ -175,7 +173,7 @@ struct APICCommonState {
+     uint32_t initial_count;
+     int64_t initial_count_load_time;
+     int64_t next_time;
+-    int idx;
++    int idx; /* not actually common, used only by 'apic' derived class */
+     QEMUTimer *timer;
+     int64_t timer_expiry;
+     int sipi_vector;
+-- 
+1.8.3.1
+

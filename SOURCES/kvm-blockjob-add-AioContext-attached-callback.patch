@@ -1,0 +1,124 @@
+From 346c047df8e80f37f3ad586165879a733fdf5cb5 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Tue, 21 Jun 2016 13:34:20 +0200
+Subject: [PATCH 18/25] blockjob: add AioContext attached callback
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466516062-20048-8-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70724
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 7/9] blockjob: add AioContext attached callback
+Bugzilla: 1265179
+RH-Acked-by: Jeffrey Cody <jcody@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+Block jobs that use additional BDSes or event loop resources need a
+callback to get their affairs in order when the AioContext is switched.
+
+Simple block jobs don't need an attach callback, they automatically work
+thanks to the generic attach/detach notifiers that this patch adds.
+
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Message-id: 1466096189-6477-7-git-send-email-stefanha@redhat.com
+(cherry picked from commit 463e0be101cb5a78ca6ee517d58604c3f3637bcd)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+  blockjob.c
+
+  Context conflict because block_jobs list does not exist downstream.
+
+  Upstream uses BlockBackend, downstream uses BlockDriverState.
+
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+---
+ blockjob.c               | 38 ++++++++++++++++++++++++++++++++++++++
+ include/block/blockjob.h |  7 +++++++
+ 2 files changed, 45 insertions(+)
+
+diff --git a/blockjob.c b/blockjob.c
+index e2579e3..810b24b 100644
+--- a/blockjob.c
++++ b/blockjob.c
+@@ -61,6 +61,38 @@ static AioContext *block_job_get_aio_context(BlockJob *job)
+            bdrv_get_aio_context(job->bs);
+ }
+ 
++static void block_job_attached_aio_context(AioContext *new_context,
++                                           void *opaque)
++{
++    BlockJob *job = opaque;
++
++    if (job->driver->attached_aio_context) {
++        job->driver->attached_aio_context(job, new_context);
++    }
++
++    block_job_resume(job);
++}
++
++static void block_job_detach_aio_context(void *opaque)
++{
++    BlockJob *job = opaque;
++
++    /* In case the job terminates during aio_poll()... */
++    block_job_ref(job);
++
++    block_job_pause(job);
++
++    if (!job->paused) {
++        /* If job is !job->busy this kicks it into the next pause point. */
++        block_job_enter(job);
++    }
++    while (!job->paused && !job->completed) {
++        aio_poll(block_job_get_aio_context(job), true);
++    }
++
++    block_job_unref(job);
++}
++
+ void *block_job_create(const BlockJobDriver *driver, BlockDriverState *bs,
+                        int64_t speed, BlockCompletionFunc *cb,
+                        void *opaque, Error **errp)
+@@ -87,6 +119,9 @@ void *block_job_create(const BlockJobDriver *driver, BlockDriverState *bs,
+     job->refcnt        = 1;
+     bs->job = job;
+ 
++    bdrv_add_aio_context_notifier(bs, block_job_attached_aio_context,
++                                  block_job_detach_aio_context, job);
++
+     /* Only set speed when necessary to avoid NotSupported error */
+     if (speed != 0) {
+         Error *local_err = NULL;
+@@ -111,6 +146,9 @@ void block_job_unref(BlockJob *job)
+     if (--job->refcnt == 0) {
+         job->bs->job = NULL;
+         bdrv_op_unblock_all(job->bs, job->blocker);
++        bdrv_remove_aio_context_notifier(job->bs,
++                                         block_job_attached_aio_context,
++                                         block_job_detach_aio_context, job);
+         bdrv_unref(job->bs);
+         error_free(job->blocker);
+         g_free(job->id);
+diff --git a/include/block/blockjob.h b/include/block/blockjob.h
+index 9c71457..886859a 100644
+--- a/include/block/blockjob.h
++++ b/include/block/blockjob.h
+@@ -84,6 +84,13 @@ typedef struct BlockJobDriver {
+      * should be restarted from this callback.
+      */
+     void coroutine_fn (*resume)(BlockJob *job);
++
++    /*
++     * If the callback is not NULL, it will be invoked before the job is
++     * resumed in a new AioContext.  This is the place to move any resources
++     * besides job->blk to the new AioContext.
++     */
++    void (*attached_aio_context)(BlockJob *job, AioContext *new_context);
+ } BlockJobDriver;
+ 
+ /**
+-- 
+1.8.3.1
+

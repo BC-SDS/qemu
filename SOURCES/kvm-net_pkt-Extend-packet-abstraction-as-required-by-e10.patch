@@ -1,0 +1,2217 @@
+From 6bda6abed2d2e239a2a2723cafb303c0f91547e4 Mon Sep 17 00:00:00 2001
+From: Xiao Wang <jasowang@redhat.com>
+Date: Wed, 27 Jul 2016 02:54:21 +0200
+Subject: [PATCH 12/35] net_pkt: Extend packet abstraction as required by
+ e1000e functionality
+
+RH-Author: Xiao Wang <jasowang@redhat.com>
+Message-id: <1469588061-18173-1-git-send-email-jasowang@redhat.com>
+Patchwork-id: 71465
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 12/19 V2] net_pkt: Extend packet abstraction as required by e1000e functionality
+Bugzilla: 1343092
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+From: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+
+Notes: conflicts since no arm gic tracepoints in RHEL7:
+       2531088f6c1ce1f620f8d5a545f0af95598e69fc
+       ("hw/intc/arm_gic: add tracepoints")
+
+This patch extends the TX/RX packet abstractions with features that will
+be used by the e1000e device implementation.
+
+Changes are:
+
+  1. Support iovec lists for RX buffers
+  2. Deeper RX packets parsing
+  3. Loopback option for TX packets
+  4. Extended VLAN headers handling
+  5. RSS processing for RX packets
+
+Signed-off-by: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+Signed-off-by: Leonid Bloch <leonid.bloch@ravellosystems.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+(cherry picked from commit eb700029c7836798046191d62d595363d92c84d4)
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	trace-events
+---
+ hw/net/net_rx_pkt.c    | 473 +++++++++++++++++++++++++++++++++++++++++++++----
+ hw/net/net_rx_pkt.h    | 193 +++++++++++++++++++-
+ hw/net/net_tx_pkt.c    | 204 +++++++++++++--------
+ hw/net/net_tx_pkt.h    |  60 ++++++-
+ include/net/checksum.h |   4 +-
+ include/net/eth.h      | 150 +++++++++++-----
+ net/checksum.c         |   7 +-
+ net/eth.c              | 410 +++++++++++++++++++++++++++++++++++++-----
+ trace-events           |  40 +++++
+ 9 files changed, 1336 insertions(+), 205 deletions(-)
+
+diff --git a/hw/net/net_rx_pkt.c b/hw/net/net_rx_pkt.c
+index 8a4f29f..1019b50 100644
+--- a/hw/net/net_rx_pkt.c
++++ b/hw/net/net_rx_pkt.c
+@@ -16,24 +16,16 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include "trace.h"
+ #include "net_rx_pkt.h"
+-#include "net/eth.h"
+-#include "qemu-common.h"
+-#include "qemu/iov.h"
+ #include "net/checksum.h"
+ #include "net/tap.h"
+ 
+-/*
+- * RX packet may contain up to 2 fragments - rebuilt eth header
+- * in case of VLAN tag stripping
+- * and payload received from QEMU - in any case
+- */
+-#define NET_MAX_RX_PACKET_FRAGMENTS (2)
+-
+ struct NetRxPkt {
+     struct virtio_net_hdr virt_hdr;
+-    uint8_t ehdr_buf[ETH_MAX_L2_HDR_LEN];
+-    struct iovec vec[NET_MAX_RX_PACKET_FRAGMENTS];
++    uint8_t ehdr_buf[sizeof(struct eth_header)];
++    struct iovec *vec;
++    uint16_t vec_len_total;
+     uint16_t vec_len;
+     uint32_t tot_len;
+     uint16_t tci;
+@@ -46,17 +38,31 @@ struct NetRxPkt {
+     bool isip6;
+     bool isudp;
+     bool istcp;
++
++    size_t l3hdr_off;
++    size_t l4hdr_off;
++    size_t l5hdr_off;
++
++    eth_ip6_hdr_info ip6hdr_info;
++    eth_ip4_hdr_info ip4hdr_info;
++    eth_l4_hdr_info  l4hdr_info;
+ };
+ 
+ void net_rx_pkt_init(struct NetRxPkt **pkt, bool has_virt_hdr)
+ {
+     struct NetRxPkt *p = g_malloc0(sizeof *p);
+     p->has_virt_hdr = has_virt_hdr;
++    p->vec = NULL;
++    p->vec_len_total = 0;
+     *pkt = p;
+ }
+ 
+ void net_rx_pkt_uninit(struct NetRxPkt *pkt)
+ {
++    if (pkt->vec_len_total != 0) {
++        g_free(pkt->vec);
++    }
++
+     g_free(pkt);
+ }
+ 
+@@ -66,33 +72,88 @@ struct virtio_net_hdr *net_rx_pkt_get_vhdr(struct NetRxPkt *pkt)
+     return &pkt->virt_hdr;
+ }
+ 
+-void net_rx_pkt_attach_data(struct NetRxPkt *pkt, const void *data,
+-                               size_t len, bool strip_vlan)
++static inline void
++net_rx_pkt_iovec_realloc(struct NetRxPkt *pkt,
++                            int new_iov_len)
++{
++    if (pkt->vec_len_total < new_iov_len) {
++        g_free(pkt->vec);
++        pkt->vec = g_malloc(sizeof(*pkt->vec) * new_iov_len);
++        pkt->vec_len_total = new_iov_len;
++    }
++}
++
++static void
++net_rx_pkt_pull_data(struct NetRxPkt *pkt,
++                        const struct iovec *iov, int iovcnt,
++                        size_t ploff)
++{
++    if (pkt->vlan_stripped) {
++        net_rx_pkt_iovec_realloc(pkt, iovcnt + 1);
++
++        pkt->vec[0].iov_base = pkt->ehdr_buf;
++        pkt->vec[0].iov_len = sizeof(pkt->ehdr_buf);
++
++        pkt->tot_len =
++            iov_size(iov, iovcnt) - ploff + sizeof(struct eth_header);
++
++        pkt->vec_len = iov_copy(pkt->vec + 1, pkt->vec_len_total - 1,
++                                iov, iovcnt, ploff, pkt->tot_len);
++    } else {
++        net_rx_pkt_iovec_realloc(pkt, iovcnt);
++
++        pkt->tot_len = iov_size(iov, iovcnt) - ploff;
++        pkt->vec_len = iov_copy(pkt->vec, pkt->vec_len_total,
++                                iov, iovcnt, ploff, pkt->tot_len);
++    }
++
++    eth_get_protocols(pkt->vec, pkt->vec_len, &pkt->isip4, &pkt->isip6,
++                      &pkt->isudp, &pkt->istcp,
++                      &pkt->l3hdr_off, &pkt->l4hdr_off, &pkt->l5hdr_off,
++                      &pkt->ip6hdr_info, &pkt->ip4hdr_info, &pkt->l4hdr_info);
++
++    trace_net_rx_pkt_parsed(pkt->isip4, pkt->isip6, pkt->isudp, pkt->istcp,
++                            pkt->l3hdr_off, pkt->l4hdr_off, pkt->l5hdr_off);
++}
++
++void net_rx_pkt_attach_iovec(struct NetRxPkt *pkt,
++                                const struct iovec *iov, int iovcnt,
++                                size_t iovoff, bool strip_vlan)
+ {
+     uint16_t tci = 0;
+-    uint16_t ploff;
++    uint16_t ploff = iovoff;
+     assert(pkt);
+     pkt->vlan_stripped = false;
+ 
+     if (strip_vlan) {
+-        pkt->vlan_stripped = eth_strip_vlan(data, pkt->ehdr_buf, &ploff, &tci);
++        pkt->vlan_stripped = eth_strip_vlan(iov, iovcnt, iovoff, pkt->ehdr_buf,
++                                            &ploff, &tci);
+     }
+ 
+-    if (pkt->vlan_stripped) {
+-        pkt->vec[0].iov_base = pkt->ehdr_buf;
+-        pkt->vec[0].iov_len = ploff - sizeof(struct vlan_header);
+-        pkt->vec[1].iov_base = (uint8_t *) data + ploff;
+-        pkt->vec[1].iov_len = len - ploff;
+-        pkt->vec_len = 2;
+-        pkt->tot_len = len - ploff + sizeof(struct eth_header);
+-    } else {
+-        pkt->vec[0].iov_base = (void *)data;
+-        pkt->vec[0].iov_len = len;
+-        pkt->vec_len = 1;
+-        pkt->tot_len = len;
++    pkt->tci = tci;
++
++    net_rx_pkt_pull_data(pkt, iov, iovcnt, ploff);
++}
++
++void net_rx_pkt_attach_iovec_ex(struct NetRxPkt *pkt,
++                                const struct iovec *iov, int iovcnt,
++                                size_t iovoff, bool strip_vlan,
++                                uint16_t vet)
++{
++    uint16_t tci = 0;
++    uint16_t ploff = iovoff;
++    assert(pkt);
++    pkt->vlan_stripped = false;
++
++    if (strip_vlan) {
++        pkt->vlan_stripped = eth_strip_vlan_ex(iov, iovcnt, iovoff, vet,
++                                               pkt->ehdr_buf,
++                                               &ploff, &tci);
+     }
+ 
+     pkt->tci = tci;
++
++    net_rx_pkt_pull_data(pkt, iov, iovcnt, ploff);
+ }
+ 
+ void net_rx_pkt_dump(struct NetRxPkt *pkt)
+@@ -132,10 +193,17 @@ size_t net_rx_pkt_get_total_len(struct NetRxPkt *pkt)
+ void net_rx_pkt_set_protocols(struct NetRxPkt *pkt, const void *data,
+                               size_t len)
+ {
++    const struct iovec iov = {
++        .iov_base = (void *)data,
++        .iov_len = len
++    };
++
+     assert(pkt);
+ 
+-    eth_get_protocols(data, len, &pkt->isip4, &pkt->isip6,
+-        &pkt->isudp, &pkt->istcp);
++    eth_get_protocols(&iov, 1, &pkt->isip4, &pkt->isip6,
++                      &pkt->isudp, &pkt->istcp,
++                      &pkt->l3hdr_off, &pkt->l4hdr_off, &pkt->l5hdr_off,
++                      &pkt->ip6hdr_info, &pkt->ip4hdr_info, &pkt->l4hdr_info);
+ }
+ 
+ void net_rx_pkt_get_protocols(struct NetRxPkt *pkt,
+@@ -150,6 +218,180 @@ void net_rx_pkt_get_protocols(struct NetRxPkt *pkt,
+     *istcp = pkt->istcp;
+ }
+ 
++size_t net_rx_pkt_get_l3_hdr_offset(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++    return pkt->l3hdr_off;
++}
++
++size_t net_rx_pkt_get_l4_hdr_offset(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++    return pkt->l4hdr_off;
++}
++
++size_t net_rx_pkt_get_l5_hdr_offset(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++    return pkt->l5hdr_off;
++}
++
++eth_ip6_hdr_info *net_rx_pkt_get_ip6_info(struct NetRxPkt *pkt)
++{
++    return &pkt->ip6hdr_info;
++}
++
++eth_ip4_hdr_info *net_rx_pkt_get_ip4_info(struct NetRxPkt *pkt)
++{
++    return &pkt->ip4hdr_info;
++}
++
++eth_l4_hdr_info *net_rx_pkt_get_l4_info(struct NetRxPkt *pkt)
++{
++    return &pkt->l4hdr_info;
++}
++
++static inline void
++_net_rx_rss_add_chunk(uint8_t *rss_input, size_t *bytes_written,
++                      void *ptr, size_t size)
++{
++    memcpy(&rss_input[*bytes_written], ptr, size);
++    trace_net_rx_pkt_rss_add_chunk(ptr, size, *bytes_written);
++    *bytes_written += size;
++}
++
++static inline void
++_net_rx_rss_prepare_ip4(uint8_t *rss_input,
++                        struct NetRxPkt *pkt,
++                        size_t *bytes_written)
++{
++    struct ip_header *ip4_hdr = &pkt->ip4hdr_info.ip4_hdr;
++
++    _net_rx_rss_add_chunk(rss_input, bytes_written,
++                          &ip4_hdr->ip_src, sizeof(uint32_t));
++
++    _net_rx_rss_add_chunk(rss_input, bytes_written,
++                          &ip4_hdr->ip_dst, sizeof(uint32_t));
++}
++
++static inline void
++_net_rx_rss_prepare_ip6(uint8_t *rss_input,
++                        struct NetRxPkt *pkt,
++                        bool ipv6ex, size_t *bytes_written)
++{
++    eth_ip6_hdr_info *ip6info = &pkt->ip6hdr_info;
++
++    _net_rx_rss_add_chunk(rss_input, bytes_written,
++           (ipv6ex && ip6info->rss_ex_src_valid) ? &ip6info->rss_ex_src
++                                                 : &ip6info->ip6_hdr.ip6_src,
++           sizeof(struct in6_address));
++
++    _net_rx_rss_add_chunk(rss_input, bytes_written,
++           (ipv6ex && ip6info->rss_ex_dst_valid) ? &ip6info->rss_ex_dst
++                                                 : &ip6info->ip6_hdr.ip6_dst,
++           sizeof(struct in6_address));
++}
++
++static inline void
++_net_rx_rss_prepare_tcp(uint8_t *rss_input,
++                        struct NetRxPkt *pkt,
++                        size_t *bytes_written)
++{
++    struct tcp_header *tcphdr = &pkt->l4hdr_info.hdr.tcp;
++
++    _net_rx_rss_add_chunk(rss_input, bytes_written,
++                          &tcphdr->th_sport, sizeof(uint16_t));
++
++    _net_rx_rss_add_chunk(rss_input, bytes_written,
++                          &tcphdr->th_dport, sizeof(uint16_t));
++}
++
++uint32_t
++net_rx_pkt_calc_rss_hash(struct NetRxPkt *pkt,
++                         NetRxPktRssType type,
++                         uint8_t *key)
++{
++    uint8_t rss_input[36];
++    size_t rss_length = 0;
++    uint32_t rss_hash = 0;
++    net_toeplitz_key key_data;
++
++    switch (type) {
++    case NetPktRssIpV4:
++        assert(pkt->isip4);
++        trace_net_rx_pkt_rss_ip4();
++        _net_rx_rss_prepare_ip4(&rss_input[0], pkt, &rss_length);
++        break;
++    case NetPktRssIpV4Tcp:
++        assert(pkt->isip4);
++        assert(pkt->istcp);
++        trace_net_rx_pkt_rss_ip4_tcp();
++        _net_rx_rss_prepare_ip4(&rss_input[0], pkt, &rss_length);
++        _net_rx_rss_prepare_tcp(&rss_input[0], pkt, &rss_length);
++        break;
++    case NetPktRssIpV6Tcp:
++        assert(pkt->isip6);
++        assert(pkt->istcp);
++        trace_net_rx_pkt_rss_ip6_tcp();
++        _net_rx_rss_prepare_ip6(&rss_input[0], pkt, true, &rss_length);
++        _net_rx_rss_prepare_tcp(&rss_input[0], pkt, &rss_length);
++        break;
++    case NetPktRssIpV6:
++        assert(pkt->isip6);
++        trace_net_rx_pkt_rss_ip6();
++        _net_rx_rss_prepare_ip6(&rss_input[0], pkt, false, &rss_length);
++        break;
++    case NetPktRssIpV6Ex:
++        assert(pkt->isip6);
++        trace_net_rx_pkt_rss_ip6_ex();
++        _net_rx_rss_prepare_ip6(&rss_input[0], pkt, true, &rss_length);
++        break;
++    default:
++        assert(false);
++        break;
++    }
++
++    net_toeplitz_key_init(&key_data, key);
++    net_toeplitz_add(&rss_hash, rss_input, rss_length, &key_data);
++
++    trace_net_rx_pkt_rss_hash(rss_length, rss_hash);
++
++    return rss_hash;
++}
++
++uint16_t net_rx_pkt_get_ip_id(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++
++    if (pkt->isip4) {
++        return be16_to_cpu(pkt->ip4hdr_info.ip4_hdr.ip_id);
++    }
++
++    return 0;
++}
++
++bool net_rx_pkt_is_tcp_ack(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++
++    if (pkt->istcp) {
++        return TCP_HEADER_FLAGS(&pkt->l4hdr_info.hdr.tcp) & TCP_FLAG_ACK;
++    }
++
++    return false;
++}
++
++bool net_rx_pkt_has_tcp_data(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++
++    if (pkt->istcp) {
++        return pkt->l4hdr_info.has_tcp_data;
++    }
++
++    return false;
++}
++
+ struct iovec *net_rx_pkt_get_iovec(struct NetRxPkt *pkt)
+ {
+     assert(pkt);
+@@ -157,6 +399,13 @@ struct iovec *net_rx_pkt_get_iovec(struct NetRxPkt *pkt)
+     return pkt->vec;
+ }
+ 
++uint16_t net_rx_pkt_get_iovec_len(struct NetRxPkt *pkt)
++{
++    assert(pkt);
++
++    return pkt->vec_len;
++}
++
+ void net_rx_pkt_set_vhdr(struct NetRxPkt *pkt,
+                             struct virtio_net_hdr *vhdr)
+ {
+@@ -165,6 +414,14 @@ void net_rx_pkt_set_vhdr(struct NetRxPkt *pkt,
+     memcpy(&pkt->virt_hdr, vhdr, sizeof pkt->virt_hdr);
+ }
+ 
++void net_rx_pkt_set_vhdr_iovec(struct NetRxPkt *pkt,
++    const struct iovec *iov, int iovcnt)
++{
++    assert(pkt);
++
++    iov_to_buf(iov, iovcnt, 0, &pkt->virt_hdr, sizeof pkt->virt_hdr);
++}
++
+ bool net_rx_pkt_is_vlan_stripped(struct NetRxPkt *pkt)
+ {
+     assert(pkt);
+@@ -185,3 +442,159 @@ uint16_t net_rx_pkt_get_vlan_tag(struct NetRxPkt *pkt)
+ 
+     return pkt->tci;
+ }
++
++bool net_rx_pkt_validate_l3_csum(struct NetRxPkt *pkt, bool *csum_valid)
++{
++    uint32_t cntr;
++    uint16_t csum;
++    uint32_t csl;
++
++    trace_net_rx_pkt_l3_csum_validate_entry();
++
++    if (!pkt->isip4) {
++        trace_net_rx_pkt_l3_csum_validate_not_ip4();
++        return false;
++    }
++
++    csl = pkt->l4hdr_off - pkt->l3hdr_off;
++
++    cntr = net_checksum_add_iov(pkt->vec, pkt->vec_len,
++                                pkt->l3hdr_off,
++                                csl, 0);
++
++    csum = net_checksum_finish(cntr);
++
++    *csum_valid = (csum == 0);
++
++    trace_net_rx_pkt_l3_csum_validate_csum(pkt->l3hdr_off, csl,
++                                           cntr, csum, *csum_valid);
++
++    return true;
++}
++
++static uint16_t
++_net_rx_pkt_calc_l4_csum(struct NetRxPkt *pkt)
++{
++    uint32_t cntr;
++    uint16_t csum;
++    uint16_t csl;
++    uint32_t cso;
++
++    trace_net_rx_pkt_l4_csum_calc_entry();
++
++    if (pkt->isip4) {
++        if (pkt->isudp) {
++            csl = be16_to_cpu(pkt->l4hdr_info.hdr.udp.uh_ulen);
++            trace_net_rx_pkt_l4_csum_calc_ip4_udp();
++        } else {
++            csl = be16_to_cpu(pkt->ip4hdr_info.ip4_hdr.ip_len) -
++                  IP_HDR_GET_LEN(&pkt->ip4hdr_info.ip4_hdr);
++            trace_net_rx_pkt_l4_csum_calc_ip4_tcp();
++        }
++
++        cntr = eth_calc_ip4_pseudo_hdr_csum(&pkt->ip4hdr_info.ip4_hdr,
++                                            csl, &cso);
++        trace_net_rx_pkt_l4_csum_calc_ph_csum(cntr, csl);
++    } else {
++        if (pkt->isudp) {
++            csl = be16_to_cpu(pkt->l4hdr_info.hdr.udp.uh_ulen);
++            trace_net_rx_pkt_l4_csum_calc_ip6_udp();
++        } else {
++            struct ip6_header *ip6hdr = &pkt->ip6hdr_info.ip6_hdr;
++            size_t full_ip6hdr_len = pkt->l4hdr_off - pkt->l3hdr_off;
++            size_t ip6opts_len = full_ip6hdr_len - sizeof(struct ip6_header);
++
++            csl = be16_to_cpu(ip6hdr->ip6_ctlun.ip6_un1.ip6_un1_plen) -
++                  ip6opts_len;
++            trace_net_rx_pkt_l4_csum_calc_ip6_tcp();
++        }
++
++        cntr = eth_calc_ip6_pseudo_hdr_csum(&pkt->ip6hdr_info.ip6_hdr, csl,
++                                            pkt->ip6hdr_info.l4proto, &cso);
++        trace_net_rx_pkt_l4_csum_calc_ph_csum(cntr, csl);
++    }
++
++    cntr += net_checksum_add_iov(pkt->vec, pkt->vec_len,
++                                 pkt->l4hdr_off, csl, cso);
++
++    csum = net_checksum_finish(cntr);
++
++    trace_net_rx_pkt_l4_csum_calc_csum(pkt->l4hdr_off, csl, cntr, csum);
++
++    return csum;
++}
++
++bool net_rx_pkt_validate_l4_csum(struct NetRxPkt *pkt, bool *csum_valid)
++{
++    uint16_t csum;
++
++    trace_net_rx_pkt_l4_csum_validate_entry();
++
++    if (!pkt->istcp && !pkt->isudp) {
++        trace_net_rx_pkt_l4_csum_validate_not_xxp();
++        return false;
++    }
++
++    if (pkt->isudp && (pkt->l4hdr_info.hdr.udp.uh_sum == 0)) {
++        trace_net_rx_pkt_l4_csum_validate_udp_with_no_checksum();
++        return false;
++    }
++
++    if (pkt->isip4 && pkt->ip4hdr_info.fragment) {
++        trace_net_rx_pkt_l4_csum_validate_ip4_fragment();
++        return false;
++    }
++
++    csum = _net_rx_pkt_calc_l4_csum(pkt);
++
++    *csum_valid = ((csum == 0) || (csum == 0xFFFF));
++
++    trace_net_rx_pkt_l4_csum_validate_csum(*csum_valid);
++
++    return true;
++}
++
++bool net_rx_pkt_fix_l4_csum(struct NetRxPkt *pkt)
++{
++    uint16_t csum = 0;
++    uint32_t l4_cso;
++
++    trace_net_rx_pkt_l4_csum_fix_entry();
++
++    if (pkt->istcp) {
++        l4_cso = offsetof(struct tcp_header, th_sum);
++        trace_net_rx_pkt_l4_csum_fix_tcp(l4_cso);
++    } else if (pkt->isudp) {
++        if (pkt->l4hdr_info.hdr.udp.uh_sum == 0) {
++            trace_net_rx_pkt_l4_csum_fix_udp_with_no_checksum();
++            return false;
++        }
++        l4_cso = offsetof(struct udp_header, uh_sum);
++        trace_net_rx_pkt_l4_csum_fix_udp(l4_cso);
++    } else {
++        trace_net_rx_pkt_l4_csum_fix_not_xxp();
++        return false;
++    }
++
++    if (pkt->isip4 && pkt->ip4hdr_info.fragment) {
++            trace_net_rx_pkt_l4_csum_fix_ip4_fragment();
++            return false;
++    }
++
++    /* Set zero to checksum word */
++    iov_from_buf(pkt->vec, pkt->vec_len,
++                 pkt->l4hdr_off + l4_cso,
++                 &csum, sizeof(csum));
++
++    /* Calculate L4 checksum */
++    csum = cpu_to_be16(_net_rx_pkt_calc_l4_csum(pkt));
++
++    /* Set calculated checksum to checksum word */
++    iov_from_buf(pkt->vec, pkt->vec_len,
++                 pkt->l4hdr_off + l4_cso,
++                 &csum, sizeof(csum));
++
++    trace_net_rx_pkt_l4_csum_fix_csum(pkt->l4hdr_off + l4_cso, csum);
++
++    return true;
++}
+diff --git a/hw/net/net_rx_pkt.h b/hw/net/net_rx_pkt.h
+index 897330a..7adf0fa 100644
+--- a/hw/net/net_rx_pkt.h
++++ b/hw/net/net_rx_pkt.h
+@@ -78,6 +78,103 @@ void net_rx_pkt_get_protocols(struct NetRxPkt *pkt,
+                                  bool *isudp, bool *istcp);
+ 
+ /**
++* fetches L3 header offset
++*
++* @pkt:            packet
++*
++*/
++size_t net_rx_pkt_get_l3_hdr_offset(struct NetRxPkt *pkt);
++
++/**
++* fetches L4 header offset
++*
++* @pkt:            packet
++*
++*/
++size_t net_rx_pkt_get_l4_hdr_offset(struct NetRxPkt *pkt);
++
++/**
++* fetches L5 header offset
++*
++* @pkt:            packet
++*
++*/
++size_t net_rx_pkt_get_l5_hdr_offset(struct NetRxPkt *pkt);
++
++/**
++ * fetches IP6 header analysis results
++ *
++ * Return:  pointer to analysis results structure which is stored in internal
++ *          packet area.
++ *
++ */
++eth_ip6_hdr_info *net_rx_pkt_get_ip6_info(struct NetRxPkt *pkt);
++
++/**
++ * fetches IP4 header analysis results
++ *
++ * Return:  pointer to analysis results structure which is stored in internal
++ *          packet area.
++ *
++ */
++eth_ip4_hdr_info *net_rx_pkt_get_ip4_info(struct NetRxPkt *pkt);
++
++/**
++ * fetches L4 header analysis results
++ *
++ * Return:  pointer to analysis results structure which is stored in internal
++ *          packet area.
++ *
++ */
++eth_l4_hdr_info *net_rx_pkt_get_l4_info(struct NetRxPkt *pkt);
++
++typedef enum {
++    NetPktRssIpV4,
++    NetPktRssIpV4Tcp,
++    NetPktRssIpV6Tcp,
++    NetPktRssIpV6,
++    NetPktRssIpV6Ex
++} NetRxPktRssType;
++
++/**
++* calculates RSS hash for packet
++*
++* @pkt:            packet
++* @type:           RSS hash type
++*
++* Return:  Toeplitz RSS hash.
++*
++*/
++uint32_t
++net_rx_pkt_calc_rss_hash(struct NetRxPkt *pkt,
++                         NetRxPktRssType type,
++                         uint8_t *key);
++
++/**
++* fetches IP identification for the packet
++*
++* @pkt:            packet
++*
++*/
++uint16_t net_rx_pkt_get_ip_id(struct NetRxPkt *pkt);
++
++/**
++* check if given packet is a TCP ACK packet
++*
++* @pkt:            packet
++*
++*/
++bool net_rx_pkt_is_tcp_ack(struct NetRxPkt *pkt);
++
++/**
++* check if given packet contains TCP data
++*
++* @pkt:            packet
++*
++*/
++bool net_rx_pkt_has_tcp_data(struct NetRxPkt *pkt);
++
++/**
+  * returns virtio header stored in rx context
+  *
+  * @pkt:            packet
+@@ -123,6 +220,37 @@ bool net_rx_pkt_is_vlan_stripped(struct NetRxPkt *pkt);
+ bool net_rx_pkt_has_virt_hdr(struct NetRxPkt *pkt);
+ 
+ /**
++* attach scatter-gather data to rx packet
++*
++* @pkt:            packet
++* @iov:            received data scatter-gather list
++* @iovcnt          number of elements in iov
++* @iovoff          data start offset in the iov
++* @strip_vlan:     should the module strip vlan from data
++*
++*/
++void net_rx_pkt_attach_iovec(struct NetRxPkt *pkt,
++                                const struct iovec *iov,
++                                int iovcnt, size_t iovoff,
++                                bool strip_vlan);
++
++/**
++* attach scatter-gather data to rx packet
++*
++* @pkt:            packet
++* @iov:            received data scatter-gather list
++* @iovcnt          number of elements in iov
++* @iovoff          data start offset in the iov
++* @strip_vlan:     should the module strip vlan from data
++* @vet:            VLAN tag Ethernet type
++*
++*/
++void net_rx_pkt_attach_iovec_ex(struct NetRxPkt *pkt,
++                                   const struct iovec *iov, int iovcnt,
++                                   size_t iovoff, bool strip_vlan,
++                                   uint16_t vet);
++
++/**
+  * attach data to rx packet
+  *
+  * @pkt:            packet
+@@ -131,8 +259,17 @@ bool net_rx_pkt_has_virt_hdr(struct NetRxPkt *pkt);
+  * @strip_vlan:     should the module strip vlan from data
+  *
+  */
+-void net_rx_pkt_attach_data(struct NetRxPkt *pkt, const void *data,
+-    size_t len, bool strip_vlan);
++static inline void
++net_rx_pkt_attach_data(struct NetRxPkt *pkt, const void *data,
++                          size_t len, bool strip_vlan)
++{
++    const struct iovec iov = {
++        .iov_base = (void *) data,
++        .iov_len = len
++    };
++
++    net_rx_pkt_attach_iovec(pkt, &iov, 1, 0, strip_vlan);
++}
+ 
+ /**
+  * returns io vector that holds the attached data
+@@ -144,6 +281,15 @@ void net_rx_pkt_attach_data(struct NetRxPkt *pkt, const void *data,
+ struct iovec *net_rx_pkt_get_iovec(struct NetRxPkt *pkt);
+ 
+ /**
++* returns io vector length that holds the attached data
++*
++* @pkt:            packet
++* @ret:            IOVec length
++*
++*/
++uint16_t net_rx_pkt_get_iovec_len(struct NetRxPkt *pkt);
++
++/**
+  * prints rx packet data if debug is enabled
+  *
+  * @pkt:            packet
+@@ -162,6 +308,17 @@ void net_rx_pkt_set_vhdr(struct NetRxPkt *pkt,
+     struct virtio_net_hdr *vhdr);
+ 
+ /**
++* copy passed vhdr data to packet context
++*
++* @pkt:            packet
++* @iov:            VHDR iov
++* @iovcnt:         VHDR iov array size
++*
++*/
++void net_rx_pkt_set_vhdr_iovec(struct NetRxPkt *pkt,
++    const struct iovec *iov, int iovcnt);
++
++/**
+  * save packet type in packet context
+  *
+  * @pkt:            packet
+@@ -171,4 +328,36 @@ void net_rx_pkt_set_vhdr(struct NetRxPkt *pkt,
+ void net_rx_pkt_set_packet_type(struct NetRxPkt *pkt,
+     eth_pkt_types_e packet_type);
+ 
++/**
++* validate TCP/UDP checksum of the packet
++*
++* @pkt:            packet
++* @csum_valid:     checksum validation result
++* @ret:            true if validation was performed, false in case packet is
++*                  not TCP/UDP or checksum validation is not possible
++*
++*/
++bool net_rx_pkt_validate_l4_csum(struct NetRxPkt *pkt, bool *csum_valid);
++
++/**
++* validate IPv4 checksum of the packet
++*
++* @pkt:            packet
++* @csum_valid:     checksum validation result
++* @ret:            true if validation was performed, false in case packet is
++*                  not TCP/UDP or checksum validation is not possible
++*
++*/
++bool net_rx_pkt_validate_l3_csum(struct NetRxPkt *pkt, bool *csum_valid);
++
++/**
++* fix IPv4 checksum of the packet
++*
++* @pkt:            packet
++* @ret:            true if checksum was fixed, false in case packet is
++*                  not TCP/UDP or checksum correction is not possible
++*
++*/
++bool net_rx_pkt_fix_l4_csum(struct NetRxPkt *pkt);
++
+ #endif
+diff --git a/hw/net/net_tx_pkt.c b/hw/net/net_tx_pkt.c
+index 94c7e3d..a64f51c 100644
+--- a/hw/net/net_tx_pkt.c
++++ b/hw/net/net_tx_pkt.c
+@@ -15,12 +15,8 @@
+  *
+  */
+ 
+-#include "qemu/osdep.h"
+-#include "hw/hw.h"
+ #include "net_tx_pkt.h"
+ #include "net/eth.h"
+-#include "qemu-common.h"
+-#include "qemu/iov.h"
+ #include "net/checksum.h"
+ #include "net/tap.h"
+ #include "net/net.h"
+@@ -44,6 +40,7 @@ struct NetTxPkt {
+     struct iovec *vec;
+ 
+     uint8_t l2_hdr[ETH_MAX_L2_HDR_LEN];
++    uint8_t l3_hdr[ETH_MAX_IP_DGRAM_LEN];
+ 
+     uint32_t payload_len;
+ 
+@@ -53,6 +50,8 @@ struct NetTxPkt {
+     uint16_t hdr_len;
+     eth_pkt_types_e packet_type;
+     uint8_t l4proto;
++
++    bool is_loopback;
+ };
+ 
+ void net_tx_pkt_init(struct NetTxPkt **pkt, uint32_t max_frags,
+@@ -72,8 +71,7 @@ void net_tx_pkt_init(struct NetTxPkt **pkt, uint32_t max_frags,
+     p->vec[NET_TX_PKT_VHDR_FRAG].iov_len =
+         p->has_virt_hdr ? sizeof p->virt_hdr : 0;
+     p->vec[NET_TX_PKT_L2HDR_FRAG].iov_base = &p->l2_hdr;
+-    p->vec[NET_TX_PKT_L3HDR_FRAG].iov_base = NULL;
+-    p->vec[NET_TX_PKT_L3HDR_FRAG].iov_len = 0;
++    p->vec[NET_TX_PKT_L3HDR_FRAG].iov_base = &p->l3_hdr;
+ 
+     *pkt = p;
+ }
+@@ -87,38 +85,52 @@ void net_tx_pkt_uninit(struct NetTxPkt *pkt)
+     }
+ }
+ 
+-void net_tx_pkt_update_ip_checksums(struct NetTxPkt *pkt)
++void net_tx_pkt_update_ip_hdr_checksum(struct NetTxPkt *pkt)
+ {
+     uint16_t csum;
+-    uint32_t ph_raw_csum;
+     assert(pkt);
+-    uint8_t gso_type = pkt->virt_hdr.gso_type & ~VIRTIO_NET_HDR_GSO_ECN;
+     struct ip_header *ip_hdr;
+-
+-    if (VIRTIO_NET_HDR_GSO_TCPV4 != gso_type &&
+-        VIRTIO_NET_HDR_GSO_UDP != gso_type) {
+-        return;
+-    }
+-
+     ip_hdr = pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_base;
+ 
+-    if (pkt->payload_len + pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_len >
+-        ETH_MAX_IP_DGRAM_LEN) {
+-        return;
+-    }
+-
+     ip_hdr->ip_len = cpu_to_be16(pkt->payload_len +
+         pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_len);
+ 
+-    /* Calculate IP header checksum                    */
+     ip_hdr->ip_sum = 0;
+     csum = net_raw_checksum((uint8_t *)ip_hdr,
+         pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_len);
+     ip_hdr->ip_sum = cpu_to_be16(csum);
++}
++
++void net_tx_pkt_update_ip_checksums(struct NetTxPkt *pkt)
++{
++    uint16_t csum;
++    uint32_t cntr, cso;
++    assert(pkt);
++    uint8_t gso_type = pkt->virt_hdr.gso_type & ~VIRTIO_NET_HDR_GSO_ECN;
++    void *ip_hdr = pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_base;
++
++    if (pkt->payload_len + pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_len >
++        ETH_MAX_IP_DGRAM_LEN) {
++        return;
++    }
++
++    if (gso_type == VIRTIO_NET_HDR_GSO_TCPV4 ||
++        gso_type == VIRTIO_NET_HDR_GSO_UDP) {
++        /* Calculate IP header checksum */
++        net_tx_pkt_update_ip_hdr_checksum(pkt);
++
++        /* Calculate IP pseudo header checksum */
++        cntr = eth_calc_ip4_pseudo_hdr_csum(ip_hdr, pkt->payload_len, &cso);
++        csum = cpu_to_be16(~net_checksum_finish(cntr));
++    } else if (gso_type == VIRTIO_NET_HDR_GSO_TCPV6) {
++        /* Calculate IP pseudo header checksum */
++        cntr = eth_calc_ip6_pseudo_hdr_csum(ip_hdr, pkt->payload_len,
++                                            IP_PROTO_TCP, &cso);
++        csum = cpu_to_be16(~net_checksum_finish(cntr));
++    } else {
++        return;
++    }
+ 
+-    /* Calculate IP pseudo header checksum             */
+-    ph_raw_csum = eth_calc_pseudo_hdr_csum(ip_hdr, pkt->payload_len);
+-    csum = cpu_to_be16(~net_checksum_finish(ph_raw_csum));
+     iov_from_buf(&pkt->vec[NET_TX_PKT_PL_START_FRAG], pkt->payload_frags,
+                  pkt->virt_hdr.csum_offset, &csum, sizeof(csum));
+ }
+@@ -160,15 +172,19 @@ static bool net_tx_pkt_parse_headers(struct NetTxPkt *pkt)
+ 
+     if (bytes_read < l2_hdr->iov_len) {
+         l2_hdr->iov_len = 0;
++        l3_hdr->iov_len = 0;
++        pkt->packet_type = ETH_PKT_UCAST;
+         return false;
++    } else {
++        l2_hdr->iov_len = ETH_MAX_L2_HDR_LEN;
++        l2_hdr->iov_len = eth_get_l2_hdr_length(l2_hdr->iov_base);
++        pkt->packet_type = get_eth_packet_type(l2_hdr->iov_base);
+     }
+ 
+-    l3_proto = eth_get_l3_proto(l2_hdr->iov_base, l2_hdr->iov_len);
++    l3_proto = eth_get_l3_proto(l2_hdr, 1, l2_hdr->iov_len);
+ 
+     switch (l3_proto) {
+     case ETH_P_IP:
+-        l3_hdr->iov_base = g_malloc(ETH_MAX_IP4_HDR_LEN);
+-
+         bytes_read = iov_to_buf(pkt->raw, pkt->raw_frags, l2_hdr->iov_len,
+                                 l3_hdr->iov_base, sizeof(struct ip_header));
+ 
+@@ -178,27 +194,45 @@ static bool net_tx_pkt_parse_headers(struct NetTxPkt *pkt)
+         }
+ 
+         l3_hdr->iov_len = IP_HDR_GET_LEN(l3_hdr->iov_base);
+-        pkt->l4proto = ((struct ip_header *) l3_hdr->iov_base)->ip_p;
+ 
+-        /* copy optional IPv4 header data */
+-        bytes_read = iov_to_buf(pkt->raw, pkt->raw_frags,
+-                                l2_hdr->iov_len + sizeof(struct ip_header),
+-                                l3_hdr->iov_base + sizeof(struct ip_header),
+-                                l3_hdr->iov_len - sizeof(struct ip_header));
+-        if (bytes_read < l3_hdr->iov_len - sizeof(struct ip_header)) {
++        if (l3_hdr->iov_len < sizeof(struct ip_header)) {
+             l3_hdr->iov_len = 0;
+             return false;
+         }
++
++        pkt->l4proto = ((struct ip_header *) l3_hdr->iov_base)->ip_p;
++
++        if (IP_HDR_GET_LEN(l3_hdr->iov_base) != sizeof(struct ip_header)) {
++            /* copy optional IPv4 header data if any*/
++            bytes_read = iov_to_buf(pkt->raw, pkt->raw_frags,
++                                    l2_hdr->iov_len + sizeof(struct ip_header),
++                                    l3_hdr->iov_base + sizeof(struct ip_header),
++                                    l3_hdr->iov_len - sizeof(struct ip_header));
++            if (bytes_read < l3_hdr->iov_len - sizeof(struct ip_header)) {
++                l3_hdr->iov_len = 0;
++                return false;
++            }
++        }
++
+         break;
+ 
+     case ETH_P_IPV6:
++    {
++        eth_ip6_hdr_info hdrinfo;
++
+         if (!eth_parse_ipv6_hdr(pkt->raw, pkt->raw_frags, l2_hdr->iov_len,
+-                               &pkt->l4proto, &full_ip6hdr_len)) {
++                                &hdrinfo)) {
+             l3_hdr->iov_len = 0;
+             return false;
+         }
+ 
+-        l3_hdr->iov_base = g_malloc(full_ip6hdr_len);
++        pkt->l4proto = hdrinfo.l4proto;
++        full_ip6hdr_len = hdrinfo.full_hdr_len;
++
++        if (full_ip6hdr_len > ETH_MAX_IP_DGRAM_LEN) {
++            l3_hdr->iov_len = 0;
++            return false;
++        }
+ 
+         bytes_read = iov_to_buf(pkt->raw, pkt->raw_frags, l2_hdr->iov_len,
+                                 l3_hdr->iov_base, full_ip6hdr_len);
+@@ -210,40 +244,35 @@ static bool net_tx_pkt_parse_headers(struct NetTxPkt *pkt)
+             l3_hdr->iov_len = full_ip6hdr_len;
+         }
+         break;
+-
++    }
+     default:
+         l3_hdr->iov_len = 0;
+         break;
+     }
+ 
+     net_tx_pkt_calculate_hdr_len(pkt);
+-    pkt->packet_type = get_eth_packet_type(l2_hdr->iov_base);
+     return true;
+ }
+ 
+-static bool net_tx_pkt_rebuild_payload(struct NetTxPkt *pkt)
++static void net_tx_pkt_rebuild_payload(struct NetTxPkt *pkt)
+ {
+-    size_t payload_len = iov_size(pkt->raw, pkt->raw_frags) - pkt->hdr_len;
+-
++    pkt->payload_len = iov_size(pkt->raw, pkt->raw_frags) - pkt->hdr_len;
+     pkt->payload_frags = iov_copy(&pkt->vec[NET_TX_PKT_PL_START_FRAG],
+                                 pkt->max_payload_frags,
+                                 pkt->raw, pkt->raw_frags,
+-                                pkt->hdr_len, payload_len);
++                                pkt->hdr_len, pkt->payload_len);
++}
+ 
+-    if (pkt->payload_frags != (uint32_t) -1) {
+-        pkt->payload_len = payload_len;
++bool net_tx_pkt_parse(struct NetTxPkt *pkt)
++{
++    if (net_tx_pkt_parse_headers(pkt)) {
++        net_tx_pkt_rebuild_payload(pkt);
+         return true;
+     } else {
+         return false;
+     }
+ }
+ 
+-bool net_tx_pkt_parse(struct NetTxPkt *pkt)
+-{
+-    return net_tx_pkt_parse_headers(pkt) &&
+-           net_tx_pkt_rebuild_payload(pkt);
+-}
+-
+ struct virtio_net_hdr *net_tx_pkt_get_vhdr(struct NetTxPkt *pkt)
+ {
+     assert(pkt);
+@@ -256,7 +285,7 @@ static uint8_t net_tx_pkt_get_gso_type(struct NetTxPkt *pkt,
+     uint8_t rc = VIRTIO_NET_HDR_GSO_NONE;
+     uint16_t l3_proto;
+ 
+-    l3_proto = eth_get_l3_proto(pkt->vec[NET_TX_PKT_L2HDR_FRAG].iov_base,
++    l3_proto = eth_get_l3_proto(&pkt->vec[NET_TX_PKT_L2HDR_FRAG], 1,
+         pkt->vec[NET_TX_PKT_L2HDR_FRAG].iov_len);
+ 
+     if (!tso_enable) {
+@@ -288,7 +317,7 @@ void net_tx_pkt_build_vheader(struct NetTxPkt *pkt, bool tso_enable,
+         break;
+ 
+     case VIRTIO_NET_HDR_GSO_UDP:
+-        pkt->virt_hdr.gso_size = IP_FRAG_ALIGN_SIZE(gso_size);
++        pkt->virt_hdr.gso_size = gso_size;
+         pkt->virt_hdr.hdr_len = pkt->hdr_len + sizeof(struct udp_header);
+         break;
+ 
+@@ -297,7 +326,7 @@ void net_tx_pkt_build_vheader(struct NetTxPkt *pkt, bool tso_enable,
+         iov_to_buf(&pkt->vec[NET_TX_PKT_PL_START_FRAG], pkt->payload_frags,
+                    0, &l4hdr, sizeof(l4hdr));
+         pkt->virt_hdr.hdr_len = pkt->hdr_len + l4hdr.th_off * sizeof(uint32_t);
+-        pkt->virt_hdr.gso_size = IP_FRAG_ALIGN_SIZE(gso_size);
++        pkt->virt_hdr.gso_size = gso_size;
+         break;
+ 
+     default:
+@@ -322,13 +351,14 @@ void net_tx_pkt_build_vheader(struct NetTxPkt *pkt, bool tso_enable,
+     }
+ }
+ 
+-void net_tx_pkt_setup_vlan_header(struct NetTxPkt *pkt, uint16_t vlan)
++void net_tx_pkt_setup_vlan_header_ex(struct NetTxPkt *pkt,
++    uint16_t vlan, uint16_t vlan_ethtype)
+ {
+     bool is_new;
+     assert(pkt);
+ 
+-    eth_setup_vlan_headers(pkt->vec[NET_TX_PKT_L2HDR_FRAG].iov_base,
+-        vlan, &is_new);
++    eth_setup_vlan_headers_ex(pkt->vec[NET_TX_PKT_L2HDR_FRAG].iov_base,
++        vlan, vlan_ethtype, &is_new);
+ 
+     /* update l2hdrlen */
+     if (is_new) {
+@@ -354,14 +384,19 @@ bool net_tx_pkt_add_raw_fragment(struct NetTxPkt *pkt, hwaddr pa,
+     mapped_len = len;
+ 
+     ventry->iov_base = cpu_physical_memory_map(pa, &mapped_len, false);
+-    ventry->iov_len = mapped_len;
+-    pkt->raw_frags += !!ventry->iov_base;
+ 
+-    if ((ventry->iov_base == NULL) || (len != mapped_len)) {
++    if ((ventry->iov_base != NULL) && (len == mapped_len)) {
++        ventry->iov_len = mapped_len;
++        pkt->raw_frags++;
++        return true;
++    } else {
+         return false;
+     }
++}
+ 
+-    return true;
++bool net_tx_pkt_has_fragments(struct NetTxPkt *pkt)
++{
++    return pkt->raw_frags > 0;
+ }
+ 
+ eth_pkt_types_e net_tx_pkt_get_packet_type(struct NetTxPkt *pkt)
+@@ -401,14 +436,8 @@ void net_tx_pkt_reset(struct NetTxPkt *pkt)
+ 
+     memset(&pkt->virt_hdr, 0, sizeof(pkt->virt_hdr));
+ 
+-    g_free(pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_base);
+-    pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_base = NULL;
+-
+     assert(pkt->vec);
+-    for (i = NET_TX_PKT_L2HDR_FRAG;
+-         i < pkt->payload_frags + NET_TX_PKT_PL_START_FRAG; i++) {
+-        pkt->vec[i].iov_len = 0;
+-    }
++
+     pkt->payload_len = 0;
+     pkt->payload_frags = 0;
+ 
+@@ -417,12 +446,10 @@ void net_tx_pkt_reset(struct NetTxPkt *pkt)
+         assert(pkt->raw[i].iov_base);
+         cpu_physical_memory_unmap(pkt->raw[i].iov_base, pkt->raw[i].iov_len,
+                                   false, pkt->raw[i].iov_len);
+-        pkt->raw[i].iov_len = 0;
+     }
+     pkt->raw_frags = 0;
+ 
+     pkt->hdr_len = 0;
+-    pkt->packet_type = 0;
+     pkt->l4proto = 0;
+ }
+ 
+@@ -431,6 +458,7 @@ static void net_tx_pkt_do_sw_csum(struct NetTxPkt *pkt)
+     struct iovec *iov = &pkt->vec[NET_TX_PKT_L2HDR_FRAG];
+     uint32_t csum_cntr;
+     uint16_t csum = 0;
++    uint32_t cso;
+     /* num of iovec without vhdr */
+     uint32_t iov_len = pkt->payload_frags + NET_TX_PKT_PL_START_FRAG - 1;
+     uint16_t csl;
+@@ -443,12 +471,13 @@ static void net_tx_pkt_do_sw_csum(struct NetTxPkt *pkt)
+     /* Calculate L4 TCP/UDP checksum */
+     csl = pkt->payload_len;
+ 
+-    /* data checksum */
+-    csum_cntr =
+-        net_checksum_add_iov(iov, iov_len, pkt->virt_hdr.csum_start, csl);
+     /* add pseudo header to csum */
+     iphdr = pkt->vec[NET_TX_PKT_L3HDR_FRAG].iov_base;
+-    csum_cntr += eth_calc_pseudo_hdr_csum(iphdr, csl);
++    csum_cntr = eth_calc_ip4_pseudo_hdr_csum(iphdr, csl, &cso);
++
++    /* data checksum */
++    csum_cntr +=
++        net_checksum_add_iov(iov, iov_len, pkt->virt_hdr.csum_start, csl, cso);
+ 
+     /* Put the checksum obtained into the packet */
+     csum = cpu_to_be16(net_checksum_finish(csum_cntr));
+@@ -471,7 +500,7 @@ static size_t net_tx_pkt_fetch_fragment(struct NetTxPkt *pkt,
+ 
+     *dst_idx = NET_TX_PKT_FRAGMENT_HEADER_NUM;
+ 
+-    while (fetched < pkt->virt_hdr.gso_size) {
++    while (fetched < IP_FRAG_ALIGN_SIZE(pkt->virt_hdr.gso_size)) {
+ 
+         /* no more place in fragment iov */
+         if (*dst_idx == NET_MAX_FRAG_SG_LIST) {
+@@ -486,7 +515,7 @@ static size_t net_tx_pkt_fetch_fragment(struct NetTxPkt *pkt,
+ 
+         dst[*dst_idx].iov_base = src[*src_idx].iov_base + *src_offset;
+         dst[*dst_idx].iov_len = MIN(src[*src_idx].iov_len - *src_offset,
+-            pkt->virt_hdr.gso_size - fetched);
++            IP_FRAG_ALIGN_SIZE(pkt->virt_hdr.gso_size) - fetched);
+ 
+         *src_offset += dst[*dst_idx].iov_len;
+         fetched += dst[*dst_idx].iov_len;
+@@ -502,6 +531,16 @@ static size_t net_tx_pkt_fetch_fragment(struct NetTxPkt *pkt,
+     return fetched;
+ }
+ 
++static inline void net_tx_pkt_sendv(struct NetTxPkt *pkt,
++    NetClientState *nc, const struct iovec *iov, int iov_cnt)
++{
++    if (pkt->is_loopback) {
++        nc->info->receive_iov(nc, iov, iov_cnt);
++    } else {
++        qemu_sendv_packet(nc, iov, iov_cnt);
++    }
++}
++
+ static bool net_tx_pkt_do_sw_fragmentation(struct NetTxPkt *pkt,
+     NetClientState *nc)
+ {
+@@ -540,7 +579,7 @@ static bool net_tx_pkt_do_sw_fragmentation(struct NetTxPkt *pkt,
+ 
+         eth_fix_ip4_checksum(l3_iov_base, l3_iov_len);
+ 
+-        qemu_sendv_packet(nc, fragment, dst_idx);
++        net_tx_pkt_sendv(pkt, nc, fragment, dst_idx);
+ 
+         fragment_offset += fragment_len;
+ 
+@@ -572,10 +611,21 @@ bool net_tx_pkt_send(struct NetTxPkt *pkt, NetClientState *nc)
+ 
+     if (pkt->has_virt_hdr ||
+         pkt->virt_hdr.gso_type == VIRTIO_NET_HDR_GSO_NONE) {
+-        qemu_sendv_packet(nc, pkt->vec,
++        net_tx_pkt_sendv(pkt, nc, pkt->vec,
+             pkt->payload_frags + NET_TX_PKT_PL_START_FRAG);
+         return true;
+     }
+ 
+     return net_tx_pkt_do_sw_fragmentation(pkt, nc);
+ }
++
++bool net_tx_pkt_send_loopback(struct NetTxPkt *pkt, NetClientState *nc)
++{
++    bool res;
++
++    pkt->is_loopback = true;
++    res = net_tx_pkt_send(pkt, nc);
++    pkt->is_loopback = false;
++
++    return res;
++}
+diff --git a/hw/net/net_tx_pkt.h b/hw/net/net_tx_pkt.h
+index be2e117..e49772d 100644
+--- a/hw/net/net_tx_pkt.h
++++ b/hw/net/net_tx_pkt.h
+@@ -18,6 +18,7 @@
+ #ifndef NET_TX_PKT_H
+ #define NET_TX_PKT_H
+ 
++#include "qemu/osdep.h"
+ #include "net/eth.h"
+ #include "exec/hwaddr.h"
+ 
+@@ -64,13 +65,29 @@ void net_tx_pkt_build_vheader(struct NetTxPkt *pkt, bool tso_enable,
+     bool csum_enable, uint32_t gso_size);
+ 
+ /**
+- * updates vlan tag, and adds vlan header in case it is missing
+- *
+- * @pkt:            packet
+- * @vlan:           VLAN tag
+- *
+- */
+-void net_tx_pkt_setup_vlan_header(struct NetTxPkt *pkt, uint16_t vlan);
++* updates vlan tag, and adds vlan header with custom ethernet type
++* in case it is missing.
++*
++* @pkt:            packet
++* @vlan:           VLAN tag
++* @vlan_ethtype:   VLAN header Ethernet type
++*
++*/
++void net_tx_pkt_setup_vlan_header_ex(struct NetTxPkt *pkt,
++    uint16_t vlan, uint16_t vlan_ethtype);
++
++/**
++* updates vlan tag, and adds vlan header in case it is missing
++*
++* @pkt:            packet
++* @vlan:           VLAN tag
++*
++*/
++static inline void
++net_tx_pkt_setup_vlan_header(struct NetTxPkt *pkt, uint16_t vlan)
++{
++    net_tx_pkt_setup_vlan_header_ex(pkt, vlan, ETH_P_VLAN);
++}
+ 
+ /**
+  * populate data fragment into pkt context.
+@@ -84,7 +101,7 @@ bool net_tx_pkt_add_raw_fragment(struct NetTxPkt *pkt, hwaddr pa,
+     size_t len);
+ 
+ /**
+- * fix ip header fields and calculate checksums needed.
++ * Fix ip header fields and calculate IP header and pseudo header checksums.
+  *
+  * @pkt:            packet
+  *
+@@ -92,6 +109,14 @@ bool net_tx_pkt_add_raw_fragment(struct NetTxPkt *pkt, hwaddr pa,
+ void net_tx_pkt_update_ip_checksums(struct NetTxPkt *pkt);
+ 
+ /**
++ * Calculate the IP header checksum.
++ *
++ * @pkt:            packet
++ *
++ */
++void net_tx_pkt_update_ip_hdr_checksum(struct NetTxPkt *pkt);
++
++/**
+  * get length of all populated data.
+  *
+  * @pkt:            packet
+@@ -136,6 +161,17 @@ void net_tx_pkt_reset(struct NetTxPkt *pkt);
+ bool net_tx_pkt_send(struct NetTxPkt *pkt, NetClientState *nc);
+ 
+ /**
++* Redirect packet directly to receive path (emulate loopback phy).
++* Handles sw offloads if vhdr is not supported.
++*
++* @pkt:            packet
++* @nc:             NetClientState
++* @ret:            operation result
++*
++*/
++bool net_tx_pkt_send_loopback(struct NetTxPkt *pkt, NetClientState *nc);
++
++/**
+  * parse raw packet data and analyze offload requirements.
+  *
+  * @pkt:            packet
+@@ -143,4 +179,12 @@ bool net_tx_pkt_send(struct NetTxPkt *pkt, NetClientState *nc);
+  */
+ bool net_tx_pkt_parse(struct NetTxPkt *pkt);
+ 
++/**
++* indicates if there are data fragments held by this packet object.
++*
++* @pkt:            packet
++*
++*/
++bool net_tx_pkt_has_fragments(struct NetTxPkt *pkt);
++
+ #endif
+diff --git a/include/net/checksum.h b/include/net/checksum.h
+index dd8b4f6..7df472c 100644
+--- a/include/net/checksum.h
++++ b/include/net/checksum.h
+@@ -46,10 +46,12 @@ net_raw_checksum(uint8_t *data, int length)
+  * @iov_cnt: number of array elements
+  * @iov_off: starting iov offset for checksumming
+  * @size: length of data to be checksummed
++ * @csum_offset: offset of the checksum chunk
+  */
+ uint32_t net_checksum_add_iov(const struct iovec *iov,
+                               const unsigned int iov_cnt,
+-                              uint32_t iov_off, uint32_t size);
++                              uint32_t iov_off, uint32_t size,
++                              uint32_t csum_offset);
+ 
+ typedef struct toeplitz_key_st {
+     uint32_t leftmost_32_bits;
+diff --git a/include/net/eth.h b/include/net/eth.h
+index 5a32259..2013175 100644
+--- a/include/net/eth.h
++++ b/include/net/eth.h
+@@ -72,6 +72,8 @@ typedef struct tcp_header {
+ #define TCP_HEADER_FLAGS(tcp) \
+     TCP_FLAGS_ONLY(be16_to_cpu((tcp)->th_offset_flags))
+ 
++#define TCP_FLAG_ACK  0x10
++
+ #define TCP_HEADER_DATA_OFFSET(tcp) \
+     (((be16_to_cpu((tcp)->th_offset_flags) >> 12) & 0xf) << 2)
+ 
+@@ -116,11 +118,34 @@ struct ip6_header {
+     struct in6_address ip6_dst;    /* destination address */
+ };
+ 
++typedef struct ip6_pseudo_header {
++    struct in6_address ip6_src;
++    struct in6_address ip6_dst;
++    uint32_t           len;
++    uint8_t            zero[3];
++    uint8_t            next_hdr;
++} ip6_pseudo_header;
++
+ struct ip6_ext_hdr {
+     uint8_t        ip6r_nxt;   /* next header */
+     uint8_t        ip6r_len;   /* length in units of 8 octets */
+ };
+ 
++struct ip6_ext_hdr_routing {
++    uint8_t     nxt;
++    uint8_t     len;
++    uint8_t     rtype;
++    uint8_t     segleft;
++    uint8_t     rsvd[4];
++};
++
++struct ip6_option_hdr {
++#define IP6_OPT_PAD1   (0x00)
++#define IP6_OPT_HOME   (0xC9)
++    uint8_t type;
++    uint8_t len;
++};
++
+ struct udp_hdr {
+   uint16_t uh_sport;           /* source port */
+   uint16_t uh_dport;           /* destination port */
+@@ -169,19 +194,22 @@ struct tcp_hdr {
+ #define PKT_GET_IP_HDR(p)         \
+     ((struct ip_header *)(((uint8_t *)(p)) + eth_get_l2_hdr_length(p)))
+ #define IP_HDR_GET_LEN(p)         \
+-    ((((struct ip_header *)p)->ip_ver_len & 0x0F) << 2)
++    ((((struct ip_header *)(p))->ip_ver_len & 0x0F) << 2)
+ #define PKT_GET_IP_HDR_LEN(p)     \
+     (IP_HDR_GET_LEN(PKT_GET_IP_HDR(p)))
+ #define PKT_GET_IP6_HDR(p)        \
+     ((struct ip6_header *) (((uint8_t *)(p)) + eth_get_l2_hdr_length(p)))
+ #define IP_HEADER_VERSION(ip)     \
+-    ((ip->ip_ver_len >> 4)&0xf)
++    (((ip)->ip_ver_len >> 4) & 0xf)
++#define IP4_IS_FRAGMENT(ip) \
++    ((be16_to_cpu((ip)->ip_off) & (IP_OFFMASK | IP_MF)) != 0)
+ 
+ #define ETH_P_IP                  (0x0800)      /* Internet Protocol packet  */
+ #define ETH_P_ARP                 (0x0806)      /* Address Resolution packet */
+ #define ETH_P_IPV6                (0x86dd)
+ #define ETH_P_VLAN                (0x8100)
+ #define ETH_P_DVLAN               (0x88a8)
++#define ETH_P_UNKNOWN             (0xffff)
+ #define VLAN_VID_MASK             0x0fff
+ #define IP_HEADER_VERSION_4       (4)
+ #define IP_HEADER_VERSION_6       (6)
+@@ -266,7 +294,7 @@ eth_get_l2_hdr_length(const void *p)
+     case ETH_P_VLAN:
+         return sizeof(struct eth_header) + sizeof(struct vlan_header);
+     case ETH_P_DVLAN:
+-        if (hvlan->h_proto == ETH_P_VLAN) {
++        if (be16_to_cpu(hvlan->h_proto) == ETH_P_VLAN) {
+             return sizeof(struct eth_header) + 2 * sizeof(struct vlan_header);
+         } else {
+             return sizeof(struct eth_header) + sizeof(struct vlan_header);
+@@ -276,6 +304,19 @@ eth_get_l2_hdr_length(const void *p)
+     }
+ }
+ 
++static inline uint32_t
++eth_get_l2_hdr_length_iov(const struct iovec *iov, int iovcnt)
++{
++    uint8_t p[sizeof(struct eth_header) + sizeof(struct vlan_header)];
++    size_t copied = iov_to_buf(iov, iovcnt, 0, p, ARRAY_SIZE(p));
++
++    if (copied < ARRAY_SIZE(p)) {
++        return copied;
++    }
++
++    return eth_get_l2_hdr_length(p);
++}
++
+ static inline uint16_t
+ eth_get_pkt_tci(const void *p)
+ {
+@@ -290,51 +331,67 @@ eth_get_pkt_tci(const void *p)
+     }
+ }
+ 
+-static inline bool
+-eth_strip_vlan(const void *p, uint8_t *new_ehdr_buf,
+-               uint16_t *payload_offset, uint16_t *tci)
+-{
+-    uint16_t proto = be16_to_cpu(PKT_GET_ETH_HDR(p)->h_proto);
+-    struct vlan_header *hvlan = PKT_GET_VLAN_HDR(p);
+-    struct eth_header *new_ehdr = (struct eth_header *) new_ehdr_buf;
++bool
++eth_strip_vlan(const struct iovec *iov, int iovcnt, size_t iovoff,
++               uint8_t *new_ehdr_buf,
++               uint16_t *payload_offset, uint16_t *tci);
+ 
+-    switch (proto) {
+-    case ETH_P_VLAN:
+-    case ETH_P_DVLAN:
+-        memcpy(new_ehdr->h_source, PKT_GET_ETH_HDR(p)->h_source, ETH_ALEN);
+-        memcpy(new_ehdr->h_dest, PKT_GET_ETH_HDR(p)->h_dest, ETH_ALEN);
+-        new_ehdr->h_proto = hvlan->h_proto;
+-        *tci = be16_to_cpu(hvlan->h_tci);
+-        *payload_offset =
+-            sizeof(struct eth_header) + sizeof(struct vlan_header);
+-        if (be16_to_cpu(new_ehdr->h_proto) == ETH_P_VLAN) {
+-            memcpy(PKT_GET_VLAN_HDR(new_ehdr),
+-                   PKT_GET_DVLAN_HDR(p),
+-                   sizeof(struct vlan_header));
+-            *payload_offset += sizeof(struct vlan_header);
+-        }
+-        return true;
+-    default:
+-        return false;
+-    }
+-}
++bool
++eth_strip_vlan_ex(const struct iovec *iov, int iovcnt, size_t iovoff,
++                  uint16_t vet, uint8_t *new_ehdr_buf,
++                  uint16_t *payload_offset, uint16_t *tci);
+ 
+-static inline uint16_t
+-eth_get_l3_proto(const void *l2hdr, size_t l2hdr_len)
++uint16_t
++eth_get_l3_proto(const struct iovec *l2hdr_iov, int iovcnt, size_t l2hdr_len);
++
++void eth_setup_vlan_headers_ex(struct eth_header *ehdr, uint16_t vlan_tag,
++    uint16_t vlan_ethtype, bool *is_new);
++
++static inline void
++eth_setup_vlan_headers(struct eth_header *ehdr, uint16_t vlan_tag,
++    bool *is_new)
+ {
+-    uint8_t *proto_ptr = (uint8_t *) l2hdr + l2hdr_len - sizeof(uint16_t);
+-    return be16_to_cpup((uint16_t *)proto_ptr);
++    eth_setup_vlan_headers_ex(ehdr, vlan_tag, ETH_P_VLAN, is_new);
+ }
+ 
+-void eth_setup_vlan_headers(struct eth_header *ehdr, uint16_t vlan_tag,
+-    bool *is_new);
+ 
+ uint8_t eth_get_gso_type(uint16_t l3_proto, uint8_t *l3_hdr, uint8_t l4proto);
+ 
+-void eth_get_protocols(const uint8_t *headers,
+-                       uint32_t hdr_length,
++typedef struct eth_ip6_hdr_info_st {
++    uint8_t l4proto;
++    size_t  full_hdr_len;
++    struct  ip6_header ip6_hdr;
++    bool    has_ext_hdrs;
++    bool    rss_ex_src_valid;
++    struct  in6_address rss_ex_src;
++    bool    rss_ex_dst_valid;
++    struct  in6_address rss_ex_dst;
++    bool    fragment;
++} eth_ip6_hdr_info;
++
++typedef struct eth_ip4_hdr_info_st {
++    struct ip_header ip4_hdr;
++    bool   fragment;
++} eth_ip4_hdr_info;
++
++typedef struct eth_l4_hdr_info_st {
++    union {
++        struct tcp_header tcp;
++        struct udp_header udp;
++    } hdr;
++
++    bool has_tcp_data;
++} eth_l4_hdr_info;
++
++void eth_get_protocols(const struct iovec *iov, int iovcnt,
+                        bool *isip4, bool *isip6,
+-                       bool *isudp, bool *istcp);
++                       bool *isudp, bool *istcp,
++                       size_t *l3hdr_off,
++                       size_t *l4hdr_off,
++                       size_t *l5hdr_off,
++                       eth_ip6_hdr_info *ip6hdr_info,
++                       eth_ip4_hdr_info *ip4hdr_info,
++                       eth_l4_hdr_info  *l4hdr_info);
+ 
+ void eth_setup_ip4_fragmentation(const void *l2hdr, size_t l2hdr_len,
+                                  void *l3hdr, size_t l3hdr_len,
+@@ -345,11 +402,18 @@ void
+ eth_fix_ip4_checksum(void *l3hdr, size_t l3hdr_len);
+ 
+ uint32_t
+-eth_calc_pseudo_hdr_csum(struct ip_header *iphdr, uint16_t csl);
++eth_calc_ip4_pseudo_hdr_csum(struct ip_header *iphdr,
++                             uint16_t csl,
++                             uint32_t *cso);
++
++uint32_t
++eth_calc_ip6_pseudo_hdr_csum(struct ip6_header *iphdr,
++                             uint16_t csl,
++                             uint8_t l4_proto,
++                             uint32_t *cso);
+ 
+ bool
+-eth_parse_ipv6_hdr(struct iovec *pkt, int pkt_frags,
+-                   size_t ip6hdr_off, uint8_t *l4proto,
+-                   size_t *full_hdr_len);
++eth_parse_ipv6_hdr(const struct iovec *pkt, int pkt_frags,
++                   size_t ip6hdr_off, eth_ip6_hdr_info *info);
+ 
+ #endif
+diff --git a/net/checksum.c b/net/checksum.c
+index d0fa424..196aaa3 100644
+--- a/net/checksum.c
++++ b/net/checksum.c
+@@ -95,12 +95,11 @@ void net_checksum_calculate(uint8_t *data, int length)
+ 
+ uint32_t
+ net_checksum_add_iov(const struct iovec *iov, const unsigned int iov_cnt,
+-                     uint32_t iov_off, uint32_t size)
++                     uint32_t iov_off, uint32_t size, uint32_t csum_offset)
+ {
+     size_t iovec_off, buf_off;
+     unsigned int i;
+     uint32_t res = 0;
+-    uint32_t seq = 0;
+ 
+     iovec_off = 0;
+     buf_off = 0;
+@@ -109,8 +108,8 @@ net_checksum_add_iov(const struct iovec *iov, const unsigned int iov_cnt,
+             size_t len = MIN((iovec_off + iov[i].iov_len) - iov_off , size);
+             void *chunk_buf = iov[i].iov_base + (iov_off - iovec_off);
+ 
+-            res += net_checksum_add_cont(len, chunk_buf, seq);
+-            seq += len;
++            res += net_checksum_add_cont(len, chunk_buf, csum_offset);
++            csum_offset += len;
+ 
+             buf_off += len;
+             iov_off += len;
+diff --git a/net/eth.c b/net/eth.c
+index 7e32d27..95fe15c 100644
+--- a/net/eth.c
++++ b/net/eth.c
+@@ -21,8 +21,8 @@
+ #include "qemu-common.h"
+ #include "net/tap.h"
+ 
+-void eth_setup_vlan_headers(struct eth_header *ehdr, uint16_t vlan_tag,
+-    bool *is_new)
++void eth_setup_vlan_headers_ex(struct eth_header *ehdr, uint16_t vlan_tag,
++    uint16_t vlan_ethtype, bool *is_new)
+ {
+     struct vlan_header *vhdr = PKT_GET_VLAN_HDR(ehdr);
+ 
+@@ -36,7 +36,7 @@ void eth_setup_vlan_headers(struct eth_header *ehdr, uint16_t vlan_tag,
+     default:
+         /* No VLAN header, put a new one */
+         vhdr->h_proto = ehdr->h_proto;
+-        ehdr->h_proto = cpu_to_be16(ETH_P_VLAN);
++        ehdr->h_proto = cpu_to_be16(vlan_ethtype);
+         *is_new = true;
+         break;
+     }
+@@ -79,26 +79,100 @@ eth_get_gso_type(uint16_t l3_proto, uint8_t *l3_hdr, uint8_t l4proto)
+     return VIRTIO_NET_HDR_GSO_NONE | ecn_state;
+ }
+ 
+-void eth_get_protocols(const uint8_t *headers,
+-                       uint32_t hdr_length,
++uint16_t
++eth_get_l3_proto(const struct iovec *l2hdr_iov, int iovcnt, size_t l2hdr_len)
++{
++    uint16_t proto;
++    size_t copied;
++    size_t size = iov_size(l2hdr_iov, iovcnt);
++    size_t proto_offset = l2hdr_len - sizeof(proto);
++
++    if (size < proto_offset) {
++        return ETH_P_UNKNOWN;
++    }
++
++    copied = iov_to_buf(l2hdr_iov, iovcnt, proto_offset,
++                        &proto, sizeof(proto));
++
++    return (copied == sizeof(proto)) ? be16_to_cpu(proto) : ETH_P_UNKNOWN;
++}
++
++static bool
++_eth_copy_chunk(size_t input_size,
++                const struct iovec *iov, int iovcnt,
++                size_t offset, size_t length,
++                void *buffer)
++{
++    size_t copied;
++
++    if (input_size < offset) {
++        return false;
++    }
++
++    copied = iov_to_buf(iov, iovcnt, offset, buffer, length);
++
++    if (copied < length) {
++        return false;
++    }
++
++    return true;
++}
++
++static bool
++_eth_tcp_has_data(bool is_ip4,
++                  const struct ip_header  *ip4_hdr,
++                  const struct ip6_header *ip6_hdr,
++                  size_t full_ip6hdr_len,
++                  const struct tcp_header *tcp)
++{
++    uint32_t l4len;
++
++    if (is_ip4) {
++        l4len = be16_to_cpu(ip4_hdr->ip_len) - IP_HDR_GET_LEN(ip4_hdr);
++    } else {
++        size_t opts_len = full_ip6hdr_len - sizeof(struct ip6_header);
++        l4len = be16_to_cpu(ip6_hdr->ip6_ctlun.ip6_un1.ip6_un1_plen) - opts_len;
++    }
++
++    return l4len > TCP_HEADER_DATA_OFFSET(tcp);
++}
++
++void eth_get_protocols(const struct iovec *iov, int iovcnt,
+                        bool *isip4, bool *isip6,
+-                       bool *isudp, bool *istcp)
++                       bool *isudp, bool *istcp,
++                       size_t *l3hdr_off,
++                       size_t *l4hdr_off,
++                       size_t *l5hdr_off,
++                       eth_ip6_hdr_info *ip6hdr_info,
++                       eth_ip4_hdr_info *ip4hdr_info,
++                       eth_l4_hdr_info  *l4hdr_info)
+ {
+     int proto;
+-    size_t l2hdr_len = eth_get_l2_hdr_length(headers);
+-    assert(hdr_length >= eth_get_l2_hdr_length(headers));
++    bool fragment = false;
++    size_t l2hdr_len = eth_get_l2_hdr_length_iov(iov, iovcnt);
++    size_t input_size = iov_size(iov, iovcnt);
++    size_t copied;
++
+     *isip4 = *isip6 = *isudp = *istcp = false;
+ 
+-    proto = eth_get_l3_proto(headers, l2hdr_len);
++    proto = eth_get_l3_proto(iov, iovcnt, l2hdr_len);
++
++    *l3hdr_off = l2hdr_len;
++
+     if (proto == ETH_P_IP) {
+-        *isip4 = true;
++        struct ip_header *iphdr = &ip4hdr_info->ip4_hdr;
+ 
+-        struct ip_header *iphdr;
++        if (input_size < l2hdr_len) {
++            return;
++        }
++
++        copied = iov_to_buf(iov, iovcnt, l2hdr_len, iphdr, sizeof(*iphdr));
+ 
+-        assert(hdr_length >=
+-            eth_get_l2_hdr_length(headers) + sizeof(struct ip_header));
++        *isip4 = true;
+ 
+-        iphdr = PKT_GET_IP_HDR(headers);
++        if (copied < sizeof(*iphdr)) {
++            return;
++        }
+ 
+         if (IP_HEADER_VERSION(iphdr) == IP_HEADER_VERSION_4) {
+             if (iphdr->ip_p == IP_PROTO_TCP) {
+@@ -107,24 +181,135 @@ void eth_get_protocols(const uint8_t *headers,
+                 *isudp = true;
+             }
+         }
+-    } else if (proto == ETH_P_IPV6) {
+-        uint8_t l4proto;
+-        size_t full_ip6hdr_len;
+ 
+-        struct iovec hdr_vec;
+-        hdr_vec.iov_base = (void *) headers;
+-        hdr_vec.iov_len = hdr_length;
++        ip4hdr_info->fragment = IP4_IS_FRAGMENT(iphdr);
++        *l4hdr_off = l2hdr_len + IP_HDR_GET_LEN(iphdr);
++
++        fragment = ip4hdr_info->fragment;
++    } else if (proto == ETH_P_IPV6) {
+ 
+         *isip6 = true;
+-        if (eth_parse_ipv6_hdr(&hdr_vec, 1, l2hdr_len,
+-                              &l4proto, &full_ip6hdr_len)) {
+-            if (l4proto == IP_PROTO_TCP) {
++        if (eth_parse_ipv6_hdr(iov, iovcnt, l2hdr_len,
++                               ip6hdr_info)) {
++            if (ip6hdr_info->l4proto == IP_PROTO_TCP) {
+                 *istcp = true;
+-            } else if (l4proto == IP_PROTO_UDP) {
++            } else if (ip6hdr_info->l4proto == IP_PROTO_UDP) {
+                 *isudp = true;
+             }
++        } else {
++            return;
++        }
++
++        *l4hdr_off = l2hdr_len + ip6hdr_info->full_hdr_len;
++        fragment = ip6hdr_info->fragment;
++    }
++
++    if (!fragment) {
++        if (*istcp) {
++            *istcp = _eth_copy_chunk(input_size,
++                                     iov, iovcnt,
++                                     *l4hdr_off, sizeof(l4hdr_info->hdr.tcp),
++                                     &l4hdr_info->hdr.tcp);
++
++            if (istcp) {
++                *l5hdr_off = *l4hdr_off +
++                    TCP_HEADER_DATA_OFFSET(&l4hdr_info->hdr.tcp);
++
++                l4hdr_info->has_tcp_data =
++                    _eth_tcp_has_data(proto == ETH_P_IP,
++                                      &ip4hdr_info->ip4_hdr,
++                                      &ip6hdr_info->ip6_hdr,
++                                      *l4hdr_off - *l3hdr_off,
++                                      &l4hdr_info->hdr.tcp);
++            }
++        } else if (*isudp) {
++            *isudp = _eth_copy_chunk(input_size,
++                                     iov, iovcnt,
++                                     *l4hdr_off, sizeof(l4hdr_info->hdr.udp),
++                                     &l4hdr_info->hdr.udp);
++            *l5hdr_off = *l4hdr_off + sizeof(l4hdr_info->hdr.udp);
++        }
++    }
++}
++
++bool
++eth_strip_vlan(const struct iovec *iov, int iovcnt, size_t iovoff,
++               uint8_t *new_ehdr_buf,
++               uint16_t *payload_offset, uint16_t *tci)
++{
++    struct vlan_header vlan_hdr;
++    struct eth_header *new_ehdr = (struct eth_header *) new_ehdr_buf;
++
++    size_t copied = iov_to_buf(iov, iovcnt, iovoff,
++                               new_ehdr, sizeof(*new_ehdr));
++
++    if (copied < sizeof(*new_ehdr)) {
++        return false;
++    }
++
++    switch (be16_to_cpu(new_ehdr->h_proto)) {
++    case ETH_P_VLAN:
++    case ETH_P_DVLAN:
++        copied = iov_to_buf(iov, iovcnt, iovoff + sizeof(*new_ehdr),
++                            &vlan_hdr, sizeof(vlan_hdr));
++
++        if (copied < sizeof(vlan_hdr)) {
++            return false;
++        }
++
++        new_ehdr->h_proto = vlan_hdr.h_proto;
++
++        *tci = be16_to_cpu(vlan_hdr.h_tci);
++        *payload_offset = iovoff + sizeof(*new_ehdr) + sizeof(vlan_hdr);
++
++        if (be16_to_cpu(new_ehdr->h_proto) == ETH_P_VLAN) {
++
++            copied = iov_to_buf(iov, iovcnt, *payload_offset,
++                                PKT_GET_VLAN_HDR(new_ehdr), sizeof(vlan_hdr));
++
++            if (copied < sizeof(vlan_hdr)) {
++                return false;
++            }
++
++            *payload_offset += sizeof(vlan_hdr);
++        }
++        return true;
++    default:
++        return false;
++    }
++}
++
++bool
++eth_strip_vlan_ex(const struct iovec *iov, int iovcnt, size_t iovoff,
++                  uint16_t vet, uint8_t *new_ehdr_buf,
++                  uint16_t *payload_offset, uint16_t *tci)
++{
++    struct vlan_header vlan_hdr;
++    struct eth_header *new_ehdr = (struct eth_header *) new_ehdr_buf;
++
++    size_t copied = iov_to_buf(iov, iovcnt, iovoff,
++                               new_ehdr, sizeof(*new_ehdr));
++
++    if (copied < sizeof(*new_ehdr)) {
++        return false;
++    }
++
++    if (be16_to_cpu(new_ehdr->h_proto) == vet) {
++        copied = iov_to_buf(iov, iovcnt, iovoff + sizeof(*new_ehdr),
++                            &vlan_hdr, sizeof(vlan_hdr));
++
++        if (copied < sizeof(vlan_hdr)) {
++            return false;
+         }
++
++        new_ehdr->h_proto = vlan_hdr.h_proto;
++
++        *tci = be16_to_cpu(vlan_hdr.h_tci);
++        *payload_offset = iovoff + sizeof(*new_ehdr) + sizeof(vlan_hdr);
++        return true;
+     }
++
++    return false;
+ }
+ 
+ void
+@@ -133,7 +318,12 @@ eth_setup_ip4_fragmentation(const void *l2hdr, size_t l2hdr_len,
+                             size_t l3payload_len,
+                             size_t frag_offset, bool more_frags)
+ {
+-    if (eth_get_l3_proto(l2hdr, l2hdr_len) == ETH_P_IP) {
++    const struct iovec l2vec = {
++        .iov_base = (void *) l2hdr,
++        .iov_len = l2hdr_len
++    };
++
++    if (eth_get_l3_proto(&l2vec, 1, l2hdr_len) == ETH_P_IP) {
+         uint16_t orig_flags;
+         struct ip_header *iphdr = (struct ip_header *) l3hdr;
+         uint16_t frag_off_units = frag_offset / IP_FRAG_UNIT_SIZE;
+@@ -158,7 +348,9 @@ eth_fix_ip4_checksum(void *l3hdr, size_t l3hdr_len)
+ }
+ 
+ uint32_t
+-eth_calc_pseudo_hdr_csum(struct ip_header *iphdr, uint16_t csl)
++eth_calc_ip4_pseudo_hdr_csum(struct ip_header *iphdr,
++                             uint16_t csl,
++                             uint32_t *cso)
+ {
+     struct ip_pseudo_header ipph;
+     ipph.ip_src = iphdr->ip_src;
+@@ -166,7 +358,26 @@ eth_calc_pseudo_hdr_csum(struct ip_header *iphdr, uint16_t csl)
+     ipph.ip_payload = cpu_to_be16(csl);
+     ipph.ip_proto = iphdr->ip_p;
+     ipph.zeros = 0;
+-    return net_checksum_add(sizeof(ipph), (uint8_t *) &ipph);
++    *cso = sizeof(ipph);
++    return net_checksum_add(*cso, (uint8_t *) &ipph);
++}
++
++uint32_t
++eth_calc_ip6_pseudo_hdr_csum(struct ip6_header *iphdr,
++                             uint16_t csl,
++                             uint8_t l4_proto,
++                             uint32_t *cso)
++{
++    struct ip6_pseudo_header ipph;
++    ipph.ip6_src = iphdr->ip6_src;
++    ipph.ip6_dst = iphdr->ip6_dst;
++    ipph.len = cpu_to_be16(csl);
++    ipph.zero[0] = 0;
++    ipph.zero[1] = 0;
++    ipph.zero[2] = 0;
++    ipph.next_hdr = l4_proto;
++    *cso = sizeof(ipph);
++    return net_checksum_add(*cso, (uint8_t *)&ipph);
+ }
+ 
+ static bool
+@@ -186,33 +397,152 @@ eth_is_ip6_extension_header_type(uint8_t hdr_type)
+     }
+ }
+ 
+-bool eth_parse_ipv6_hdr(struct iovec *pkt, int pkt_frags,
+-                        size_t ip6hdr_off, uint8_t *l4proto,
+-                        size_t *full_hdr_len)
++static bool
++_eth_get_rss_ex_dst_addr(const struct iovec *pkt, int pkt_frags,
++                        size_t rthdr_offset,
++                        struct ip6_ext_hdr *ext_hdr,
++                        struct in6_address *dst_addr)
++{
++    struct ip6_ext_hdr_routing *rthdr = (struct ip6_ext_hdr_routing *) ext_hdr;
++
++    if ((rthdr->rtype == 2) &&
++        (rthdr->len == sizeof(struct in6_address) / 8) &&
++        (rthdr->segleft == 1)) {
++
++        size_t input_size = iov_size(pkt, pkt_frags);
++        size_t bytes_read;
++
++        if (input_size < rthdr_offset + sizeof(*ext_hdr)) {
++            return false;
++        }
++
++        bytes_read = iov_to_buf(pkt, pkt_frags,
++                                rthdr_offset + sizeof(*ext_hdr),
++                                dst_addr, sizeof(dst_addr));
++
++        return bytes_read == sizeof(dst_addr);
++    }
++
++    return false;
++}
++
++static bool
++_eth_get_rss_ex_src_addr(const struct iovec *pkt, int pkt_frags,
++                        size_t dsthdr_offset,
++                        struct ip6_ext_hdr *ext_hdr,
++                        struct in6_address *src_addr)
++{
++    size_t bytes_left = (ext_hdr->ip6r_len + 1) * 8 - sizeof(*ext_hdr);
++    struct ip6_option_hdr opthdr;
++    size_t opt_offset = dsthdr_offset + sizeof(*ext_hdr);
++
++    while (bytes_left > sizeof(opthdr)) {
++        size_t input_size = iov_size(pkt, pkt_frags);
++        size_t bytes_read, optlen;
++
++        if (input_size < opt_offset) {
++            return false;
++        }
++
++        bytes_read = iov_to_buf(pkt, pkt_frags, opt_offset,
++                                &opthdr, sizeof(opthdr));
++
++        if (bytes_read != sizeof(opthdr)) {
++            return false;
++        }
++
++        optlen = (opthdr.type == IP6_OPT_PAD1) ? 1
++                                               : (opthdr.len + sizeof(opthdr));
++
++        if (optlen > bytes_left) {
++            return false;
++        }
++
++        if (opthdr.type == IP6_OPT_HOME) {
++            size_t input_size = iov_size(pkt, pkt_frags);
++
++            if (input_size < opt_offset + sizeof(opthdr)) {
++                return false;
++            }
++
++            bytes_read = iov_to_buf(pkt, pkt_frags,
++                                    opt_offset + sizeof(opthdr),
++                                    src_addr, sizeof(src_addr));
++
++            return bytes_read == sizeof(src_addr);
++        }
++
++        opt_offset += optlen;
++        bytes_left -= optlen;
++    }
++
++    return false;
++}
++
++bool eth_parse_ipv6_hdr(const struct iovec *pkt, int pkt_frags,
++                        size_t ip6hdr_off, eth_ip6_hdr_info *info)
+ {
+-    struct ip6_header ip6_hdr;
+     struct ip6_ext_hdr ext_hdr;
+     size_t bytes_read;
++    uint8_t curr_ext_hdr_type;
++    size_t input_size = iov_size(pkt, pkt_frags);
++
++    info->rss_ex_dst_valid = false;
++    info->rss_ex_src_valid = false;
++    info->fragment = false;
++
++    if (input_size < ip6hdr_off) {
++        return false;
++    }
+ 
+     bytes_read = iov_to_buf(pkt, pkt_frags, ip6hdr_off,
+-                            &ip6_hdr, sizeof(ip6_hdr));
+-    if (bytes_read < sizeof(ip6_hdr)) {
++                            &info->ip6_hdr, sizeof(info->ip6_hdr));
++    if (bytes_read < sizeof(info->ip6_hdr)) {
+         return false;
+     }
+ 
+-    *full_hdr_len = sizeof(struct ip6_header);
++    info->full_hdr_len = sizeof(struct ip6_header);
++
++    curr_ext_hdr_type = info->ip6_hdr.ip6_nxt;
+ 
+-    if (!eth_is_ip6_extension_header_type(ip6_hdr.ip6_nxt)) {
+-        *l4proto = ip6_hdr.ip6_nxt;
++    if (!eth_is_ip6_extension_header_type(curr_ext_hdr_type)) {
++        info->l4proto = info->ip6_hdr.ip6_nxt;
++        info->has_ext_hdrs = false;
+         return true;
+     }
+ 
++    info->has_ext_hdrs = true;
++
+     do {
+-        bytes_read = iov_to_buf(pkt, pkt_frags, ip6hdr_off + *full_hdr_len,
++        if (input_size < ip6hdr_off + info->full_hdr_len) {
++            return false;
++        }
++
++        bytes_read = iov_to_buf(pkt, pkt_frags, ip6hdr_off + info->full_hdr_len,
+                                 &ext_hdr, sizeof(ext_hdr));
+-        *full_hdr_len += (ext_hdr.ip6r_len + 1) * IP6_EXT_GRANULARITY;
+-    } while (eth_is_ip6_extension_header_type(ext_hdr.ip6r_nxt));
+ 
+-    *l4proto = ext_hdr.ip6r_nxt;
++        if (bytes_read < sizeof(ext_hdr)) {
++            return false;
++        }
++
++        if (curr_ext_hdr_type == IP6_ROUTING) {
++            info->rss_ex_dst_valid =
++                _eth_get_rss_ex_dst_addr(pkt, pkt_frags,
++                                         ip6hdr_off + info->full_hdr_len,
++                                         &ext_hdr, &info->rss_ex_dst);
++        } else if (curr_ext_hdr_type == IP6_DESTINATON) {
++            info->rss_ex_src_valid =
++                _eth_get_rss_ex_src_addr(pkt, pkt_frags,
++                                         ip6hdr_off + info->full_hdr_len,
++                                         &ext_hdr, &info->rss_ex_src);
++        } else if (curr_ext_hdr_type == IP6_FRAGMENT) {
++            info->fragment = true;
++        }
++
++        info->full_hdr_len += (ext_hdr.ip6r_len + 1) * IP6_EXT_GRANULARITY;
++        curr_ext_hdr_type = ext_hdr.ip6r_nxt;
++    } while (eth_is_ip6_extension_header_type(curr_ext_hdr_type));
++
++    info->l4proto = ext_hdr.ip6r_nxt;
+     return true;
+ }
+diff --git a/trace-events b/trace-events
+index c93e42a..7e92236 100644
+--- a/trace-events
++++ b/trace-events
+@@ -1923,3 +1923,43 @@ aspeed_vic_update_fiq(int flags) "Raising FIQ: %d"
+ aspeed_vic_update_irq(int flags) "Raising IRQ: %d"
+ aspeed_vic_read(uint64_t offset, unsigned size, uint32_t value) "From 0x%" PRIx64 " of size %u: 0x%" PRIx32
+ aspeed_vic_write(uint64_t offset, unsigned size, uint32_t data) "To 0x%" PRIx64 " of size %u: 0x%" PRIx32
++
++# hw/net/net_rx_pkt.c
++net_rx_pkt_parsed(bool ip4, bool ip6, bool udp, bool tcp, size_t l3o, size_t l4o, size_t l5o) "RX packet parsed: ip4: %d, ip6: %d, udp: %d, tcp: %d, l3 offset: %zu, l4 offset: %zu, l5 offset: %zu"
++net_rx_pkt_l4_csum_validate_entry(void) "Starting L4 checksum validation"
++net_rx_pkt_l4_csum_validate_not_xxp(void) "Not a TCP/UDP packet"
++net_rx_pkt_l4_csum_validate_udp_with_no_checksum(void) "UDP packet without checksum"
++net_rx_pkt_l4_csum_validate_ip4_fragment(void) "IP4 fragment"
++net_rx_pkt_l4_csum_validate_ip4_udp(void) "IP4/UDP packet"
++net_rx_pkt_l4_csum_validate_ip4_tcp(void) "IP4/TCP packet"
++net_rx_pkt_l4_csum_validate_ip6_udp(void) "IP6/UDP packet"
++net_rx_pkt_l4_csum_validate_ip6_tcp(void) "IP6/TCP packet"
++net_rx_pkt_l4_csum_validate_csum(bool csum_valid) "Checksum valid: %d"
++
++net_rx_pkt_l4_csum_calc_entry(void) "Starting L4 checksum calculation"
++net_rx_pkt_l4_csum_calc_ip4_udp(void) "IP4/UDP packet"
++net_rx_pkt_l4_csum_calc_ip4_tcp(void) "IP4/TCP packet"
++net_rx_pkt_l4_csum_calc_ip6_udp(void) "IP6/UDP packet"
++net_rx_pkt_l4_csum_calc_ip6_tcp(void) "IP6/TCP packet"
++net_rx_pkt_l4_csum_calc_ph_csum(uint32_t cntr, uint16_t csl) "Pseudo-header: checksum counter %u, length %u"
++net_rx_pkt_l4_csum_calc_csum(size_t l4hdr_off, uint16_t csl, uint32_t cntr, uint16_t csum) "L4 Checksum: L4 header offset: %zu, length: %u, counter: 0x%X, final checksum: 0x%X"
++
++net_rx_pkt_l4_csum_fix_entry(void) "Starting L4 checksum correction"
++net_rx_pkt_l4_csum_fix_tcp(uint32_t l4_cso) "TCP packet, L4 cso: %u"
++net_rx_pkt_l4_csum_fix_udp(uint32_t l4_cso) "UDP packet, L4 cso: %u"
++net_rx_pkt_l4_csum_fix_not_xxp(void) "Not an IP4 packet"
++net_rx_pkt_l4_csum_fix_ip4_fragment(void) "IP4 fragment"
++net_rx_pkt_l4_csum_fix_udp_with_no_checksum(void) "UDP packet without checksum"
++net_rx_pkt_l4_csum_fix_csum(uint32_t cso, uint16_t csum) "L4 Checksum: Offset: %u, value 0x%X"
++
++net_rx_pkt_l3_csum_validate_entry(void) "Starting L3 checksum validation"
++net_rx_pkt_l3_csum_validate_not_ip4(void) "Not an IP4 packet"
++net_rx_pkt_l3_csum_validate_csum(size_t l3hdr_off, uint32_t csl, uint32_t cntr, uint16_t csum, bool csum_valid) "L3 Checksum: L3 header offset: %zu, length: %u, counter: 0x%X, final checksum: 0x%X, valid: %d"
++
++net_rx_pkt_rss_ip4(void) "Calculating IPv4 RSS  hash"
++net_rx_pkt_rss_ip4_tcp(void) "Calculating IPv4/TCP RSS  hash"
++net_rx_pkt_rss_ip6_tcp(void) "Calculating IPv6/TCP RSS  hash"
++net_rx_pkt_rss_ip6(void) "Calculating IPv6 RSS  hash"
++net_rx_pkt_rss_ip6_ex(void) "Calculating IPv6/EX RSS  hash"
++net_rx_pkt_rss_hash(size_t rss_length, uint32_t rss_hash) "RSS hash for %zu bytes: 0x%X"
++net_rx_pkt_rss_add_chunk(void* ptr, size_t size, size_t input_offset) "Add RSS chunk %p, %zu bytes, RSS input offset %zu bytes"
+-- 
+1.8.3.1
+

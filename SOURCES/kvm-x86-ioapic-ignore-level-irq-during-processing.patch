@@ -1,0 +1,68 @@
+From a5a7232919546ebc5a2b126485faaca9da14c730 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:52 +0200
+Subject: [PATCH 34/37] x86: ioapic: ignore level irq during processing
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-34-git-send-email-peterx@redhat.com>
+Patchwork-id: 72018
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 33/34] x86: ioapic: ignore level irq during processing
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+For level triggered interrupts, we will get Remote IRR bit cleared after
+guest kernel finished processing specific request. Before that, we
+should ignore the same interrupt from triggering again.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Message-Id: <1469974685-4144-1-git-send-email-peterx@redhat.com>
+[Push new "if" up so that it covers KVM split irqchip as well. - Paolo]
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit f99b86b94987561580a94838766458e1c7b8685d)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/intc/ioapic.c | 14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/hw/intc/ioapic.c b/hw/intc/ioapic.c
+index 79db36a..012c583 100644
+--- a/hw/intc/ioapic.c
++++ b/hw/intc/ioapic.c
+@@ -116,21 +116,25 @@ static void ioapic_service(IOAPICCommonState *s)
+                     s->ioredtbl[i] |= IOAPIC_LVT_REMOTE_IRR;
+                 }
+ 
++                if (coalesce) {
++                    /* We are level triggered interrupts, and the
++                     * guest should be still working on previous one,
++                     * so skip it. */
++                    continue;
++                }
++
+ #ifdef CONFIG_KVM
+                 if (kvm_irqchip_is_split()) {
+                     if (info.trig_mode == IOAPIC_TRIGGER_EDGE) {
+                         kvm_set_irq(kvm_state, i, 1);
+                         kvm_set_irq(kvm_state, i, 0);
+                     } else {
+-                        if (!coalesce) {
+-                            kvm_set_irq(kvm_state, i, 1);
+-                        }
++                        kvm_set_irq(kvm_state, i, 1);
+                     }
+                     continue;
+                 }
+-#else
+-                (void)coalesce;
+ #endif
++
+                 /* No matter whether IR is enabled, we translate
+                  * the IOAPIC message into a MSI one, and its
+                  * address space will decide whether we need a
+-- 
+1.8.3.1
+

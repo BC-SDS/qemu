@@ -1,0 +1,184 @@
+From 9858f8d1600bf7d3569e15670ad708f508e3e40c Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:39 +0200
+Subject: [PATCH 06/34] cpu: Abstract CPU core type
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-7-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71126
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 06/27] cpu: Abstract CPU core type
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+Add an abstract CPU core type that could be used by machines that want
+to define and hotplug CPUs in core granularity.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+               [Integer core property]
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Reviewed-by: Igor Mammedov <imammedo@redhat.com>
+[dwg: changed property names to 'core-id' and 'nr-threads']
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit f1020c2c2647a62df870ce243424ee23ea95ae6f)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/cpu/Makefile.objs  |  1 +
+ hw/cpu/core.c         | 88 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ include/hw/cpu/core.h | 31 ++++++++++++++++++
+ 3 files changed, 120 insertions(+)
+ create mode 100644 hw/cpu/core.c
+ create mode 100644 include/hw/cpu/core.h
+
+diff --git a/hw/cpu/Makefile.objs b/hw/cpu/Makefile.objs
+index 0954a18..942a4bb 100644
+--- a/hw/cpu/Makefile.objs
++++ b/hw/cpu/Makefile.objs
+@@ -2,4 +2,5 @@ obj-$(CONFIG_ARM11MPCORE) += arm11mpcore.o
+ obj-$(CONFIG_REALVIEW) += realview_mpcore.o
+ obj-$(CONFIG_A9MPCORE) += a9mpcore.o
+ obj-$(CONFIG_A15MPCORE) += a15mpcore.o
++obj-y += core.o
+ 
+diff --git a/hw/cpu/core.c b/hw/cpu/core.c
+new file mode 100644
+index 0000000..eff90c1
+--- /dev/null
++++ b/hw/cpu/core.c
+@@ -0,0 +1,88 @@
++/*
++ * CPU core abstract device
++ *
++ * Copyright (C) 2016 Bharata B Rao <bharata@linux.vnet.ibm.com>
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++#include "hw/cpu/core.h"
++#include "qapi/visitor.h"
++#include "qapi/error.h"
++#include "sysemu/cpus.h"
++
++static void core_prop_get_core_id(Object *obj, Visitor *v, const char *name,
++                                  void *opaque, Error **errp)
++{
++    CPUCore *core = CPU_CORE(obj);
++    int64_t value = core->core_id;
++
++    visit_type_int(v, name, &value, errp);
++}
++
++static void core_prop_set_core_id(Object *obj, Visitor *v, const char *name,
++                                  void *opaque, Error **errp)
++{
++    CPUCore *core = CPU_CORE(obj);
++    Error *local_err = NULL;
++    int64_t value;
++
++    visit_type_int(v, name, &value, &local_err);
++    if (local_err) {
++        error_propagate(errp, local_err);
++        return;
++    }
++
++    core->core_id = value;
++}
++
++static void core_prop_get_nr_threads(Object *obj, Visitor *v, const char *name,
++                                     void *opaque, Error **errp)
++{
++    CPUCore *core = CPU_CORE(obj);
++    int64_t value = core->nr_threads;
++
++    visit_type_int(v, name, &value, errp);
++}
++
++static void core_prop_set_nr_threads(Object *obj, Visitor *v, const char *name,
++                                     void *opaque, Error **errp)
++{
++    CPUCore *core = CPU_CORE(obj);
++    Error *local_err = NULL;
++    int64_t value;
++
++    visit_type_int(v, name, &value, &local_err);
++    if (local_err) {
++        error_propagate(errp, local_err);
++        return;
++    }
++
++    core->nr_threads = value;
++}
++
++static void cpu_core_instance_init(Object *obj)
++{
++    CPUCore *core = CPU_CORE(obj);
++
++    object_property_add(obj, "core-id", "int", core_prop_get_core_id,
++                        core_prop_set_core_id, NULL, NULL, NULL);
++    object_property_add(obj, "nr-threads", "int", core_prop_get_nr_threads,
++                        core_prop_set_nr_threads, NULL, NULL, NULL);
++    core->nr_threads = smp_threads;
++}
++
++static const TypeInfo cpu_core_type_info = {
++    .name = TYPE_CPU_CORE,
++    .parent = TYPE_DEVICE,
++    .abstract = true,
++    .instance_size = sizeof(CPUCore),
++    .instance_init = cpu_core_instance_init,
++};
++
++static void cpu_core_register_types(void)
++{
++    type_register_static(&cpu_core_type_info);
++}
++
++type_init(cpu_core_register_types)
+diff --git a/include/hw/cpu/core.h b/include/hw/cpu/core.h
+new file mode 100644
+index 0000000..4540a7d
+--- /dev/null
++++ b/include/hw/cpu/core.h
+@@ -0,0 +1,31 @@
++/*
++ * CPU core abstract device
++ *
++ * Copyright (C) 2016 Bharata B Rao <bharata@linux.vnet.ibm.com>
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2 or later.
++ * See the COPYING file in the top-level directory.
++ */
++#ifndef HW_CPU_CORE_H
++#define HW_CPU_CORE_H
++
++#include "qemu/osdep.h"
++#include "hw/qdev.h"
++
++#define TYPE_CPU_CORE "cpu-core"
++
++#define CPU_CORE(obj) \
++    OBJECT_CHECK(CPUCore, (obj), TYPE_CPU_CORE)
++
++typedef struct CPUCore {
++    /*< private >*/
++    DeviceState parent_obj;
++
++    /*< public >*/
++    int core_id;
++    int nr_threads;
++} CPUCore;
++
++#define CPU_CORE_PROP_CORE_ID "core-id"
++
++#endif
+-- 
+1.8.3.1
+

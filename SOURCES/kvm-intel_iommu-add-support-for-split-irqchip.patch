@@ -1,0 +1,189 @@
+From 0c35c8e44da7fed7c8a69fd7631541e088c01ba9 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:38 +0200
+Subject: [PATCH 20/37] intel_iommu: add support for split irqchip
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-20-git-send-email-peterx@redhat.com>
+Patchwork-id: 72004
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 19/34] intel_iommu: add support for split irqchip
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+In split irqchip mode, IOAPIC is working in user space, only update
+kernel irq routes when entry changed. When IR is enabled, we directly
+update the kernel with translated messages. It works just like a kernel
+cache for the remapping entries.
+
+Since KVM irqfd is using kernel gsi routes to deliver interrupts, as
+long as we can support split irqchip, we will support irqfd as
+well. Also, since kernel gsi routes will cache translated interrupts,
+irqfd delivery will not suffer from any performance impact due to IR.
+
+And, since we supported irqfd, vhost devices will be able to work
+seamlessly with IR now. Logically this should contain both vhost-net and
+vhost-user case.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+[move trace-events lines into target-i386/trace-events]
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 8b5ed7dffa1fa2835a782a8db8d4f3f1f772ada9)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+  Makefile.objs
+
+Conflict since trace event is splitted upstream in commit:
+
+  1412cf5 trace: add build framework for merging trace-events files
+
+While it's not in downstream. Moving splitted trace events into the big
+trace-event file.
+---
+ hw/i386/intel_iommu.c         |  7 +++++++
+ include/hw/i386/intel_iommu.h |  1 +
+ include/hw/i386/x86-iommu.h   |  5 +++++
+ target-i386/kvm.c             | 27 +++++++++++++++++++++++++++
+ trace-events                  |  3 +++
+ 5 files changed, 43 insertions(+)
+
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index 6ba5520..c7ded0f 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -2165,6 +2165,12 @@ do_not_translate:
+     return 0;
+ }
+ 
++static int vtd_int_remap(X86IOMMUState *iommu, MSIMessage *src,
++                         MSIMessage *dst, uint16_t sid)
++{
++    return vtd_interrupt_remap_msi(INTEL_IOMMU_DEVICE(iommu), src, dst);
++}
++
+ static MemTxResult vtd_mem_ir_read(void *opaque, hwaddr addr,
+                                    uint64_t *data, unsigned size,
+                                    MemTxAttrs attrs)
+@@ -2399,6 +2405,7 @@ static void vtd_class_init(ObjectClass *klass, void *data)
+     dc->props = vtd_properties;
+     dc->hotpluggable = false;
+     x86_class->realize = vtd_realize;
++    x86_class->int_remap = vtd_int_remap;
+ }
+ 
+ static const TypeInfo vtd_info = {
+diff --git a/include/hw/i386/intel_iommu.h b/include/hw/i386/intel_iommu.h
+index cdbbddd..e048ced 100644
+--- a/include/hw/i386/intel_iommu.h
++++ b/include/hw/i386/intel_iommu.h
+@@ -26,6 +26,7 @@
+ #include "hw/i386/x86-iommu.h"
+ #include "hw/i386/ioapic.h"
+ #include "hw/pci/msi.h"
++#include "hw/sysbus.h"
+ 
+ #define TYPE_INTEL_IOMMU_DEVICE "intel-iommu"
+ #define INTEL_IOMMU_DEVICE(obj) \
+diff --git a/include/hw/i386/x86-iommu.h b/include/hw/i386/x86-iommu.h
+index 699dd06..fa6ce31 100644
+--- a/include/hw/i386/x86-iommu.h
++++ b/include/hw/i386/x86-iommu.h
+@@ -21,6 +21,7 @@
+ #define IOMMU_COMMON_H
+ 
+ #include "hw/sysbus.h"
++#include "hw/pci/pci.h"
+ 
+ #define  TYPE_X86_IOMMU_DEVICE  ("x86-iommu")
+ #define  X86_IOMMU_DEVICE(obj) \
+@@ -31,6 +32,7 @@
+     OBJECT_GET_CLASS(X86IOMMUClass, obj, TYPE_X86_IOMMU_DEVICE)
+ 
+ #define X86_IOMMU_PCI_DEVFN_MAX           256
++#define X86_IOMMU_SID_INVALID             (0xffff)
+ 
+ typedef struct X86IOMMUState X86IOMMUState;
+ typedef struct X86IOMMUClass X86IOMMUClass;
+@@ -39,6 +41,9 @@ struct X86IOMMUClass {
+     SysBusDeviceClass parent;
+     /* Intel/AMD specific realize() hook */
+     DeviceRealize realize;
++    /* MSI-based interrupt remapping */
++    int (*int_remap)(X86IOMMUState *iommu, MSIMessage *src,
++                     MSIMessage *dst, uint16_t sid);
+ };
+ 
+ struct X86IOMMUState {
+diff --git a/target-i386/kvm.c b/target-i386/kvm.c
+index 37ed236..e84d9a8 100644
+--- a/target-i386/kvm.c
++++ b/target-i386/kvm.c
+@@ -36,6 +36,7 @@
+ #include "hw/i386/apic.h"
+ #include "hw/i386/apic_internal.h"
+ #include "hw/i386/apic-msidef.h"
++#include "hw/i386/intel_iommu.h"
+ 
+ #include "exec/ioport.h"
+ #include "standard-headers/asm-x86/hyperv.h"
+@@ -43,6 +44,7 @@
+ #include "hw/pci/msi.h"
+ #include "migration/migration.h"
+ #include "exec/memattrs.h"
++#include "trace.h"
+ 
+ //#define DEBUG_KVM
+ 
+@@ -3370,6 +3372,31 @@ int kvm_device_msix_deassign(KVMState *s, uint32_t dev_id)
+ int kvm_arch_fixup_msi_route(struct kvm_irq_routing_entry *route,
+                              uint64_t address, uint32_t data, PCIDevice *dev)
+ {
++    X86IOMMUState *iommu = x86_iommu_get_default();
++
++    if (iommu) {
++        int ret;
++        MSIMessage src, dst;
++        X86IOMMUClass *class = X86_IOMMU_GET_CLASS(iommu);
++
++        src.address = route->u.msi.address_hi;
++        src.address <<= VTD_MSI_ADDR_HI_SHIFT;
++        src.address |= route->u.msi.address_lo;
++        src.data = route->u.msi.data;
++
++        ret = class->int_remap(iommu, &src, &dst, dev ? \
++                               pci_requester_id(dev) : \
++                               X86_IOMMU_SID_INVALID);
++        if (ret) {
++            trace_kvm_x86_fixup_msi_error(route->gsi);
++            return 1;
++        }
++
++        route->u.msi.address_hi = dst.address >> VTD_MSI_ADDR_HI_SHIFT;
++        route->u.msi.address_lo = dst.address & VTD_MSI_ADDR_LO_MASK;
++        route->u.msi.data = dst.data;
++    }
++
+     return 0;
+ }
+ 
+diff --git a/trace-events b/trace-events
+index e002e51..6b5a934 100644
+--- a/trace-events
++++ b/trace-events
+@@ -2156,3 +2156,6 @@ hid_kbd_queue_full(void) "queue full"
+ 
+ # hw/input/virtio
+ virtio_input_queue_full(void) "queue full"
++
++# target-i386/kvm.c
++kvm_x86_fixup_msi_error(uint32_t gsi) "VT-d failed to remap interrupt for GSI %" PRIu32
+-- 
+1.8.3.1
+

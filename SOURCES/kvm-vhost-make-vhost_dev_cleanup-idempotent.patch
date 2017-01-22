@@ -1,0 +1,63 @@
+From ff26d1baa0e10285b98fc4c9f052642615284e39 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:26 +0200
+Subject: [PATCH 06/30] vhost: make vhost_dev_cleanup() idempotent
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-7-marcandre.lureau@redhat.com>
+Patchwork-id: 71922
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 06/28] vhost: make vhost_dev_cleanup() idempotent
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+It is called on multiple code path, so make it safe to call several
+times (note: I don't remember a reproducer here, but a function called
+'cleanup' should probably be idempotent in my book)
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit e0547b59dc0ead4c605d3f02d1c8829630a1311b)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/vhost.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/hw/virtio/vhost.c b/hw/virtio/vhost.c
+index 2e6899a..e91014a 100644
+--- a/hw/virtio/vhost.c
++++ b/hw/virtio/vhost.c
+@@ -1127,6 +1127,7 @@ fail:
+ void vhost_dev_cleanup(struct vhost_dev *hdev)
+ {
+     int i;
++
+     for (i = 0; i < hdev->nvqs; ++i) {
+         vhost_virtqueue_cleanup(hdev->vqs + i);
+     }
+@@ -1141,8 +1142,12 @@ void vhost_dev_cleanup(struct vhost_dev *hdev)
+     }
+     g_free(hdev->mem);
+     g_free(hdev->mem_sections);
+-    hdev->vhost_ops->vhost_backend_cleanup(hdev);
++    if (hdev->vhost_ops) {
++        hdev->vhost_ops->vhost_backend_cleanup(hdev);
++    }
+     assert(!hdev->log);
++
++    memset(hdev, 0, sizeof(struct vhost_dev));
+ }
+ 
+ /* Stop processing guest IO notifications in qemu.
+-- 
+1.8.3.1
+

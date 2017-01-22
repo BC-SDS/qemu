@@ -1,0 +1,43 @@
+From 615096e2a858f42907851e2b4a023c0207d79a94 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Wed, 6 Jul 2016 11:08:15 +0200
+Subject: [PATCH 04/11] 7.x compat: e1000-82540em
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1467803295-18634-4-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70970
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 3/3] 7.x compat: e1000-82540em
+Bugzilla: 1353070
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Xiao Wang <jasowang@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+Now that e1000 and e1000-82540em are separate devices again, we need
+to change the 'extra_mac_registers' to be triggered on both devices.
+Since e1000 is a subclass of e1000-82540em, setting it on e1000-82540em
+should cover both.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/compat.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/include/hw/compat.h b/include/hw/compat.h
+index f6c1f1c..13b4b20 100644
+--- a/include/hw/compat.h
++++ b/include/hw/compat.h
+@@ -169,7 +169,7 @@
+             .property = "scsi",\
+             .value    = "true",\
+         },{\
+-            .driver   = "e1000",\
++            .driver   = "e1000-82540em",\
+             .property = "extra_mac_registers",\
+             .value    = "off",\
+         },{\
+-- 
+1.8.3.1
+

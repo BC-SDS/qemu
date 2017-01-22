@@ -1,0 +1,184 @@
+From 732d6c6ee8e27ccd1ed5ea91ede48044cc1f1bfb Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Wed, 3 Aug 2016 07:13:38 +0200
+Subject: [PATCH 89/99] spapr: disintricate core-id from DT semantics
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1470208421-7353-3-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71789
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCHv2 2/5] spapr: disintricate core-id from DT semantics
+Bugzilla: 1361443
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Greg Kurz <groug@kaod.org>
+
+The goal of this patch is to have a stable core-id which does not depend
+on any DT related semantics, which involve non-obvious computations on
+modern PowerPC server cpus.
+
+With this patch, the DT core id is computed on-demand as:
+
+       (core-id / smp_threads) * smt
+
+where smt is the number of threads per core in the host.
+
+This formula should be consolidated in a helper since it is needed in
+several places.
+
+Other uses for core-id includes: compute a stable cpu_index (which
+allows random order hotplug/unplug without breaking migration) and
+NUMA.
+
+Signed-off-by: Greg Kurz <groug@kaod.org>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 12bf2d33fe520f9cfd09f7bf9d46ae3202c3cb49)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1361443
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr.c          | 10 +++++-----
+ hw/ppc/spapr_cpu_core.c | 24 +++++++++++-------------
+ 2 files changed, 16 insertions(+), 18 deletions(-)
+
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index 676a416..a5182ce 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -1786,10 +1786,11 @@ static void ppc_spapr_init(MachineState *machine)
+ 
+         spapr->cores = g_new0(Object *, spapr_max_cores);
+         for (i = 0; i < spapr_max_cores; i++) {
+-            int core_dt_id = i * smt;
++            int core_id = i * smp_threads;
+             sPAPRDRConnector *drc =
+                 spapr_dr_connector_new(OBJECT(spapr),
+-                                       SPAPR_DR_CONNECTOR_TYPE_CPU, core_dt_id);
++                                       SPAPR_DR_CONNECTOR_TYPE_CPU,
++                                       (core_id / smp_threads) * smt);
+ 
+             qemu_register_reset(spapr_drc_reset, drc);
+ 
+@@ -1805,7 +1806,7 @@ static void ppc_spapr_init(MachineState *machine)
+                 core  = object_new(type);
+                 object_property_set_int(core, smp_threads, "nr-threads",
+                                         &error_fatal);
+-                object_property_set_int(core, core_dt_id, CPU_CORE_PROP_CORE_ID,
++                object_property_set_int(core, core_id, CPU_CORE_PROP_CORE_ID,
+                                         &error_fatal);
+                 object_property_set_bool(core, true, "realized", &error_fatal);
+             }
+@@ -2333,7 +2334,6 @@ static HotpluggableCPUList *spapr_query_hotpluggable_cpus(MachineState *machine)
+     HotpluggableCPUList *head = NULL;
+     sPAPRMachineState *spapr = SPAPR_MACHINE(machine);
+     int spapr_max_cores = max_cpus / smp_threads;
+-    int smt = kvmppc_smt_threads();
+ 
+     for (i = 0; i < spapr_max_cores; i++) {
+         HotpluggableCPUList *list_item = g_new0(typeof(*list_item), 1);
+@@ -2343,7 +2343,7 @@ static HotpluggableCPUList *spapr_query_hotpluggable_cpus(MachineState *machine)
+         cpu_item->type = spapr_get_cpu_core_type(machine->cpu_model);
+         cpu_item->vcpus_count = smp_threads;
+         cpu_props->has_core_id = true;
+-        cpu_props->core_id = i * smt;
++        cpu_props->core_id = i * smp_threads;
+         /* TODO: add 'has_node/node' here to describe
+            to which node core belongs */
+ 
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index 77e6671..021bae5 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -103,7 +103,6 @@ static void spapr_core_release(DeviceState *dev, void *opaque)
+     size_t size = object_type_get_instance_size(typename);
+     sPAPRMachineState *spapr = SPAPR_MACHINE(qdev_get_machine());
+     CPUCore *cc = CPU_CORE(dev);
+-    int smt = kvmppc_smt_threads();
+     int i;
+ 
+     for (i = 0; i < cc->nr_threads; i++) {
+@@ -117,7 +116,7 @@ static void spapr_core_release(DeviceState *dev, void *opaque)
+         object_unparent(obj);
+     }
+ 
+-    spapr->cores[cc->core_id / smt] = NULL;
++    spapr->cores[cc->core_id / smp_threads] = NULL;
+ 
+     g_free(sc->threads);
+     object_unparent(OBJECT(dev));
+@@ -128,18 +127,19 @@ void spapr_core_unplug(HotplugHandler *hotplug_dev, DeviceState *dev,
+ {
+     sPAPRMachineState *spapr = SPAPR_MACHINE(OBJECT(hotplug_dev));
+     CPUCore *cc = CPU_CORE(dev);
++    int smt = kvmppc_smt_threads();
++    int index = cc->core_id / smp_threads;
+     sPAPRDRConnector *drc =
+-        spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, cc->core_id);
++        spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, index * smt);
+     sPAPRDRConnectorClass *drck;
+     Error *local_err = NULL;
+-    int smt = kvmppc_smt_threads();
+-    int index = cc->core_id / smt;
+     int spapr_max_cores = max_cpus / smp_threads;
+     int i;
+ 
+     for (i = spapr_max_cores - 1; i > index; i--) {
+         if (spapr->cores[i]) {
+-            error_setg(errp, "core-id %d should be removed first", i * smt);
++            error_setg(errp, "core-id %d should be removed first",
++                       i * smp_threads);
+             return;
+         }
+     }
+@@ -168,11 +168,10 @@ void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+     Error *local_err = NULL;
+     void *fdt = NULL;
+     int fdt_offset = 0;
+-    int index;
++    int index = cc->core_id / smp_threads;
+     int smt = kvmppc_smt_threads();
+ 
+-    drc = spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, cc->core_id);
+-    index = cc->core_id / smt;
++    drc = spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, index * smt);
+     spapr->cores[index] = OBJECT(dev);
+ 
+     if (!smc->dr_cpu_enabled) {
+@@ -226,7 +225,6 @@ void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+     sPAPRMachineState *spapr = SPAPR_MACHINE(OBJECT(hotplug_dev));
+     int spapr_max_cores = max_cpus / smp_threads;
+     int index, i;
+-    int smt = kvmppc_smt_threads();
+     Error *local_err = NULL;
+     CPUCore *cc = CPU_CORE(dev);
+     char *base_core_type = spapr_get_cpu_core_type(machine->cpu_model);
+@@ -247,12 +245,12 @@ void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+         goto out;
+     }
+ 
+-    if (cc->core_id % smt) {
++    if (cc->core_id % smp_threads) {
+         error_setg(&local_err, "invalid core id %d\n", cc->core_id);
+         goto out;
+     }
+ 
+-    index = cc->core_id / smt;
++    index = cc->core_id / smp_threads;
+     if (index < 0 || index >= spapr_max_cores) {
+         error_setg(&local_err, "core id %d out of range", cc->core_id);
+         goto out;
+@@ -266,7 +264,7 @@ void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+     for (i = 0; i < index; i++) {
+         if (!spapr->cores[i]) {
+             error_setg(&local_err, "core-id %d should be added first",
+-                       i * smt);
++                       i * smp_threads);
+             goto out;
+         }
+     }
+-- 
+1.8.3.1
+

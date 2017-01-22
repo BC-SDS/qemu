@@ -1,0 +1,67 @@
+From ad6ef490ddc38fb1fb2dc8a49f2c7bb57cca88c8 Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Tue, 16 Aug 2016 12:07:01 +0200
+Subject: [PATCH 02/17] spapr: remove extra type variable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1470816895-17800-2-git-send-email-thuth@redhat.com>
+Patchwork-id: 71893
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/5] spapr: remove extra type variable
+Bugzilla: 1363812
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+From: Cédric Le Goater <clg@kaod.org>
+
+The sPAPR CPU core typename is already available in the upper
+block. Let's use it and move the check upward also.
+
+Signed-off-by: Cédric Le Goater <clg@kaod.org>
+Reviewed-by: Thomas Huth <thuth@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit caebf37859b991c27ada22d5d7bfd929844bd20f)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr.c | 15 ++++++---------
+ 1 file changed, 6 insertions(+), 9 deletions(-)
+
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index 764fe40..7d107b7 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -1786,6 +1786,11 @@ static void ppc_spapr_init(MachineState *machine)
+     if (mc->query_hotpluggable_cpus) {
+         char *type = spapr_get_cpu_core_type(machine->cpu_model);
+ 
++        if (!object_class_by_name(type)) {
++            error_report("Unable to find sPAPR CPU Core definition");
++            exit(1);
++        }
++
+         spapr->cores = g_new0(Object *, spapr_max_cores);
+         for (i = 0; i < spapr_max_cores; i++) {
+             int core_id = i * smp_threads;
+@@ -1797,15 +1802,7 @@ static void ppc_spapr_init(MachineState *machine)
+             qemu_register_reset(spapr_drc_reset, drc);
+ 
+             if (i < spapr_cores) {
+-                char *type = spapr_get_cpu_core_type(machine->cpu_model);
+-                Object *core;
+-
+-                if (!object_class_by_name(type)) {
+-                    error_report("Unable to find sPAPR CPU Core definition");
+-                    exit(1);
+-                }
+-
+-                core  = object_new(type);
++                Object *core  = object_new(type);
+                 object_property_set_int(core, smp_threads, "nr-threads",
+                                         &error_fatal);
+                 object_property_set_int(core, core_id, CPU_CORE_PROP_CORE_ID,
+-- 
+1.8.3.1
+

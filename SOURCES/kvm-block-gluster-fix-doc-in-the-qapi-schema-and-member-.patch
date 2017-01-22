@@ -1,0 +1,67 @@
+From 870d7b11e86ec0cc0c7f96794ea8b17c325412e3 Mon Sep 17 00:00:00 2001
+From: Prasanna Kumar Kalever <prasanna.kalever@redhat.com>
+Date: Fri, 22 Jul 2016 19:22:10 +0200
+Subject: [PATCH 06/10] block/gluster: fix doc in the qapi schema and member
+ name
+
+RH-Author: Prasanna Kumar Kalever <prasanna.kalever@redhat.com>
+Message-id: <1469215330-14515-7-git-send-email-prasanna.kalever@redhat.com>
+Patchwork-id: 71341
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 6/6] block/gluster: fix doc in the qapi schema and member name
+Bugzilla: 1247933
+RH-Acked-by: Jeffrey Cody <jcody@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+1. qapi @BlockdevOptionsGluster schema member name s/debug_level/debug-level/
+2. rearrange the versioning
+3. s/server description/servers description/
+
+Signed-off-by: Prasanna Kumar Kalever <prasanna.kalever@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Reviewed-by: Jeff Cody <jcody@redhat.com>
+Message-Id: <1469198048-8535-1-git-send-email-prasanna.kalever@redhat.com>
+Signed-off-by: Jeff Cody <jcody@redhat.com>
+(cherry picked from commit 0a189ffb5e9d6091c766bd4d01265251488a18a6)
+Signed-off-by: Prasanna Kumar Kalever <prasanna.kalever@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ qapi/block-core.json | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/qapi/block-core.json b/qapi/block-core.json
+index 8c4a536..9d70989 100644
+--- a/qapi/block-core.json
++++ b/qapi/block-core.json
+@@ -1632,9 +1632,9 @@
+ # Drivers that are supported in block device operations.
+ #
+ # @host_device, @host_cdrom: Since 2.1
++# @gluster: Since 2.7
+ #
+ # Since: 2.0
+-# @gluster: Since 2.7
+ ##
+ { 'enum': 'BlockdevDriver',
+   'data': [ 'archipelago', 'blkdebug', 'blkverify', 'bochs', 'cloop',
+@@ -2077,7 +2077,7 @@
+ #
+ # @path:        absolute path to image file in gluster volume
+ #
+-# @server:      gluster server description
++# @server:      gluster servers description
+ #
+ # @debug-level: #optional libgfapi log level (default '4' which is Error)
+ #
+@@ -2087,7 +2087,7 @@
+   'data': { 'volume': 'str',
+             'path': 'str',
+             'server': ['GlusterServer'],
+-            '*debug_level': 'int' } }
++            '*debug-level': 'int' } }
+ 
+ ##
+ # @BlockdevOptions
+-- 
+1.8.3.1
+

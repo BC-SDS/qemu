@@ -1,0 +1,121 @@
+From 1254b191d6227e7b761735ccdaa70db0f53f712b Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Fri, 17 Jun 2016 14:39:24 +0200
+Subject: [PATCH 03/33] Postcopy: Add stats on page requests
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1466174367-11047-4-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70661
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 3/6] Postcopy: Add stats on page requests
+Bugzilla: 1347256
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+RH-Acked-by: John Snow <jsnow@redhat.com>
+RH-Acked-by: Amit Shah <amit.shah@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+On the source, add a count of page requests received from the
+destination.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Reviewed-by: Denis V. Lunev <den@openvz.org>
+Message-id: 1465816605-29488-4-git-send-email-dgilbert@redhat.com
+Message-Id: <1465816605-29488-4-git-send-email-dgilbert@redhat.com>
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+(cherry picked from commit d3bf5418e2c5cf0e911b51b7041caddae5e8b38a)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hmp.c                         | 4 ++++
+ include/migration/migration.h | 2 ++
+ migration/migration.c         | 2 ++
+ migration/ram.c               | 1 +
+ qapi-schema.json              | 6 +++++-
+ 5 files changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/hmp.c b/hmp.c
+index 24b1139..119dd1b 100644
+--- a/hmp.c
++++ b/hmp.c
+@@ -209,6 +209,10 @@ void hmp_info_migrate(Monitor *mon, const QDict *qdict)
+             monitor_printf(mon, "dirty pages rate: %" PRIu64 " pages\n",
+                            info->ram->dirty_pages_rate);
+         }
++        if (info->ram->postcopy_requests) {
++            monitor_printf(mon, "postcopy request count: %" PRIu64 "\n",
++                           info->ram->postcopy_requests);
++        }
+     }
+ 
+     if (info->has_disk) {
+diff --git a/include/migration/migration.h b/include/migration/migration.h
+index e7c55b2..96e9eee 100644
+--- a/include/migration/migration.h
++++ b/include/migration/migration.h
+@@ -157,6 +157,8 @@ struct MigrationState
+     int64_t xbzrle_cache_size;
+     int64_t setup_time;
+     int64_t dirty_sync_count;
++    /* Count of requests incoming from destination */
++    int64_t postcopy_requests;
+ 
+     /* Flag set once the migration has been asked to enter postcopy */
+     bool start_postcopy;
+diff --git a/migration/migration.c b/migration/migration.c
+index fcb832a..96b6f45 100644
+--- a/migration/migration.c
++++ b/migration/migration.c
+@@ -574,6 +574,7 @@ static void populate_ram_info(MigrationInfo *info, MigrationState *s)
+     info->ram->normal_bytes = norm_mig_bytes_transferred();
+     info->ram->mbps = s->mbps;
+     info->ram->dirty_sync_count = s->dirty_sync_count;
++    info->ram->postcopy_requests = s->postcopy_requests;
+ 
+     if (s->state != MIGRATION_STATUS_COMPLETED) {
+         info->ram->remaining = ram_bytes_remaining();
+@@ -934,6 +935,7 @@ MigrationState *migrate_init(const MigrationParams *params)
+     s->dirty_sync_count = 0;
+     s->start_postcopy = false;
+     s->postcopy_after_devices = false;
++    s->postcopy_requests = 0;
+     s->migration_thread_running = false;
+     s->last_req_rb = NULL;
+ 
+diff --git a/migration/ram.c b/migration/ram.c
+index e96c2af..eeb1902 100644
+--- a/migration/ram.c
++++ b/migration/ram.c
+@@ -1169,6 +1169,7 @@ int ram_save_queue_pages(MigrationState *ms, const char *rbname,
+ {
+     RAMBlock *ramblock;
+ 
++    ms->postcopy_requests++;
+     rcu_read_lock();
+     if (!rbname) {
+         /* Reuse last RAMBlock */
+diff --git a/qapi-schema.json b/qapi-schema.json
+index 0d6ee22..0fc22c7 100644
+--- a/qapi-schema.json
++++ b/qapi-schema.json
+@@ -382,13 +382,17 @@
+ #
+ # @dirty-sync-count: number of times that dirty ram was synchronized (since 2.1)
+ #
++# @postcopy-requests: The number of page requests received from the destination
++#        (since 2.7)
++#
+ # Since: 0.14.0
+ ##
+ { 'struct': 'MigrationStats',
+   'data': {'transferred': 'int', 'remaining': 'int', 'total': 'int' ,
+            'duplicate': 'int', 'skipped': 'int', 'normal': 'int',
+            'normal-bytes': 'int', 'dirty-pages-rate' : 'int',
+-           'mbps' : 'number', 'dirty-sync-count' : 'int' } }
++           'mbps' : 'number', 'dirty-sync-count' : 'int',
++           'postcopy-requests' : 'int' } }
+ 
+ ##
+ # @XBZRLECacheStats
+-- 
+1.8.3.1
+

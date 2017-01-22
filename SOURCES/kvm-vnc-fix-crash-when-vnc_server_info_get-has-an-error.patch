@@ -1,0 +1,102 @@
+From ad0d4eef850d1f3a25368085be9a193106b01a17 Mon Sep 17 00:00:00 2001
+From: Gerd Hoffmann <kraxel@redhat.com>
+Date: Thu, 11 Aug 2016 12:53:19 +0200
+Subject: [PATCH 11/17] vnc: fix crash when vnc_server_info_get has an error
+
+RH-Author: Gerd Hoffmann <kraxel@redhat.com>
+Message-id: <1470920000-23113-3-git-send-email-kraxel@redhat.com>
+Patchwork-id: 71947
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/3] vnc: fix crash when vnc_server_info_get has an error
+Bugzilla: 1359655
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+From: "Daniel P. Berrange" <berrange@redhat.com>
+
+The vnc_server_info_get will allocate the VncServerInfo
+struct and then call vnc_init_basic_info_from_server_addr
+to populate the basic fields. If this returns an error
+though, the qapi_free_VncServerInfo call will then crash
+because the VncServerInfo struct instance was not properly
+NULL-initialized and thus contains random stack garbage.
+
+ #0  0x00007f1987c8e6f5 in raise () at /lib64/libc.so.6
+ #1  0x00007f1987c902fa in abort () at /lib64/libc.so.6
+ #2  0x00007f1987ccf600 in __libc_message () at /lib64/libc.so.6
+ #3  0x00007f1987cd7d4a in _int_free () at /lib64/libc.so.6
+ #4  0x00007f1987cdb2ac in free () at /lib64/libc.so.6
+ #5  0x00007f198b654f6e in g_free () at /lib64/libglib-2.0.so.0
+ #6  0x0000559193cdcf54 in visit_type_str (v=v@entry=
+     0x5591972f14b0, name=name@entry=0x559193de1e29 "host", obj=obj@entry=0x5591961dbfa0, errp=errp@entry=0x7fffd7899d80)
+     at qapi/qapi-visit-core.c:255
+ #7  0x0000559193cca8f3 in visit_type_VncBasicInfo_members (v=v@entry=
+     0x5591972f14b0, obj=obj@entry=0x5591961dbfa0, errp=errp@entry=0x7fffd7899dc0) at qapi-visit.c:12307
+ #8  0x0000559193ccb523 in visit_type_VncServerInfo_members (v=v@entry=
+     0x5591972f14b0, obj=0x5591961dbfa0, errp=errp@entry=0x7fffd7899e00) at qapi-visit.c:12632
+ #9  0x0000559193ccb60b in visit_type_VncServerInfo (v=v@entry=
+     0x5591972f14b0, name=name@entry=0x0, obj=obj@entry=0x7fffd7899e48, errp=errp@entry=0x0) at qapi-visit.c:12658
+ #10 0x0000559193cb53d8 in qapi_free_VncServerInfo (obj=<optimized out>) at qapi-types.c:3970
+ #11 0x0000559193c1e6ba in vnc_server_info_get (vd=0x7f1951498010) at ui/vnc.c:233
+ #12 0x0000559193c24275 in vnc_connect (vs=0x559197b2f200, vs=0x559197b2f200, event=QAPI_EVENT_VNC_CONNECTED) at ui/vnc.c:284
+ #13 0x0000559193c24275 in vnc_connect (vd=vd@entry=0x7f1951498010, sioc=sioc@entry=0x559196bf9c00, skipauth=skipauth@entry=tru e, websocket=websocket@entry=false) at ui/vnc.c:3039
+ #14 0x0000559193c25806 in vnc_display_add_client (id=<optimized out>, csock=<optimized out>, skipauth=<optimized out>)
+     at ui/vnc.c:3877
+ #15 0x0000559193a90c28 in qmp_marshal_add_client (args=<optimized out>, ret=<optimized out>, errp=0x7fffd7899f90)
+     at qmp-marshal.c:105
+ #16 0x000055919399c2b7 in handle_qmp_command (parser=<optimized out>, tokens=<optimized out>)
+     at /home/berrange/src/virt/qemu/monitor.c:3971
+ #17 0x0000559193ce3307 in json_message_process_token (lexer=0x559194ab0838, input=0x559194a6d940, type=JSON_RCURLY, x=111, y=1 2) at qobject/json-streamer.c:105
+ #18 0x0000559193cfa90d in json_lexer_feed_char (lexer=lexer@entry=0x559194ab0838, ch=125 '}', flush=flush@entry=false)
+     at qobject/json-lexer.c:319
+ #19 0x0000559193cfaa1e in json_lexer_feed (lexer=0x559194ab0838, buffer=<optimized out>, size=<optimized out>)
+     at qobject/json-lexer.c:369
+ #20 0x0000559193ce33c9 in json_message_parser_feed (parser=<optimized out>, buffer=<optimized out>, size=<optimized out>)
+     at qobject/json-streamer.c:124
+ #21 0x000055919399a85b in monitor_qmp_read (opaque=<optimized out>, buf=<optimized out>, size=<optimized out>)
+     at /home/berrange/src/virt/qemu/monitor.c:3987
+ #22 0x0000559193a87d00 in tcp_chr_read (chan=<optimized out>, cond=<optimized out>, opaque=0x559194a7d900)
+     at qemu-char.c:2895
+ #23 0x00007f198b64f703 in g_main_context_dispatch () at /lib64/libglib-2.0.so.0
+ #24 0x0000559193c484b3 in main_loop_wait () at main-loop.c:213
+ #25 0x0000559193c484b3 in main_loop_wait (timeout=<optimized out>) at main-loop.c:258
+ #26 0x0000559193c484b3 in main_loop_wait (nonblocking=<optimized out>) at main-loop.c:506
+ #27 0x0000559193964c55 in main () at vl.c:1908
+ #28 0x0000559193964c55 in main (argc=<optimized out>, argv=<optimized out>, envp=<optimized out>) at vl.c:4603
+
+This was introduced in
+
+  commit 98481bfcd661daa3c160cc87a297b0e60a307788
+  Author: Eric Blake <eblake@redhat.com>
+  Date:   Mon Oct 26 16:34:45 2015 -0600
+
+    vnc: Hoist allocation of VncBasicInfo to callers
+
+which added error reporting for vnc_init_basic_info_from_server_addr
+but didn't change the g_malloc calls to g_malloc0.
+
+Signed-off-by: Daniel P. Berrange <berrange@redhat.com>
+Message-id: 1470134726-15697-3-git-send-email-berrange@redhat.com
+Signed-off-by: Gerd Hoffmann <kraxel@redhat.com>
+(cherry picked from commit 3e7f136d8b4383d99f1b034a045b73f9b12a4eae)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ ui/vnc.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ui/vnc.c b/ui/vnc.c
+index b93fb7b..52abd2b 100644
+--- a/ui/vnc.c
++++ b/ui/vnc.c
+@@ -224,7 +224,7 @@ static VncServerInfo *vnc_server_info_get(VncDisplay *vd)
+     VncServerInfo *info;
+     Error *err = NULL;
+ 
+-    info = g_malloc(sizeof(*info));
++    info = g_malloc0(sizeof(*info));
+     vnc_init_basic_info_from_server_addr(vd->lsock,
+                                          qapi_VncServerInfo_base(info), &err);
+     info->has_auth = true;
+-- 
+1.8.3.1
+

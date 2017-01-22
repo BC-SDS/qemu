@@ -1,0 +1,121 @@
+From 3d988f603fdd2f22f0711c33442c4f9e16e5bf82 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 9 Aug 2016 02:34:42 +0200
+Subject: [PATCH 09/10] spapr: Error out when CPU hotplug is attempted on older
+ pseries machines
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1470710083-17172-2-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71887
+O-Subject: [PATCH 1/2] spapr: Error out when CPU hotplug is attempted on older pseries machines
+Bugzilla: 1362019
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+CPU hotplug and coldplug aren't supported prior to pseries-2.7.  Further,
+earlier machine types don't use CPU core objects at all.  These mean that
+query-hotpluggable-cpus and coldplug on older pseries machines will crash
+QEMU.  It also means that hotpluggable_cpus flag in query-machines will
+be incorrectly set to true for pseries < 2.7, since it is based on the
+presence of the query_hotpluggable_cpus hook.
+
+- Don't assign the query_hotpluggable_cpus hook for pseries < 2.7
+- query_hotpluggable_cpus should therefore never be called on pseries <
+  2.7, so add an assert
+- spapr_core_pre_plug() should fail hot/cold plug attempts for pseries <
+  2.7, since core objects are never used there
+- spapr_core_plug() should therefore never be called for pseries < 2.7, so
+  add an assert.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+[dwg: Change from query_hotpluggable_cpus returning NULL for pseries < 2.7
+ to not being called at all, reword commit message for accuracy]
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+
+(cherry picked from commit c8721d35994fd3731e592f81ba2f9c08e7dc8c31)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1362019
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr.c          |  7 ++++++-
+ hw/ppc/spapr_cpu_core.c | 19 ++++++-------------
+ 2 files changed, 12 insertions(+), 14 deletions(-)
+
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index a5182ce..7604f20 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -2333,8 +2333,11 @@ static HotpluggableCPUList *spapr_query_hotpluggable_cpus(MachineState *machine)
+     int i;
+     HotpluggableCPUList *head = NULL;
+     sPAPRMachineState *spapr = SPAPR_MACHINE(machine);
++    sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(machine);
+     int spapr_max_cores = max_cpus / smp_threads;
+ 
++    g_assert(smc->dr_cpu_enabled);
++
+     for (i = 0; i < spapr_max_cores; i++) {
+         HotpluggableCPUList *list_item = g_new0(typeof(*list_item), 1);
+         HotpluggableCPU *cpu_item = g_new0(typeof(*cpu_item), 1);
+@@ -2389,7 +2392,9 @@ static void spapr_machine_class_init(ObjectClass *oc, void *data)
+     hc->plug = spapr_machine_device_plug;
+     hc->unplug = spapr_machine_device_unplug;
+     mc->cpu_index_to_socket_id = spapr_cpu_index_to_socket_id;
+-    mc->query_hotpluggable_cpus = spapr_query_hotpluggable_cpus;
++    if (smc->dr_cpu_enabled) {
++        mc->query_hotpluggable_cpus = spapr_query_hotpluggable_cpus;
++    }
+ 
+     smc->dr_lmb_enabled = true;
+     smc->dr_cpu_enabled = true;
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index cd06b66..0774375 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -166,18 +166,11 @@ void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+     int index = cc->core_id / smp_threads;
+     int smt = kvmppc_smt_threads();
+ 
++    g_assert(smc->dr_cpu_enabled);
++
+     drc = spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, index * smt);
+     spapr->cores[index] = OBJECT(dev);
+ 
+-    if (!smc->dr_cpu_enabled) {
+-        /*
+-         * This is a cold plugged CPU core but the machine doesn't support
+-         * DR. So skip the hotplug path ensuring that the core is brought
+-         * up online with out an associated DR connector.
+-         */
+-        return;
+-    }
+-
+     g_assert(drc);
+ 
+     /*
+@@ -225,13 +218,13 @@ void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+     char *base_core_type = spapr_get_cpu_core_type(machine->cpu_model);
+     const char *type = object_get_typename(OBJECT(dev));
+ 
+-    if (strcmp(base_core_type, type)) {
+-        error_setg(&local_err, "CPU core type should be %s", base_core_type);
++    if (!smc->dr_cpu_enabled) {
++        error_setg(&local_err, "CPU hotplug not supported for this machine");
+         goto out;
+     }
+ 
+-    if (!smc->dr_cpu_enabled && dev->hotplugged) {
+-        error_setg(&local_err, "CPU hotplug not supported for this machine");
++    if (strcmp(base_core_type, type)) {
++        error_setg(&local_err, "CPU core type should be %s", base_core_type);
+         goto out;
+     }
+ 
+-- 
+1.8.3.1
+

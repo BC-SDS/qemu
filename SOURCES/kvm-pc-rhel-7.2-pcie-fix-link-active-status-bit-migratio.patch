@@ -1,0 +1,41 @@
+From c56b86edcaae03c197b165f52a011246347286ac Mon Sep 17 00:00:00 2001
+From: "Michael S. Tsirkin" <mst@redhat.com>
+Date: Fri, 5 Aug 2016 11:21:10 +0200
+Subject: [PATCH 97/99] pc-rhel-7.2: pcie: fix link active status bit migration
+
+RH-Author: Michael S. Tsirkin <mst@redhat.com>
+Message-id: <1470347597-26428-3-git-send-email-mst@redhat.com>
+Patchwork-id: 71864
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH v3 2/2] pc-rhel-7.2: pcie: fix link active status bit migration
+Bugzilla: 1352860
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+Upstream: downstream only
+
+Following previous commit, set compat flag for rhel7.2
+to match upstream 2.3 (where it forked from).
+
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/compat.h | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/include/hw/compat.h b/include/hw/compat.h
+index d4be072..b0a76c2 100644
+--- a/include/hw/compat.h
++++ b/include/hw/compat.h
+@@ -204,5 +204,9 @@
+             .driver   = "virtio-pci",\
+             .property = "disable-legacy",\
+             .value    = "off",\
++        },{ /* HW_COMPAT_RHEL7_2 */ \
++            .driver   = TYPE_PCI_DEVICE,\
++            .property = "x-pcie-lnksta-dllla",\
++            .value    = "off",\
+         },
+ #endif /* HW_COMPAT_H */
+-- 
+1.8.3.1
+

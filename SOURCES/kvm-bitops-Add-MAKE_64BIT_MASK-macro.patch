@@ -1,0 +1,51 @@
+From cb19c6af4f89c15e25a32f2c4332121663055fc2 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Fri, 29 Jul 2016 12:01:22 +0200
+Subject: [PATCH 28/35] bitops: Add MAKE_64BIT_MASK macro
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1469793688-10313-2-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 71518
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH v5 1/7] bitops: Add MAKE_64BIT_MASK macro
+Bugzilla: 1339196
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+RH-Acked-by: Andrea Arcangeli <aarcange@redhat.com>
+
+From: Alistair Francis <alistair.francis@xilinx.com>
+
+Add a macro that creates a 64bit value which has length number of ones
+shifted across by the value of shift.
+
+Signed-off-by: Alistair Francis <alistair.francis@xilinx.com>
+Reviewed-by: Alex Bennée <alex.bennee@linaro.org>
+Reviewed-by: Peter Maydell <peter.maydell@linaro.org>
+Message-id: 9773244aa1c8c26b8b82cb261d8f5dd4b7b9fcf9.1467053537.git.alistair.francis@xilinx.com
+Signed-off-by: Peter Maydell <peter.maydell@linaro.org>
+(cherry picked from commit ae2923b5c20a21c6457680330506a9c13873485c)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/qemu/bitops.h | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/include/qemu/bitops.h b/include/qemu/bitops.h
+index 755fdd1..7c7e43d 100644
+--- a/include/qemu/bitops.h
++++ b/include/qemu/bitops.h
+@@ -24,6 +24,9 @@
+ #define BIT_WORD(nr)            ((nr) / BITS_PER_LONG)
+ #define BITS_TO_LONGS(nr)       DIV_ROUND_UP(nr, BITS_PER_BYTE * sizeof(long))
+ 
++#define MAKE_64BIT_MASK(shift, length) \
++    (((~0ULL) >> (64 - (length))) << (shift))
++
+ /**
+  * set_bit - Set a bit in memory
+  * @nr: the bit to set
+-- 
+1.8.3.1
+

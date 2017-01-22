@@ -1,0 +1,68 @@
+From 4afbf62606ecca1315ffaf5262cfbf31bfc5202e Mon Sep 17 00:00:00 2001
+From: Xiao Wang <jasowang@redhat.com>
+Date: Thu, 21 Jul 2016 06:40:28 +0200
+Subject: [PATCH 01/35] pci: fix unaligned access in pci_xxx_quad()
+
+RH-Author: Xiao Wang <jasowang@redhat.com>
+Message-id: <1469083246-12219-2-git-send-email-jasowang@redhat.com>
+Patchwork-id: 71248
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 01/19] pci: fix unaligned access in pci_xxx_quad()
+Bugzilla: 1343092
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Dmitry Fleytman <dfleytma@redhat.com>
+
+From: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+
+Replace legacy cpu_to_le64w()/le64_to_cpup()
+calls with stq_le_p()/ldq_le_p().
+
+Motivation for this modification is that
+follow up patches add utility function
+pcie_dev_ser_num_init() for PCIe DSN
+capability creation which uses
+pci_set_quad() with a misaligned offset.
+
+Signed-off-by: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+Signed-off-by: Leonid Bloch <leonid.bloch@ravellosystems.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+(cherry picked from commit 059a65f3ad506105ac9b5b0c7c31f8a0be0abbbc)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/pci/pci.h | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/include/hw/pci/pci.h b/include/hw/pci/pci.h
+index ef6ba51..4420f47 100644
+--- a/include/hw/pci/pci.h
++++ b/include/hw/pci/pci.h
+@@ -465,16 +465,23 @@ pci_get_long(const uint8_t *config)
+     return ldl_le_p(config);
+ }
+ 
++/*
++ * PCI capabilities and/or their fields
++ * are generally DWORD aligned only so
++ * mechanism used by pci_set/get_quad()
++ * must be tolerant to unaligned pointers
++ *
++ */
+ static inline void
+ pci_set_quad(uint8_t *config, uint64_t val)
+ {
+-    cpu_to_le64w((uint64_t *)config, val);
++    stq_le_p(config, val);
+ }
+ 
+ static inline uint64_t
+ pci_get_quad(const uint8_t *config)
+ {
+-    return le64_to_cpup((const uint64_t *)config);
++    return ldq_le_p(config);
+ }
+ 
+ static inline void
+-- 
+1.8.3.1
+

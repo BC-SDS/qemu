@@ -1,0 +1,89 @@
+From 55583d9d63538e4db1285cf910f63a7d82c93b11 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 15 Jul 2016 14:00:35 +0200
+Subject: [PATCH 4/6] blockdev: Fix regression with the default naming of
+ throttling groups
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1468591236-1698-2-git-send-email-stefanha@redhat.com>
+Patchwork-id: 71196
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 1/2] blockdev: Fix regression with the default naming of throttling groups
+Bugzilla: 1353801
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Max Reitz <mreitz@redhat.com>
+
+From: Alberto Garcia <berto@igalia.com>
+
+When I/O limits are set for a block device, the name of the throttling
+group is taken from the BlockBackend if the user doesn't specify one.
+
+Commit efaa7c4eeb7490c6f37f3 moved the naming of the BlockBackend in
+blockdev_init() to the end of the function, after I/O limits are set.
+The consequence is that the throttling group gets an empty name.
+
+Signed-off-by: Alberto Garcia <berto@igalia.com>
+Reported-by: Stefan Hajnoczi <stefanha@redhat.com>
+Cc: Max Reitz <mreitz@redhat.com>
+Cc: qemu-stable@nongnu.org
+Message-id: af5cd58bd2c4b9f6c57f260d9cfe586b9fb7d34d.1467986342.git.berto@igalia.com
+[mreitz: Use existing "id" variable instead of new "blk_id"]
+Signed-off-by: Max Reitz <mreitz@redhat.com>
+
+(cherry picked from commit ff356ee4da0a2e691a7ab0165d47279f868977c4)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+  blockdev.c
+
+  blockdev_init() differs from upstream but it's straightforward to
+  change "throttling_group = blk_name(blk)" to "throttling_group = id".
+
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+---
+ blockdev.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/blockdev.c b/blockdev.c
+index 1b987f8..9bd00f1 100644
+--- a/blockdev.c
++++ b/blockdev.c
+@@ -512,6 +512,8 @@ static BlockBackend *blockdev_init(const char *file, QDict *bs_opts,
+ 
+     writethrough = !qemu_opt_get_bool(opts, BDRV_OPT_CACHE_WB, true);
+ 
++    id = qemu_opts_id(opts);
++
+     qdict_extract_subqdict(bs_opts, &interval_dict, "stats-intervals.");
+     qdict_array_split(interval_dict, &interval_list);
+ 
+@@ -581,7 +583,7 @@ static BlockBackend *blockdev_init(const char *file, QDict *bs_opts,
+ 
+         if (throttle_enabled(&cfg)) {
+             if (!throttling_group) {
+-                throttling_group = blk_name(blk);
++                throttling_group = id;
+             }
+             blk_rs->throttle_group = g_strdup(throttling_group);
+             blk_rs->throttle_state = throttle_group_incref(throttling_group);
+@@ -616,7 +618,7 @@ static BlockBackend *blockdev_init(const char *file, QDict *bs_opts,
+         /* disk I/O throttling */
+         if (throttle_enabled(&cfg)) {
+             if (!throttling_group) {
+-                throttling_group = blk_name(blk);
++                throttling_group = id;
+             }
+             bdrv_io_limits_enable(bs, throttling_group);
+             bdrv_set_io_limits(bs, &cfg);
+@@ -638,7 +640,7 @@ static BlockBackend *blockdev_init(const char *file, QDict *bs_opts,
+     blk_set_enable_write_cache(blk, !writethrough);
+     blk_set_on_error(blk, on_read_error, on_write_error);
+ 
+-    if (!monitor_add_blk(blk, qemu_opts_id(opts), errp)) {
++    if (!monitor_add_blk(blk, id, errp)) {
+         blk_unref(blk);
+         blk = NULL;
+         goto err_no_bs_opts;
+-- 
+1.8.3.1
+

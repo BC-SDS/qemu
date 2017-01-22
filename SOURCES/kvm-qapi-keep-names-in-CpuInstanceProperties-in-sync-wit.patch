@@ -1,0 +1,136 @@
+From bc0587e81f1761af32256030cdaa59ce6bc9cf60 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:52 +0200
+Subject: [PATCH 19/34] qapi: keep names in 'CpuInstanceProperties' in sync
+ with struct CPUCore
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-20-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71139
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 19/27] qapi: keep names in 'CpuInstanceProperties' in sync with struct CPUCore
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+struct CPUCore uses 'id' suffix in the property name. As docs for
+query-hotpluggable-cpus state that the cpu core properties should be
+passed back to device_add by management in case new members are added
+and thus the names for the fields should be kept in sync.
+
+Signed-off-by: Peter Krempa <pkrempa@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Reviewed-by: Igor Mammedov <imammedo@redhat.com>
+[dwg: Removed a duplicated word in comment]
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+
+(cherry picked from commit 27393c33d806a4a5c3bc85342e4c1985a666681b)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hmp.c                 | 16 ++++++++--------
+ hw/ppc/spapr.c        |  4 ++--
+ include/hw/cpu/core.h |  3 +++
+ qapi-schema.json      | 19 ++++++++++---------
+ 4 files changed, 23 insertions(+), 19 deletions(-)
+
+diff --git a/hmp.c b/hmp.c
+index 30120f6..cf1e1eb 100644
+--- a/hmp.c
++++ b/hmp.c
+@@ -2419,17 +2419,17 @@ void hmp_hotpluggable_cpus(Monitor *mon, const QDict *qdict)
+ 
+         c = l->value->props;
+         monitor_printf(mon, "  CPUInstance Properties:\n");
+-        if (c->has_node) {
+-            monitor_printf(mon, "    node: \"%" PRIu64 "\"\n", c->node);
++        if (c->has_node_id) {
++            monitor_printf(mon, "    node-id: \"%" PRIu64 "\"\n", c->node_id);
+         }
+-        if (c->has_socket) {
+-            monitor_printf(mon, "    socket: \"%" PRIu64 "\"\n", c->socket);
++        if (c->has_socket_id) {
++            monitor_printf(mon, "    socket-id: \"%" PRIu64 "\"\n", c->socket_id);
+         }
+-        if (c->has_core) {
+-            monitor_printf(mon, "    core: \"%" PRIu64 "\"\n", c->core);
++        if (c->has_core_id) {
++            monitor_printf(mon, "    core-id: \"%" PRIu64 "\"\n", c->core_id);
+         }
+-        if (c->has_thread) {
+-            monitor_printf(mon, "    thread: \"%" PRIu64 "\"\n", c->thread);
++        if (c->has_thread_id) {
++            monitor_printf(mon, "    thread-id: \"%" PRIu64 "\"\n", c->thread_id);
+         }
+ 
+         l = l->next;
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index 46d2cff..f470f39 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -2335,8 +2335,8 @@ static HotpluggableCPUList *spapr_query_hotpluggable_cpus(MachineState *machine)
+ 
+         cpu_item->type = spapr_get_cpu_core_type(machine->cpu_model);
+         cpu_item->vcpus_count = smp_threads;
+-        cpu_props->has_core = true;
+-        cpu_props->core = i * smt;
++        cpu_props->has_core_id = true;
++        cpu_props->core_id = i * smt;
+         /* TODO: add 'has_node/node' here to describe
+            to which node core belongs */
+ 
+diff --git a/include/hw/cpu/core.h b/include/hw/cpu/core.h
+index 4540a7d..79ac79c 100644
+--- a/include/hw/cpu/core.h
++++ b/include/hw/cpu/core.h
+@@ -26,6 +26,9 @@ typedef struct CPUCore {
+     int nr_threads;
+ } CPUCore;
+ 
++/* Note: topology field names need to be kept in sync with
++ * 'CpuInstanceProperties' */
++
+ #define CPU_CORE_PROP_CORE_ID "core-id"
+ 
+ #endif
+diff --git a/qapi-schema.json b/qapi-schema.json
+index d14ac90..e42d19e 100644
+--- a/qapi-schema.json
++++ b/qapi-schema.json
+@@ -4211,20 +4211,21 @@
+ # Note: currently there are 4 properties that could be present
+ # but management should be prepared to pass through other
+ # properties with device_add command to allow for future
+-# interface extension.
++# interface extension. This also requires the filed names to be kept in
++# sync with the properties passed to -device/device_add.
+ #
+-# @node: #optional NUMA node ID the CPU belongs to
+-# @socket: #optional socket number within node/board the CPU belongs to
+-# @core: #optional core number within socket the CPU belongs to
+-# @thread: #optional thread number within core the CPU belongs to
++# @node-id: #optional NUMA node ID the CPU belongs to
++# @socket-id: #optional socket number within node/board the CPU belongs to
++# @core-id: #optional core number within socket the CPU belongs to
++# @thread-id: #optional thread number within core the CPU belongs to
+ #
+ # Since: 2.7
+ ##
+ { 'struct': 'CpuInstanceProperties',
+-  'data': { '*node': 'int',
+-            '*socket': 'int',
+-            '*core': 'int',
+-            '*thread': 'int'
++  'data': { '*node-id': 'int',
++            '*socket-id': 'int',
++            '*core-id': 'int',
++            '*thread-id': 'int'
+   }
+ }
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,59 @@
+From 44f323418203fe94f51a2fad490ae64ca40c8da9 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:11 +0200
+Subject: [PATCH 11/99] acpi: add aml_refof()
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-7-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71622
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 06/78] acpi: add aml_refof()
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+(cherry picked from commit 7bc6fd24646fc0c2927c3ab255b8b09ed42e67ee)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/aml-build.c         | 8 ++++++++
+ include/hw/acpi/aml-build.h | 1 +
+ 2 files changed, 9 insertions(+)
+
+diff --git a/hw/acpi/aml-build.c b/hw/acpi/aml-build.c
+index 405cab1..da614b7 100644
+--- a/hw/acpi/aml-build.c
++++ b/hw/acpi/aml-build.c
+@@ -1429,6 +1429,14 @@ Aml *aml_unicode(const char *str)
+     return var;
+ }
+ 
++/* ACPI 1.0b: 16.2.5.4 Type 2 Opcodes Encoding: DefRefOf */
++Aml *aml_refof(Aml *arg)
++{
++    Aml *var = aml_opcode(0x71 /* RefOfOp */);
++    aml_append(var, arg);
++    return var;
++}
++
+ /* ACPI 1.0b: 16.2.5.4 Type 2 Opcodes Encoding: DefDerefOf */
+ Aml *aml_derefof(Aml *arg)
+ {
+diff --git a/include/hw/acpi/aml-build.h b/include/hw/acpi/aml-build.h
+index 4f04310..ba3c3db 100644
+--- a/include/hw/acpi/aml-build.h
++++ b/include/hw/acpi/aml-build.h
+@@ -355,6 +355,7 @@ Aml *aml_create_qword_field(Aml *srcbuf, Aml *index, const char *name);
+ Aml *aml_varpackage(uint32_t num_elements);
+ Aml *aml_touuid(const char *uuid);
+ Aml *aml_unicode(const char *str);
++Aml *aml_refof(Aml *arg);
+ Aml *aml_derefof(Aml *arg);
+ Aml *aml_sizeof(Aml *arg);
+ Aml *aml_concatenate(Aml *source1, Aml *source2, Aml *target);
+-- 
+1.8.3.1
+

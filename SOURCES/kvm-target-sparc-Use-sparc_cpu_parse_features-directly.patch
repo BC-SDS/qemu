@@ -1,0 +1,64 @@
+From 615671933f67f6c84586927633b35b35fabf03f2 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:46 +0200
+Subject: [PATCH 46/99] target-sparc: Use sparc_cpu_parse_features() directly
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-42-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71657
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 41/78] target-sparc: Use sparc_cpu_parse_features() directly
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Make SPARC target use sparc_cpu_parse_features() directly
+so it won't get in the way of switching other propertified
+targets to handling features as global properties.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit fb02d56e96d553088c5b4267a3c954a3e952a50a)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-sparc/cpu.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/target-sparc/cpu.c b/target-sparc/cpu.c
+index fe4119e..c2aa056 100644
+--- a/target-sparc/cpu.c
++++ b/target-sparc/cpu.c
+@@ -100,9 +100,11 @@ static void cpu_sparc_disas_set_info(CPUState *cpu, disassemble_info *info)
+ #endif
+ }
+ 
++static void sparc_cpu_parse_features(CPUState *cs, char *features,
++                                     Error **errp);
++
+ static int cpu_sparc_register(SPARCCPU *cpu, const char *cpu_model)
+ {
+-    CPUClass *cc = CPU_GET_CLASS(cpu);
+     CPUSPARCState *env = &cpu->env;
+     char *s = g_strdup(cpu_model);
+     char *featurestr, *name = strtok(s, ",");
+@@ -118,7 +120,7 @@ static int cpu_sparc_register(SPARCCPU *cpu, const char *cpu_model)
+     memcpy(env->def, def, sizeof(*def));
+ 
+     featurestr = strtok(NULL, ",");
+-    cc->parse_features(CPU(cpu), featurestr, &err);
++    sparc_cpu_parse_features(CPU(cpu), featurestr, &err);
+     g_free(s);
+     if (err) {
+         error_report_err(err);
+@@ -839,7 +841,6 @@ static void sparc_cpu_class_init(ObjectClass *oc, void *data)
+     scc->parent_reset = cc->reset;
+     cc->reset = sparc_cpu_reset;
+ 
+-    cc->parse_features = sparc_cpu_parse_features;
+     cc->has_work = sparc_cpu_has_work;
+     cc->do_interrupt = sparc_cpu_do_interrupt;
+     cc->cpu_exec_interrupt = sparc_cpu_exec_interrupt;
+-- 
+1.8.3.1
+

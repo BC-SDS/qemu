@@ -1,0 +1,63 @@
+From a3c656a6cccdf80ea636019a5128f3808909e3de Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:37 +0200
+Subject: [PATCH 17/30] vhost-user: add get_vhost_net() assertions
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-18-marcandre.lureau@redhat.com>
+Patchwork-id: 71933
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 17/28] vhost-user: add get_vhost_net() assertions
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Add a few assertions to be more explicit about the runtime behaviour
+after the previous patch: get_vhost_net() is non-null after
+net_vhost_user_init().
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 1a5b68cee8a2b165ffd61b2e0641a4da3990f242)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/vhost_net.c | 1 +
+ net/vhost-user.c   | 2 ++
+ 2 files changed, 3 insertions(+)
+
+diff --git a/hw/net/vhost_net.c b/hw/net/vhost_net.c
+index a2086b8..c790e6b 100644
+--- a/hw/net/vhost_net.c
++++ b/hw/net/vhost_net.c
+@@ -417,6 +417,7 @@ VHostNetState *get_vhost_net(NetClientState *nc)
+         break;
+     case NET_CLIENT_OPTIONS_KIND_VHOST_USER:
+         vhost_net = vhost_user_get_vhost_net(nc);
++        assert(vhost_net);
+         break;
+     default:
+         break;
+diff --git a/net/vhost-user.c b/net/vhost-user.c
+index 197c848..4083840 100644
+--- a/net/vhost-user.c
++++ b/net/vhost-user.c
+@@ -259,6 +259,8 @@ static int net_vhost_user_init(NetClientState *peer, const char *device,
+ 
+     qemu_chr_add_handlers(chr, NULL, NULL, net_vhost_user_event, nc[0].name);
+ 
++    assert(s->vhost_net);
++
+     return 0;
+ }
+ 
+-- 
+1.8.3.1
+

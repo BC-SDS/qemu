@@ -1,0 +1,65 @@
+From 0df1bd21b4721bef7cf1f27a5856b5812b455d64 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Tue, 21 Jun 2016 13:34:15 +0200
+Subject: [PATCH 13/25] blockjob: move iostatus reset out of block_job_enter()
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466516062-20048-3-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70719
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 2/9] blockjob: move iostatus reset out of block_job_enter()
+Bugzilla: 1265179
+RH-Acked-by: Jeffrey Cody <jcody@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+The QMP block-job-resume command and cancellation may want to reset the
+job's iostatus.  The next patches add a user who does not want to reset
+iostatus so move it up to block_job_enter() callers.
+
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Message-id: 1466096189-6477-2-git-send-email-stefanha@redhat.com
+(cherry picked from commit 17bd51f936ac0719ef7a93fb77e30313b55c83b5)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ blockdev.c | 1 +
+ blockjob.c | 2 +-
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/blockdev.c b/blockdev.c
+index 844b4ca..fa1c4ed 100644
+--- a/blockdev.c
++++ b/blockdev.c
+@@ -3795,6 +3795,7 @@ void qmp_block_job_resume(const char *device, Error **errp)
+ 
+     job->user_paused = false;
+     trace_qmp_block_job_resume(job);
++    block_job_iostatus_reset(job);
+     block_job_resume(job);
+     aio_context_release(aio_context);
+ }
+diff --git a/blockjob.c b/blockjob.c
+index a68b6d3..e3384c9 100644
+--- a/blockjob.c
++++ b/blockjob.c
+@@ -253,7 +253,6 @@ void block_job_resume(BlockJob *job)
+ 
+ void block_job_enter(BlockJob *job)
+ {
+-    block_job_iostatus_reset(job);
+     if (job->co && !job->busy) {
+         qemu_coroutine_enter(job->co, NULL);
+     }
+@@ -262,6 +261,7 @@ void block_job_enter(BlockJob *job)
+ void block_job_cancel(BlockJob *job)
+ {
+     job->cancelled = true;
++    block_job_iostatus_reset(job);
+     block_job_enter(job);
+ }
+ 
+-- 
+1.8.3.1
+

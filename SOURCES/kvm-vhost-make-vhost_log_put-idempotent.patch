@@ -1,0 +1,69 @@
+From 9faf16d93fadcbaadf08b962855d59036806054e Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:23 +0200
+Subject: [PATCH 03/30] vhost: make vhost_log_put() idempotent
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-4-marcandre.lureau@redhat.com>
+Patchwork-id: 71919
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 03/28] vhost: make vhost_log_put() idempotent
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Although not strictly required, it is nice to have vhost_log_put()
+safely callable multiple times.
+
+Clear dev->log* when calling vhost_log_put() to make the function
+idempotent. This also simplifies a bit the caller work.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 9e0bc24fa57b98561d75ab8f61a419f2d69ec6aa)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/vhost.c | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/hw/virtio/vhost.c b/hw/virtio/vhost.c
+index f9c8249..1459be2 100644
+--- a/hw/virtio/vhost.c
++++ b/hw/virtio/vhost.c
+@@ -362,6 +362,8 @@ static void vhost_log_put(struct vhost_dev *dev, bool sync)
+     if (!log) {
+         return;
+     }
++    dev->log = NULL;
++    dev->log_size = 0;
+ 
+     --log->refcnt;
+     if (log->refcnt == 0) {
+@@ -710,8 +712,6 @@ static int vhost_migration_log(MemoryListener *listener, int enable)
+             return r;
+         }
+         vhost_log_put(dev, false);
+-        dev->log = NULL;
+-        dev->log_size = 0;
+     } else {
+         vhost_dev_log_resize(dev, vhost_get_log_size(dev));
+         r = vhost_dev_set_log(dev, true);
+@@ -1331,7 +1331,4 @@ void vhost_dev_stop(struct vhost_dev *hdev, VirtIODevice *vdev)
+ 
+     vhost_log_put(hdev, true);
+     hdev->started = false;
+-    hdev->log = NULL;
+-    hdev->log_size = 0;
+ }
+-
+-- 
+1.8.3.1
+

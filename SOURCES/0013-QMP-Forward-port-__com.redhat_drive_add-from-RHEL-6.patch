@@ -1,0 +1,202 @@
+From 08061969c7b986f80ab353c8dbb6e7ba74fbbb8c Mon Sep 17 00:00:00 2001
+From: Markus Armbruster <armbru@redhat.com>
+Date: Tue, 17 Dec 2013 06:46:36 +0100
+Subject: QMP: Forward-port __com.redhat_drive_add from RHEL-6
+
+RH-Author: Markus Armbruster <armbru@redhat.com>
+Message-id: <1387262799-10350-4-git-send-email-armbru@redhat.com>
+Patchwork-id: 56294
+O-Subject: [PATCH v2 3/6] QMP: Forward-port __com.redhat_drive_add from RHEL-6
+Bugzilla: 889051
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Luiz Capitulino <lcapitulino@redhat.com>
+
+From: Markus Armbruster <armbru@redhat.com>
+
+Code taken from RHEL-6 as of qemu-kvm-0.12.1.2-2.418.el6, backported
+and fixed up as follows:
+
+* Update simple_drive_add() for commit 4e89978 "qemu-option:
+  qemu_opts_from_qdict(): use error_set()".
+
+* Update simple_drive_add() for commit 2d0d283 "Support default block
+  interfaces per QEMUMachine".
+
+* Add comment explaining drive_init() error reporting hacks to
+  simple_drive_add().
+
+* qemu-monitor.hx has been split into qmp-commands.hx and
+  hmp-commands.hx.  Copy the QMP parts to qmp-commands.hx.  Clean up
+  second example slightly.
+
+* Trailing whitespace cleaned up.
+
+Rebase notes (2.6.0):
+- Added qapi/error.h to device-hotplug.c
+
+Rebase notes (2.4.0):
+- removed qerror_report
+- removed user_print
+Signed-off-by: Markus Armbruster <armbru@redhat.com>
+---
+ device-hotplug.c          | 70 +++++++++++++++++++++++++++++++++++++++++++++++
+ include/sysemu/blockdev.h |  2 ++
+ qmp-commands.hx           | 45 ++++++++++++++++++++++++++++++
+ 3 files changed, 117 insertions(+)
+
+diff --git a/device-hotplug.c b/device-hotplug.c
+index 126f73c..f906459 100644
+--- a/device-hotplug.c
++++ b/device-hotplug.c
+@@ -31,6 +31,10 @@
+ #include "sysemu/sysemu.h"
+ #include "monitor/monitor.h"
+ #include "block/block_int.h"
++#include "qemu/error-report.h"
++#include "qapi/qmp/qerror.h"
++#include "qapi/error.h"
++
+ 
+ static DriveInfo *add_init_drive(const char *optstr)
+ {
+@@ -89,3 +93,69 @@ err:
+         blk_unref(blk);
+     }
+ }
++
++static void check_parm(const char *key, QObject *obj, void *opaque)
++{
++    static const char *valid_keys[] = {
++        "id", "cyls", "heads", "secs", "trans", "media", "snapshot",
++        "file", "cache", "aio", "format", "serial", "rerror", "werror",
++        "readonly", "copy-on-read",
++#ifdef CONFIG_BLOCK_IO_THROTTLING
++        "bps", "bps_rd", "bps_wr", "iops", "iops_rd", "iops_wr",
++#endif
++        NULL
++
++    };
++    int *stopped = opaque;
++    const char **p;
++
++    if (*stopped) {
++        return;
++    }
++
++    for (p = valid_keys; *p; p++) {
++        if (!strcmp(key, *p)) {
++            return;
++        }
++    }
++
++    error_report(QERR_INVALID_PARAMETER, key);
++    *stopped = 1;
++}
++
++void simple_drive_add(QDict *qdict, QObject **ret_data, Error **errp)
++{
++    int stopped;
++    Error *local_err = NULL;
++    QemuOpts *opts;
++    DriveInfo *dinfo;
++    MachineClass *mc;
++
++    if (!qdict_haskey(qdict, "id")) {
++        error_setg(errp, QERR_MISSING_PARAMETER, "id");
++        return;
++    }
++
++    stopped = 0;
++    qdict_iter(qdict, check_parm, &stopped);
++    if (stopped) {
++        return;
++    }
++
++    opts = qemu_opts_from_qdict(&qemu_drive_opts, qdict, &local_err);
++    if (!opts) {
++        error_propagate(errp, local_err);
++        return;
++    }
++    qemu_opt_set(opts, "if", "none", &error_abort);
++    mc = MACHINE_GET_CLASS(current_machine);
++    dinfo = drive_new(opts, mc->block_default_type);
++    if (!dinfo) {
++        error_report(QERR_DEVICE_INIT_FAILED,
++                      qemu_opts_id(opts));
++        qemu_opts_del(opts);
++        return;
++    }
++
++    return;
++}
+diff --git a/include/sysemu/blockdev.h b/include/sysemu/blockdev.h
+index 16432f3..9c60321 100644
+--- a/include/sysemu/blockdev.h
++++ b/include/sysemu/blockdev.h
+@@ -64,4 +64,6 @@ DriveInfo *drive_new(QemuOpts *arg, BlockInterfaceType block_default_type);
+ 
+ void hmp_commit(Monitor *mon, const QDict *qdict);
+ void hmp_drive_del(Monitor *mon, const QDict *qdict);
++
++void simple_drive_add(QDict *qdict, QObject **ret_data, Error **errp);
+ #endif
+diff --git a/qmp-commands.hx b/qmp-commands.hx
+index 5fce460..87468f9 100644
+--- a/qmp-commands.hx
++++ b/qmp-commands.hx
+@@ -106,6 +106,51 @@ Example:
+ Note: The "force" argument defaults to false.
+ 
+ EQMP
++    {
++        .name       = RFQDN_REDHAT "drive_add",
++        .args_type  = "simple-drive:O",
++        .params     = "id=name,[file=file][,format=f][,media=d]...",
++        .help       = "Create a drive similar to -device if=none.",
++        .mhandler.cmd_new = simple_drive_add,
++    },
++
++SQMP
++__com.redhat_drive_add
++----------------------
++
++Create a drive similar to -device if=none.
++
++Arguments:
++
++- "id": Drive ID, must be unique (json-string)
++- "file": Disk image (json-string, optional)
++- "format": Disk format (json-string, optional)
++- "aio": How to perform asynchronous disk I/O (json-string, optional)
++- "cache": Host cache use policy (json-string, optional)
++- "cyls", "heads", "secs": Disk geometry (json-int, optional)
++- "trans": BIOS translation mode (json-string, optional)
++- "media": Media type (json-string, optional)
++- "readonly": Open image read-only (json-bool, optional)
++- "rerror": What to do on read error (json-string, optional)
++- "werror": What to do on write error (json-string, optional)
++- "serial": Drive serial number (json-string, optional)
++- "snapshot": Enable snapshot mode (json-bool, optional)
++- "copy-on-read": Enable copy-on-read mode (json-bool, optional)
++
++Example:
++
++1. Add a drive without medium:
++
++-> { "execute": "__com.redhat_drive_add", "arguments": { "id": "foo" } }
++<- {"return": {}}
++
++2. Add a drive with medium:
++
++-> { "execute": "__com.redhat_drive_add",
++     "arguments": { "id": "bar", "file": "tmp.qcow2", "format": "qcow2" } }
++<- {"return": {}}
++
++EQMP
+ 
+     {
+         .name       = RFQDN_REDHAT "drive_del",
+-- 
+2.5.5
+

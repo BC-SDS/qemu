@@ -1,0 +1,146 @@
+From c5350adedf5766063533b88a8b86f1c72033a7b6 Mon Sep 17 00:00:00 2001
+From: Marcel Apfelbaum <marcel@redhat.com>
+Date: Sun, 31 Jul 2016 18:03:07 +0200
+Subject: [PATCH 05/99] hw/apci: handle 64-bit MMIO regions correctly
+
+RH-Author: Marcel Apfelbaum <marcel@redhat.com>
+Message-id: <1469988187-20816-6-git-send-email-marcel@redhat.com>
+Patchwork-id: 71532
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 5/5] hw/apci: handle 64-bit MMIO regions correctly
+Bugzilla: 1323976
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+
+In build_crs(), the calculation and merging of the ranges already happens
+in 64-bit, but the entry boundaries are silently truncated to 32-bit in the
+call to aml_dword_memory(). Fix it by handling the 64-bit MMIO ranges separately.
+This fixes 64-bit BARs behind PXBs.
+
+Reported-by: Laszlo Ersek <lersek@redhat.com>
+Reviewed-by: Igor Mammedov <imammedo@redhat.com>
+Tested-by: Laszlo Ersek <lersek@redhat.com>
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 16de88a4164f2e580b3b2ee67d1b9ac1dace1711)
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+
+ Conflicts:
+	hw/i386/acpi-build.c
+        commit range 5178ecd86367..58eeb83cc7c4 is not backported
+        downstream.
+
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/acpi-build.c | 53 +++++++++++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 44 insertions(+), 9 deletions(-)
+
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index a930c8d..907b8c2 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -740,18 +740,22 @@ static void crs_range_free(gpointer data)
+ typedef struct CrsRangeSet {
+     GPtrArray *io_ranges;
+     GPtrArray *mem_ranges;
++    GPtrArray *mem_64bit_ranges;
+  } CrsRangeSet;
+ 
+ static void crs_range_set_init(CrsRangeSet *range_set)
+ {
+     range_set->io_ranges = g_ptr_array_new_with_free_func(crs_range_free);
+     range_set->mem_ranges = g_ptr_array_new_with_free_func(crs_range_free);
++    range_set->mem_64bit_ranges =
++            g_ptr_array_new_with_free_func(crs_range_free);
+ }
+ 
+ static void crs_range_set_free(CrsRangeSet *range_set)
+ {
+     g_ptr_array_free(range_set->io_ranges, true);
+     g_ptr_array_free(range_set->mem_ranges, true);
++    g_ptr_array_free(range_set->mem_64bit_ranges, true);
+ }
+ 
+ static gint crs_range_compare(gconstpointer a, gconstpointer b)
+@@ -909,8 +913,14 @@ static Aml *build_crs(PCIHostState *host, CrsRangeSet *range_set)
+              * that do not support multiple root buses
+              */
+             if (range_base && range_base <= range_limit) {
+-                crs_range_insert(temp_range_set.mem_ranges,
+-                                 range_base, range_limit);
++                uint64_t length = range_limit - range_base + 1;
++                if (range_limit <= UINT32_MAX && length <= UINT32_MAX) {
++                    crs_range_insert(temp_range_set.mem_ranges,
++                                     range_base, range_limit);
++                } else {
++                    crs_range_insert(temp_range_set.mem_64bit_ranges,
++                                     range_base, range_limit);
++                }
+             }
+ 
+             range_base =
+@@ -923,8 +933,14 @@ static Aml *build_crs(PCIHostState *host, CrsRangeSet *range_set)
+              * that do not support multiple root buses
+              */
+             if (range_base && range_base <= range_limit) {
+-                crs_range_insert(temp_range_set.mem_ranges,
+-                                 range_base, range_limit);
++                uint64_t length = range_limit - range_base + 1;
++                if (range_limit <= UINT32_MAX && length <= UINT32_MAX) {
++                    crs_range_insert(temp_range_set.mem_ranges,
++                                     range_base, range_limit);
++                } else {
++                    crs_range_insert(temp_range_set.mem_64bit_ranges,
++                                     range_base, range_limit);
++                }
+             }
+         }
+     }
+@@ -952,6 +968,19 @@ static Aml *build_crs(PCIHostState *host, CrsRangeSet *range_set)
+         crs_range_insert(range_set->mem_ranges, entry->base, entry->limit);
+     }
+ 
++    crs_range_merge(temp_range_set.mem_64bit_ranges);
++    for (i = 0; i < temp_range_set.mem_64bit_ranges->len; i++) {
++        entry = g_ptr_array_index(temp_range_set.mem_64bit_ranges, i);
++        aml_append(crs,
++                   aml_qword_memory(AML_POS_DECODE, AML_MIN_FIXED,
++                                    AML_MAX_FIXED, AML_NON_CACHEABLE,
++                                    AML_READ_WRITE,
++                                    0, entry->base, entry->limit, 0,
++                                    entry->limit - entry->base + 1));
++        crs_range_insert(range_set->mem_64bit_ranges,
++                         entry->base, entry->limit);
++    }
++
+     crs_range_set_free(&temp_range_set);
+ 
+     aml_append(crs,
+@@ -2183,11 +2212,17 @@ build_dsdt(GArray *table_data, BIOSLinker *linker,
+     }
+ 
+     if (pci->w64.begin) {
+-        aml_append(crs,
+-            aml_qword_memory(AML_POS_DECODE, AML_MIN_FIXED, AML_MAX_FIXED,
+-                             AML_CACHEABLE, AML_READ_WRITE,
+-                             0, pci->w64.begin, pci->w64.end - 1, 0,
+-                             pci->w64.end - pci->w64.begin));
++        crs_replace_with_free_ranges(crs_range_set.mem_64bit_ranges,
++                                     pci->w64.begin, pci->w64.end - 1);
++        for (i = 0; i < crs_range_set.mem_64bit_ranges->len; i++) {
++            entry = g_ptr_array_index(crs_range_set.mem_64bit_ranges, i);
++            aml_append(crs,
++                       aml_qword_memory(AML_POS_DECODE, AML_MIN_FIXED,
++                                        AML_MAX_FIXED,
++                                        AML_CACHEABLE, AML_READ_WRITE,
++                                        0, entry->base, entry->limit,
++                                        0, entry->limit - entry->base + 1));
++        }
+     }
+ 
+     if (misc->tpm_version != TPM_VERSION_UNSPEC) {
+-- 
+1.8.3.1
+

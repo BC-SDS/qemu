@@ -1,0 +1,52 @@
+From 8a782cbe4a222b303a5f22b395d0226a458b5125 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:46 +0200
+Subject: [PATCH 26/30] vhost: do not update last avail idx on get_vring_base()
+ failure
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-27-marcandre.lureau@redhat.com>
+Patchwork-id: 71942
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 26/28] vhost: do not update last avail idx on get_vring_base() failure
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+The state.num value will probably be 0 in this case, but that
+doesn't make sense to update.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 499c557975275dba23fbf8f23880815d019ce663)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/vhost.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/hw/virtio/vhost.c b/hw/virtio/vhost.c
+index 0de1536..3b4db14 100644
+--- a/hw/virtio/vhost.c
++++ b/hw/virtio/vhost.c
+@@ -949,8 +949,9 @@ static void vhost_virtqueue_stop(struct vhost_dev *dev,
+     r = dev->vhost_ops->vhost_get_vring_base(dev, &state);
+     if (r < 0) {
+         VHOST_OPS_DEBUG("vhost VQ %d ring restore failed: %d", idx, r);
++    } else {
++        virtio_queue_set_last_avail_idx(vdev, idx, state.num);
+     }
+-    virtio_queue_set_last_avail_idx(vdev, idx, state.num);
+     virtio_queue_invalidate_signalled_used(vdev, idx);
+ 
+     /* In the cross-endian case, we need to reset the vring endianness to
+-- 
+1.8.3.1
+

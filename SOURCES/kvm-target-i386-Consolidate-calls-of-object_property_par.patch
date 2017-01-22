@@ -1,0 +1,124 @@
+From e31f5b378ce0d928a7b33c1924d882b830bdf0e1 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:27 +0200
+Subject: [PATCH 27/99] target-i386: Consolidate calls of
+ object_property_parse() in x86_cpu_parse_featurestr
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-23-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71638
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 22/78] target-i386: Consolidate calls of object_property_parse() in x86_cpu_parse_featurestr
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Eduardo Habkost <ehabkost@redhat.com>
+
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+Reviewed-by: Igor Mammedov <imammedo@redhat.com>
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit f6750e959a397dea988efd4e488e1ff813011065)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/cpu.c | 74 +++++++++++++++++++++++++++++++++----------------------
+ 1 file changed, 45 insertions(+), 29 deletions(-)
+
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 0732afe..a613229 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -1987,43 +1987,59 @@ static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
+     char *featurestr; /* Single 'key=value" string being parsed */
+     Error *local_err = NULL;
+ 
+-    featurestr = features ? strtok(features, ",") : NULL;
++    if (!features) {
++        return;
++    }
++
++    for (featurestr = strtok(features, ",");
++         featurestr  && !local_err;
++         featurestr = strtok(NULL, ",")) {
++        const char *name;
++        const char *val = NULL;
++        char *eq = NULL;
+ 
+-    while (featurestr) {
+-        char *val;
++        /* Compatibility syntax: */
+         if (featurestr[0] == '+') {
+             add_flagname_to_bitmaps(featurestr + 1, plus_features, &local_err);
++            continue;
+         } else if (featurestr[0] == '-') {
+             add_flagname_to_bitmaps(featurestr + 1, minus_features, &local_err);
+-        } else if ((val = strchr(featurestr, '='))) {
+-            *val = 0; val++;
+-            feat2prop(featurestr);
+-            if (!strcmp(featurestr, "tsc-freq")) {
+-                int64_t tsc_freq;
+-                char *err;
+-                char num[32];
+-
+-                tsc_freq = qemu_strtosz_suffix_unit(val, &err,
+-                                               QEMU_STRTOSZ_DEFSUFFIX_B, 1000);
+-                if (tsc_freq < 0 || *err) {
+-                    error_setg(errp, "bad numerical value %s", val);
+-                    return;
+-                }
+-                snprintf(num, sizeof(num), "%" PRId64, tsc_freq);
+-                object_property_parse(OBJECT(cpu), num, "tsc-frequency",
+-                                      &local_err);
+-            } else {
+-                object_property_parse(OBJECT(cpu), val, featurestr, &local_err);
+-            }
++            continue;
++        }
++
++        eq = strchr(featurestr, '=');
++        if (eq) {
++            *eq++ = 0;
++            val = eq;
+         } else {
+-            feat2prop(featurestr);
+-            object_property_parse(OBJECT(cpu), "on", featurestr, &local_err);
++            val = "on";
+         }
+-        if (local_err) {
+-            error_propagate(errp, local_err);
+-            return;
++
++        feat2prop(featurestr);
++        name = featurestr;
++
++        /* Special case: */
++        if (!strcmp(name, "tsc-freq")) {
++            int64_t tsc_freq;
++            char *err;
++            char num[32];
++
++            tsc_freq = qemu_strtosz_suffix_unit(val, &err,
++                                           QEMU_STRTOSZ_DEFSUFFIX_B, 1000);
++            if (tsc_freq < 0 || *err) {
++                error_setg(errp, "bad numerical value %s", val);
++                return;
++            }
++            snprintf(num, sizeof(num), "%" PRId64, tsc_freq);
++            val = num;
++            name = "tsc-frequency";
+         }
+-        featurestr = strtok(NULL, ",");
++
++        object_property_parse(OBJECT(cpu), val, name, &local_err);
++    }
++
++    if (local_err) {
++        error_propagate(errp, local_err);
+     }
+ }
+ 
+-- 
+1.8.3.1
+

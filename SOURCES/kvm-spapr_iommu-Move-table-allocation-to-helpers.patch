@@ -1,0 +1,140 @@
+From d194b59598dfff00081b6cd62b1399fc8ad5920a Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:10 +0200
+Subject: [PATCH 03/27] spapr_iommu: Move table allocation to helpers
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-4-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71090
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 03/16] spapr_iommu: Move table allocation to helpers
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Alexey Kardashevskiy <aik@ozlabs.ru>
+
+At the moment presence of vfio-pci devices on a bus affect the way
+the guest view table is allocated. If there is no vfio-pci on a PHB
+and the host kernel supports KVM acceleration of H_PUT_TCE, a table
+is allocated in KVM. However, if there is vfio-pci and we do yet not
+KVM acceleration for these, the table has to be allocated by
+the userspace. At the moment the table is allocated once at boot time
+but next patches will reallocate it.
+
+This moves kvmppc_create_spapr_tce/g_malloc0 and their counterparts
+to helpers.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit fec5d3a1cd8fea7d70778f8b408589d75c88c3e7)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_iommu.c | 58 +++++++++++++++++++++++++++++++++++-----------------
+ trace-events         |  2 +-
+ 2 files changed, 40 insertions(+), 20 deletions(-)
+
+diff --git a/hw/ppc/spapr_iommu.c b/hw/ppc/spapr_iommu.c
+index 7dd4588..5f4f387 100644
+--- a/hw/ppc/spapr_iommu.c
++++ b/hw/ppc/spapr_iommu.c
+@@ -75,6 +75,37 @@ static IOMMUAccessFlags spapr_tce_iommu_access_flags(uint64_t tce)
+     }
+ }
+ 
++static uint64_t *spapr_tce_alloc_table(uint32_t liobn,
++                                       uint32_t page_shift,
++                                       uint32_t nb_table,
++                                       int *fd,
++                                       bool need_vfio)
++{
++    uint64_t *table = NULL;
++    uint64_t window_size = (uint64_t)nb_table << page_shift;
++
++    if (kvm_enabled() && !(window_size >> 32)) {
++        table = kvmppc_create_spapr_tce(liobn, window_size, fd, need_vfio);
++    }
++
++    if (!table) {
++        *fd = -1;
++        table = g_malloc0(nb_table * sizeof(uint64_t));
++    }
++
++    trace_spapr_iommu_new_table(liobn, table, *fd);
++
++    return table;
++}
++
++static void spapr_tce_free_table(uint64_t *table, int fd, uint32_t nb_table)
++{
++    if (!kvm_enabled() ||
++        (kvmppc_remove_spapr_tce(table, fd, nb_table) != 0)) {
++        g_free(table);
++    }
++}
++
+ /* Called from RCU critical section */
+ static IOMMUTLBEntry spapr_tce_translate_iommu(MemoryRegion *iommu, hwaddr addr,
+                                                bool is_write)
+@@ -141,21 +172,13 @@ static MemoryRegionIOMMUOps spapr_iommu_ops = {
+ static int spapr_tce_table_realize(DeviceState *dev)
+ {
+     sPAPRTCETable *tcet = SPAPR_TCE_TABLE(dev);
+-    uint64_t window_size = (uint64_t)tcet->nb_table << tcet->page_shift;
+-
+-    if (kvm_enabled() && !(window_size >> 32)) {
+-        tcet->table = kvmppc_create_spapr_tce(tcet->liobn,
+-                                              window_size,
+-                                              &tcet->fd,
+-                                              tcet->need_vfio);
+-    }
+ 
+-    if (!tcet->table) {
+-        size_t table_size = tcet->nb_table * sizeof(uint64_t);
+-        tcet->table = g_malloc0(table_size);
+-    }
+-
+-    trace_spapr_iommu_new_table(tcet->liobn, tcet, tcet->table, tcet->fd);
++    tcet->fd = -1;
++    tcet->table = spapr_tce_alloc_table(tcet->liobn,
++                                        tcet->page_shift,
++                                        tcet->nb_table,
++                                        &tcet->fd,
++                                        tcet->need_vfio);
+ 
+     memory_region_init_iommu(&tcet->iommu, OBJECT(dev), &spapr_iommu_ops,
+                              "iommu-spapr",
+@@ -241,11 +264,8 @@ static void spapr_tce_table_unrealize(DeviceState *dev, Error **errp)
+ 
+     QLIST_REMOVE(tcet, list);
+ 
+-    if (!kvm_enabled() ||
+-        (kvmppc_remove_spapr_tce(tcet->table, tcet->fd,
+-                                 tcet->nb_table) != 0)) {
+-        g_free(tcet->table);
+-    }
++    spapr_tce_free_table(tcet->table, tcet->fd, tcet->nb_table);
++    tcet->fd = -1;
+ }
+ 
+ MemoryRegion *spapr_tce_get_iommu(sPAPRTCETable *tcet)
+diff --git a/trace-events b/trace-events
+index d15e00b..8ca6e2f 100644
+--- a/trace-events
++++ b/trace-events
+@@ -1431,7 +1431,7 @@ spapr_iommu_pci_get(uint64_t liobn, uint64_t ioba, uint64_t ret, uint64_t tce) "
+ spapr_iommu_pci_indirect(uint64_t liobn, uint64_t ioba, uint64_t tce, uint64_t iobaN, uint64_t tceN, uint64_t ret) "liobn=%"PRIx64" ioba=0x%"PRIx64" tcelist=0x%"PRIx64" iobaN=0x%"PRIx64" tceN=0x%"PRIx64" ret=%"PRId64
+ spapr_iommu_pci_stuff(uint64_t liobn, uint64_t ioba, uint64_t tce_value, uint64_t npages, uint64_t ret) "liobn=%"PRIx64" ioba=0x%"PRIx64" tcevalue=0x%"PRIx64" npages=%"PRId64" ret=%"PRId64
+ spapr_iommu_xlate(uint64_t liobn, uint64_t ioba, uint64_t tce, unsigned perm, unsigned pgsize) "liobn=%"PRIx64" 0x%"PRIx64" -> 0x%"PRIx64" perm=%u mask=%x"
+-spapr_iommu_new_table(uint64_t liobn, void *tcet, void *table, int fd) "liobn=%"PRIx64" tcet=%p table=%p fd=%d"
++spapr_iommu_new_table(uint64_t liobn, void *table, int fd) "liobn=%"PRIx64" table=%p fd=%d"
+ 
+ # hw/ppc/ppc.c
+ ppc_tb_adjust(uint64_t offs1, uint64_t offs2, int64_t diff, int64_t seconds) "adjusted from 0x%"PRIx64" to 0x%"PRIx64", diff %"PRId64" (%"PRId64"s)"
+-- 
+1.8.3.1
+

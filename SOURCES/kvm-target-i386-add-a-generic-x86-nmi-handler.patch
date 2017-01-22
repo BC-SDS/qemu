@@ -1,0 +1,87 @@
+From 1b4fea4ec661e1d87052f57a4e9e8e4d5131aac2 Mon Sep 17 00:00:00 2001
+From: Bandan Das <bsd@redhat.com>
+Date: Mon, 23 May 2016 18:07:18 +0200
+Subject: [PATCH 03/24] target-i386: add a generic x86 nmi handler
+
+RH-Author: Bandan Das <bsd@redhat.com>
+Message-id: <1464026840-20552-2-git-send-email-bsd@redhat.com>
+Patchwork-id: 70434
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/3] target-i386: add a generic x86 nmi handler
+Bugzilla: 1335720
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+Instead of having x86 ifdefs in core nmi code, this
+change adds a arch specific handler that the nmi common
+code can call.
+
+Signed-off-by: Bandan Das <bsd@redhat.com>
+Message-Id: <1463761717-26558-2-git-send-email-bsd@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit 1255166b9974665d1e4a24473e1dc51cd061ef4a)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index f75ea54..62ee8da 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -67,6 +67,7 @@
+ #include "qapi/visitor.h"
+ #include "qapi-visit.h"
+ #include "qom/cpu.h"
++#include "hw/nmi.h"
+ 
+ /* debug PC/ISA interrupts */
+ //#define DEBUG_IRQ
+@@ -1965,11 +1966,28 @@ static CPUArchIdList *pc_possible_cpu_arch_ids(MachineState *machine)
+     return list;
+ }
+ 
++static void x86_nmi(NMIState *n, int cpu_index, Error **errp)
++{
++    /* cpu index isn't used */
++    CPUState *cs;
++
++    CPU_FOREACH(cs) {
++        X86CPU *cpu = X86_CPU(cs);
++
++        if (!cpu->apic_state) {
++            cpu_interrupt(cs, CPU_INTERRUPT_NMI);
++        } else {
++            apic_deliver_nmi(cpu->apic_state);
++        }
++    }
++}
++
+ static void pc_machine_class_init(ObjectClass *oc, void *data)
+ {
+     MachineClass *mc = MACHINE_CLASS(oc);
+     PCMachineClass *pcmc = PC_MACHINE_CLASS(oc);
+     HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(oc);
++    NMIClass *nc = NMI_CLASS(oc);
+ 
+     pcmc->get_hotplug_handler = mc->get_hotplug_handler;
+     pcmc->pci_enabled = true;
+@@ -1995,6 +2013,7 @@ static void pc_machine_class_init(ObjectClass *oc, void *data)
+     hc->plug = pc_machine_device_plug_cb;
+     hc->unplug_request = pc_machine_device_unplug_request_cb;
+     hc->unplug = pc_machine_device_unplug_cb;
++    nc->nmi_monitor_handler = x86_nmi;
+ }
+ 
+ static const TypeInfo pc_machine_info = {
+@@ -2007,6 +2026,7 @@ static const TypeInfo pc_machine_info = {
+     .class_init = pc_machine_class_init,
+     .interfaces = (InterfaceInfo[]) {
+          { TYPE_HOTPLUG_HANDLER },
++         { TYPE_NMI },
+          { }
+     },
+ };
+-- 
+1.8.3.1
+

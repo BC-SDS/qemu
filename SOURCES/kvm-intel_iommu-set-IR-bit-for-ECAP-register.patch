@@ -1,0 +1,67 @@
+From 5ddb4a171cc0cffc3b1115d684da443d69356c68 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:28 +0200
+Subject: [PATCH 10/37] intel_iommu: set IR bit for ECAP register
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-10-git-send-email-peterx@redhat.com>
+Patchwork-id: 71994
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 09/34] intel_iommu: set IR bit for ECAP register
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Enable IR in IOMMU Extended Capability register.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit d54bd7f80a5cf7dc5242f745d4c9542c822a81f3)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/intel_iommu.c          | 6 ++++++
+ hw/i386/intel_iommu_internal.h | 2 ++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index 26e322a..9c7a084 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -1956,6 +1956,8 @@ VTDAddressSpace *vtd_find_add_as(IntelIOMMUState *s, PCIBus *bus, int devfn)
+  */
+ static void vtd_init(IntelIOMMUState *s)
+ {
++    X86IOMMUState *x86_iommu = X86_IOMMU_DEVICE(s);
++
+     memset(s->csr, 0, DMAR_REG_SIZE);
+     memset(s->wmask, 0, DMAR_REG_SIZE);
+     memset(s->w1cmask, 0, DMAR_REG_SIZE);
+@@ -1977,6 +1979,10 @@ static void vtd_init(IntelIOMMUState *s)
+              VTD_CAP_SAGAW | VTD_CAP_MAMV | VTD_CAP_PSI | VTD_CAP_SLLPS;
+     s->ecap = VTD_ECAP_QI | VTD_ECAP_IRO;
+ 
++    if (x86_iommu->intr_supported) {
++        s->ecap |= VTD_ECAP_IR;
++    }
++
+     vtd_reset_context_cache(s);
+     vtd_reset_iotlb(s);
+ 
+diff --git a/hw/i386/intel_iommu_internal.h b/hw/i386/intel_iommu_internal.h
+index b648e69..5b98a11 100644
+--- a/hw/i386/intel_iommu_internal.h
++++ b/hw/i386/intel_iommu_internal.h
+@@ -176,6 +176,8 @@
+ /* (offset >> 4) << 8 */
+ #define VTD_ECAP_IRO                (DMAR_IOTLB_REG_OFFSET << 4)
+ #define VTD_ECAP_QI                 (1ULL << 1)
++/* Interrupt Remapping support */
++#define VTD_ECAP_IR                 (1ULL << 3)
+ 
+ /* CAP_REG */
+ /* (offset >> 4) << 24 */
+-- 
+1.8.3.1
+

@@ -1,0 +1,153 @@
+From 89a28bb4ad4e808e659698cc5646e1a26b203325 Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Tue, 31 May 2016 07:12:48 +0200
+Subject: [PATCH 09/24] hw/net/spapr_llan: Delay flushing of the RX queue while
+ adding new RX buffers
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1464678769-623-2-git-send-email-thuth@redhat.com>
+Patchwork-id: 70501
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/2] hw/net/spapr_llan: Delay flushing of the RX queue while adding new RX buffers
+Bugzilla: 1210221
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+
+Currently, the spapr-vlan device is trying to flush the RX queue
+after each RX buffer that has been added by the guest via the
+H_ADD_LOGICAL_LAN_BUFFER hypercall. In case the receive buffer pool
+was empty before, we only pass single packets to the guest this
+way. This can cause very bad performance if a sender is trying
+to stream fragmented UDP packets to the guest. For example when
+using the UDP_STREAM test from netperf with UDP packets that are
+much bigger than the MTU size, almost all UDP packets are dropped
+in the guest since the chances are quite high that at least one of
+the fragments got lost on the way.
+
+When flushing the receive queue, it's much better if we'd have
+a bunch of receive buffers available already, so that fragmented
+packets can be passed to the guest in one go. To do this, the
+spapr_vlan_receive() function should return 0 instead of -1 if there
+are no more receive buffers available, so that receive_disabled = 1
+gets temporarily set for the receive queue, and we have to delay
+the queue flushing at the end of h_add_logical_lan_buffer() a little
+bit by using a timer, so that the guest gets a chance to add multiple
+RX buffers before we flush the queue again.
+
+This improves the UDP_STREAM test with the spapr-vlan device a lot:
+Running
+ netserver -p 44444 -L <guestip> -f -D -4
+in the guest, and
+ netperf -p 44444 -L <hostip> -H <guestip> -t UDP_STREAM -l 60 -- -m 16384
+in the host, I get the following values _without_ this patch:
+
+Socket  Message  Elapsed      Messages
+Size    Size     Time         Okay Errors   Throughput
+bytes   bytes    secs            #      #   10^6bits/sec
+
+229376   16384   60.00     1738970      0    3798.83
+229376           60.00          23              0.05
+
+That "0.05" means that almost all UDP packets got lost/discarded
+at the receiving side.
+With this patch applied, the value look much better:
+
+Socket  Message  Elapsed      Messages
+Size    Size     Time         Okay Errors   Throughput
+bytes   bytes    secs            #      #   10^6bits/sec
+
+229376   16384   60.00     1789104      0    3908.35
+229376           60.00       22818             49.85
+
+Signed-off-by: Thomas Huth <thuth@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 8836630f5d2df198dca2da9a1f1fb2d2a0c310a0)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/spapr_llan.c | 28 +++++++++++++++++++++++++---
+ 1 file changed, 25 insertions(+), 3 deletions(-)
+
+diff --git a/hw/net/spapr_llan.c b/hw/net/spapr_llan.c
+index a647f25..d604d55 100644
+--- a/hw/net/spapr_llan.c
++++ b/hw/net/spapr_llan.c
+@@ -109,6 +109,7 @@ typedef struct VIOsPAPRVLANDevice {
+     target_ulong buf_list;
+     uint32_t add_buf_ptr, use_buf_ptr, rx_bufs;
+     target_ulong rxq_ptr;
++    QEMUTimer *rxp_timer;
+     uint32_t compat_flags;             /* Compatability flags for migration */
+     RxBufPool *rx_pool[RX_MAX_POOLS];  /* Receive buffer descriptor pools */
+ } VIOsPAPRVLANDevice;
+@@ -205,7 +206,7 @@ static ssize_t spapr_vlan_receive(NetClientState *nc, const uint8_t *buf,
+     }
+ 
+     if (!dev->rx_bufs) {
+-        return -1;
++        return 0;
+     }
+ 
+     if (dev->compat_flags & SPAPRVLAN_FLAG_RX_BUF_POOLS) {
+@@ -214,7 +215,7 @@ static ssize_t spapr_vlan_receive(NetClientState *nc, const uint8_t *buf,
+         bd = spapr_vlan_get_rx_bd_from_page(dev, size);
+     }
+     if (!bd) {
+-        return -1;
++        return 0;
+     }
+ 
+     dev->rx_bufs--;
+@@ -265,6 +266,13 @@ static NetClientInfo net_spapr_vlan_info = {
+     .receive = spapr_vlan_receive,
+ };
+ 
++static void spapr_vlan_flush_rx_queue(void *opaque)
++{
++    VIOsPAPRVLANDevice *dev = opaque;
++
++    qemu_flush_queued_packets(qemu_get_queue(dev->nic));
++}
++
+ static void spapr_vlan_reset_rx_pool(RxBufPool *rxp)
+ {
+     /*
+@@ -301,6 +309,9 @@ static void spapr_vlan_realize(VIOsPAPRDevice *sdev, Error **errp)
+     dev->nic = qemu_new_nic(&net_spapr_vlan_info, &dev->nicconf,
+                             object_get_typename(OBJECT(sdev)), sdev->qdev.id, dev);
+     qemu_format_nic_info_str(qemu_get_queue(dev->nic), dev->nicconf.macaddr.a);
++
++    dev->rxp_timer = timer_new_us(QEMU_CLOCK_VIRTUAL, spapr_vlan_flush_rx_queue,
++                                  dev);
+ }
+ 
+ static void spapr_vlan_instance_init(Object *obj)
+@@ -331,6 +342,11 @@ static void spapr_vlan_instance_finalize(Object *obj)
+             dev->rx_pool[i] = NULL;
+         }
+     }
++
++    if (dev->rxp_timer) {
++        timer_del(dev->rxp_timer);
++        timer_free(dev->rxp_timer);
++    }
+ }
+ 
+ void spapr_vlan_create(VIOsPAPRBus *bus, NICInfo *nd)
+@@ -628,7 +644,13 @@ static target_ulong h_add_logical_lan_buffer(PowerPCCPU *cpu,
+ 
+     dev->rx_bufs++;
+ 
+-    qemu_flush_queued_packets(qemu_get_queue(dev->nic));
++    /*
++     * Give guest some more time to add additional RX buffers before we
++     * flush the receive queue, so that e.g. fragmented IP packets can
++     * be passed to the guest in one go later (instead of passing single
++     * fragments if there is only one receive buffer available).
++     */
++    timer_mod(dev->rxp_timer, qemu_clock_get_us(QEMU_CLOCK_VIRTUAL) + 500);
+ 
+     return H_SUCCESS;
+ }
+-- 
+1.8.3.1
+

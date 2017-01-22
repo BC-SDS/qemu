@@ -1,0 +1,167 @@
+From 129a7705597ba7f4aa61a7166e0ae669e6d01afc Mon Sep 17 00:00:00 2001
+From: "Daniel P. Berrange" <berrange@redhat.com>
+Date: Sat, 27 Aug 2016 15:36:35 +0200
+Subject: [PATCH 5/8] crypto: ensure XTS is only used with ciphers with 16 byte
+ blocks
+
+RH-Author: Daniel P. Berrange <berrange@redhat.com>
+Message-id: <1472312195-23794-6-git-send-email-berrange@redhat.com>
+Patchwork-id: 72102
+O-Subject: [PATCH qemu-kvm-rhev 7.3 5/5] crypto: ensure XTS is only used with ciphers with 16 byte blocks
+Bugzilla: 1301019
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+The XTS cipher mode needs to be used with a cipher which has
+a block size of 16 bytes. If a mis-matching block size is used,
+the code will either corrupt memory beyond the IV array, or
+not fully encrypt/decrypt the IV.
+
+This fixes a memory corruption crash when attempting to use
+cast5-128 with xts, since the former has an 8 byte block size.
+
+A test case is added to ensure the cipher creation fails with
+such an invalid combination.
+
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Signed-off-by: Daniel P. Berrange <berrange@redhat.com>
+Upstream:
+  - pending for 2.8
+  - http://lists.nongnu.org/archive/html/qemu-devel/2016-08/msg03943.html
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ crypto/cipher-gcrypt.c     |  6 ++++++
+ crypto/cipher-nettle.c     | 12 +++++++-----
+ tests/test-crypto-cipher.c | 43 +++++++++++++++++++++++++++++++++++--------
+ 3 files changed, 48 insertions(+), 13 deletions(-)
+
+diff --git a/crypto/cipher-gcrypt.c b/crypto/cipher-gcrypt.c
+index ede2f70..3652aa1 100644
+--- a/crypto/cipher-gcrypt.c
++++ b/crypto/cipher-gcrypt.c
+@@ -192,6 +192,12 @@ QCryptoCipher *qcrypto_cipher_new(QCryptoCipherAlgorithm alg,
+     }
+ 
+     if (cipher->mode == QCRYPTO_CIPHER_MODE_XTS) {
++        if (ctx->blocksize != XTS_BLOCK_SIZE) {
++            error_setg(errp,
++                       "Cipher block size %zu must equal XTS block size %d",
++                       ctx->blocksize, XTS_BLOCK_SIZE);
++            goto error;
++        }
+         ctx->iv = g_new0(uint8_t, ctx->blocksize);
+     }
+ 
+diff --git a/crypto/cipher-nettle.c b/crypto/cipher-nettle.c
+index 70909fb..0267da5 100644
+--- a/crypto/cipher-nettle.c
++++ b/crypto/cipher-nettle.c
+@@ -361,6 +361,13 @@ QCryptoCipher *qcrypto_cipher_new(QCryptoCipherAlgorithm alg,
+         goto error;
+     }
+ 
++    if (mode == QCRYPTO_CIPHER_MODE_XTS &&
++        ctx->blocksize != XTS_BLOCK_SIZE) {
++        error_setg(errp, "Cipher block size %zu must equal XTS block size %d",
++                   ctx->blocksize, XTS_BLOCK_SIZE);
++        goto error;
++    }
++
+     ctx->iv = g_new0(uint8_t, ctx->blocksize);
+     cipher->opaque = ctx;
+ 
+@@ -456,11 +463,6 @@ int qcrypto_cipher_decrypt(QCryptoCipher *cipher,
+         break;
+ 
+     case QCRYPTO_CIPHER_MODE_XTS:
+-        if (ctx->blocksize != XTS_BLOCK_SIZE) {
+-            error_setg(errp, "Block size must be %d not %zu",
+-                       XTS_BLOCK_SIZE, ctx->blocksize);
+-            return -1;
+-        }
+         xts_decrypt(ctx->ctx, ctx->ctx_tweak,
+                     ctx->alg_encrypt_wrapper, ctx->alg_decrypt_wrapper,
+                     ctx->iv, len, out, in);
+diff --git a/tests/test-crypto-cipher.c b/tests/test-crypto-cipher.c
+index 66d1c63..ae43ad8 100644
+--- a/tests/test-crypto-cipher.c
++++ b/tests/test-crypto-cipher.c
+@@ -371,6 +371,17 @@ static QCryptoCipherTestData test_data[] = {
+             "eb4a427d1923ce3ff262735779a418f2"
+             "0a282df920147beabe421ee5319d0568",
+     },
++    {
++        /* Bad config - cast5-128 has 8 byte block size
++         * which is incompatible with XTS
++         */
++        .path = "/crypto/cipher/cast5-xts-128",
++        .alg = QCRYPTO_CIPHER_ALG_CAST5_128,
++        .mode = QCRYPTO_CIPHER_MODE_XTS,
++        .key =
++            "27182818284590452353602874713526"
++            "31415926535897932384626433832795",
++    }
+ };
+ 
+ 
+@@ -433,15 +444,23 @@ static void test_cipher(const void *opaque)
+     const QCryptoCipherTestData *data = opaque;
+ 
+     QCryptoCipher *cipher;
+-    uint8_t *key, *iv, *ciphertext, *plaintext, *outtext;
+-    size_t nkey, niv, nciphertext, nplaintext;
+-    char *outtexthex;
++    uint8_t *key, *iv = NULL, *ciphertext = NULL,
++        *plaintext = NULL, *outtext = NULL;
++    size_t nkey, niv = 0, nciphertext = 0, nplaintext = 0;
++    char *outtexthex = NULL;
+     size_t ivsize, keysize, blocksize;
++    Error *err = NULL;
+ 
+     nkey = unhex_string(data->key, &key);
+-    niv = unhex_string(data->iv, &iv);
+-    nciphertext = unhex_string(data->ciphertext, &ciphertext);
+-    nplaintext = unhex_string(data->plaintext, &plaintext);
++    if (data->iv) {
++        niv = unhex_string(data->iv, &iv);
++    }
++    if (data->ciphertext) {
++        nciphertext = unhex_string(data->ciphertext, &ciphertext);
++    }
++    if (data->plaintext) {
++        nplaintext = unhex_string(data->plaintext, &plaintext);
++    }
+ 
+     g_assert(nciphertext == nplaintext);
+ 
+@@ -450,8 +469,15 @@ static void test_cipher(const void *opaque)
+     cipher = qcrypto_cipher_new(
+         data->alg, data->mode,
+         key, nkey,
+-        &error_abort);
+-    g_assert(cipher != NULL);
++        &err);
++    if (data->plaintext) {
++        g_assert(err == NULL);
++        g_assert(cipher != NULL);
++    } else {
++        error_free_or_abort(&err);
++        g_assert(cipher == NULL);
++        goto cleanup;
++    }
+ 
+     keysize = qcrypto_cipher_get_key_len(data->alg);
+     blocksize = qcrypto_cipher_get_block_len(data->alg);
+@@ -499,6 +525,7 @@ static void test_cipher(const void *opaque)
+ 
+     g_assert_cmpstr(outtexthex, ==, data->plaintext);
+ 
++ cleanup:
+     g_free(outtext);
+     g_free(outtexthex);
+     g_free(key);
+-- 
+1.8.3.1
+

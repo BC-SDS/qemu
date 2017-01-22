@@ -1,0 +1,92 @@
+From 773ae433bf852556da7230a4934ac43020d71b15 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:28 +0200
+Subject: [PATCH 08/30] vhost: fix calling vhost_dev_cleanup() after
+ vhost_dev_init()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-9-marcandre.lureau@redhat.com>
+Patchwork-id: 71924
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 08/28] vhost: fix calling vhost_dev_cleanup() after vhost_dev_init()
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+vhost_net_init() calls vhost_dev_init() and in case of failure, calls
+vhost_dev_cleanup() directly. However, the structure is already
+partially cleaned on error. Calling vhost_dev_cleanup() again will call
+vhost_virtqueue_cleanup() on already clean queues, and causing potential
+double-close. Instead, adjust dev->nvqs and simplify vhost_dev_init()
+code to not call vhost_virtqueue_cleanup() but vhost_dev_cleanup()
+instead.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Ilya Maximets <i.maximets@samsung.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit a06db3ec720a570089b16125d3bca470e7bb34b8)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/vhost.c | 17 ++++++-----------
+ 1 file changed, 6 insertions(+), 11 deletions(-)
+
+diff --git a/hw/virtio/vhost.c b/hw/virtio/vhost.c
+index e91014a..2f5ac08 100644
+--- a/hw/virtio/vhost.c
++++ b/hw/virtio/vhost.c
+@@ -1019,7 +1019,7 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
+                    VhostBackendType backend_type, uint32_t busyloop_timeout)
+ {
+     uint64_t features;
+-    int i, r;
++    int i, r, n_initialized_vqs = 0;
+ 
+     hdev->migration_blocker = NULL;
+ 
+@@ -1048,10 +1048,10 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
+         goto fail;
+     }
+ 
+-    for (i = 0; i < hdev->nvqs; ++i) {
++    for (i = 0; i < hdev->nvqs; ++i, ++n_initialized_vqs) {
+         r = vhost_virtqueue_init(hdev, hdev->vqs + i, hdev->vq_index + i);
+         if (r < 0) {
+-            goto fail_vq;
++            goto fail;
+         }
+     }
+ 
+@@ -1108,19 +1108,14 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
+     memory_listener_register(&hdev->memory_listener, &address_space_memory);
+     QLIST_INSERT_HEAD(&vhost_devices, hdev, entry);
+     return 0;
++
+ fail_busyloop:
+     while (--i >= 0) {
+         vhost_virtqueue_set_busyloop_timeout(hdev, hdev->vq_index + i, 0);
+     }
+-    i = hdev->nvqs;
+-fail_vq:
+-    while (--i >= 0) {
+-        vhost_virtqueue_cleanup(hdev->vqs + i);
+-    }
+ fail:
+-    r = -errno;
+-    hdev->vhost_ops->vhost_backend_cleanup(hdev);
+-    QLIST_REMOVE(hdev, entry);
++    hdev->nvqs = n_initialized_vqs;
++    vhost_dev_cleanup(hdev);
+     return r;
+ }
+ 
+-- 
+1.8.3.1
+

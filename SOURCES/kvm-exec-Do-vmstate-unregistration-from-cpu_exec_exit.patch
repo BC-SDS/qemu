@@ -1,0 +1,76 @@
+From 5c0d50bafe3debf04461c118083a7c5f2fd82f94 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:35 +0200
+Subject: [PATCH 02/34] exec: Do vmstate unregistration from cpu_exec_exit()
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-3-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71122
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 02/27] exec: Do vmstate unregistration from cpu_exec_exit()
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+cpu_exec_init() does vmstate_register for the CPU device. This needs to be
+undone from cpu_exec_exit(). This change is needed to support CPU hot
+removal.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Reviewed-by: Thomas Huth <thuth@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+[dwg: added missing include to fix compile on some archs]
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+
+(cherry picked from commit 9dfeca7c6b1d3a8f36531bbbac0322a9907bcd86)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ exec.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/exec.c b/exec.c
+index da1f09a..199ec63 100644
+--- a/exec.c
++++ b/exec.c
+@@ -55,6 +55,8 @@
+ #include "exec/ram_addr.h"
+ #include "exec/log.h"
+ 
++#include "migration/vmstate.h"
++
+ #include "qemu/range.h"
+ #ifndef _WIN32
+ #include "qemu/mmap-alloc.h"
+@@ -635,6 +637,8 @@ static void cpu_release_index(CPUState *cpu)
+ 
+ void cpu_exec_exit(CPUState *cpu)
+ {
++    CPUClass *cc = CPU_GET_CLASS(cpu);
++
+ #if defined(CONFIG_USER_ONLY)
+     cpu_list_lock();
+ #endif
+@@ -652,6 +656,13 @@ void cpu_exec_exit(CPUState *cpu)
+ #if defined(CONFIG_USER_ONLY)
+     cpu_list_unlock();
+ #endif
++
++    if (cc->vmsd != NULL) {
++        vmstate_unregister(NULL, cc->vmsd, cpu);
++    }
++    if (qdev_get_vmsd(DEVICE(cpu)) == NULL) {
++        vmstate_unregister(NULL, &vmstate_cpu_common, cpu);
++    }
+ }
+ 
+ void cpu_exec_init(CPUState *cpu, Error **errp)
+-- 
+1.8.3.1
+

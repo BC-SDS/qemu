@@ -1,0 +1,78 @@
+From d455c57452e8be8e1fdeb91ea2194f041b7ee078 Mon Sep 17 00:00:00 2001
+From: Marcel Apfelbaum <marcel@redhat.com>
+Date: Wed, 3 Aug 2016 08:36:42 +0200
+Subject: [PATCH 93/99] virtio-vga: propagate on gpu realized error
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marcel Apfelbaum <marcel@redhat.com>
+Message-id: <1470213403-20506-2-git-send-email-marcel@redhat.com>
+Patchwork-id: 71802
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH V2 1/2] virtio-vga: propagate on gpu realized error
+Bugzilla: 1360664
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+From: Marc-André Lureau <marcandre.lureau@redhat.com>
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: 1463653560-26958-3-git-send-email-marcandre.lureau@redhat.com
+Signed-off-by: Gerd Hoffmann <kraxel@redhat.com>
+(cherry picked from commit d0f0c8654a1a97cfa7a19208afc6a6d3d0fb4326)
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/display/virtio-gpu-3d.c | 1 +
+ hw/display/virtio-vga.c    | 8 +++++++-
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/hw/display/virtio-gpu-3d.c b/hw/display/virtio-gpu-3d.c
+index fa19294..20e8865 100644
+--- a/hw/display/virtio-gpu-3d.c
++++ b/hw/display/virtio-gpu-3d.c
+@@ -17,6 +17,7 @@
+ #include "trace.h"
+ #include "hw/virtio/virtio.h"
+ #include "hw/virtio/virtio-gpu.h"
++#include "qapi/error.h"
+ 
+ #ifdef CONFIG_VIRGL
+ 
+diff --git a/hw/display/virtio-vga.c b/hw/display/virtio-vga.c
+index e58b165..f49f8de 100644
+--- a/hw/display/virtio-vga.c
++++ b/hw/display/virtio-vga.c
+@@ -4,6 +4,7 @@
+ #include "ui/console.h"
+ #include "vga_int.h"
+ #include "hw/virtio/virtio-pci.h"
++#include "qapi/error.h"
+ 
+ /*
+  * virtio-vga: This extends VirtioPCIProxy.
+@@ -89,6 +90,7 @@ static void virtio_vga_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
+     VirtIOVGA *vvga = VIRTIO_VGA(vpci_dev);
+     VirtIOGPU *g = &vvga->vdev;
+     VGACommonState *vga = &vvga->vga;
++    Error *err = NULL;
+     uint32_t offset;
+     int i;
+ 
+@@ -124,7 +126,11 @@ static void virtio_vga_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
+     /* force virtio-1.0 */
+     vpci_dev->flags &= ~VIRTIO_PCI_FLAG_DISABLE_MODERN;
+     vpci_dev->flags |= VIRTIO_PCI_FLAG_DISABLE_LEGACY;
+-    object_property_set_bool(OBJECT(g), true, "realized", errp);
++    object_property_set_bool(OBJECT(g), true, "realized", &err);
++    if (err) {
++        error_propagate(errp, err);
++        return;
++    }
+ 
+     /* add stdvga mmio regions */
+     pci_std_vga_mmio_region_init(vga, &vpci_dev->modern_bar,
+-- 
+1.8.3.1
+

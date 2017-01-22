@@ -1,0 +1,51 @@
+From 885bba99fcd5da4673a82f076b7ef722537f7d3a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:33 +0200
+Subject: [PATCH 13/30] vhost-user: call set_msgfds unconditionally
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-14-marcandre.lureau@redhat.com>
+Patchwork-id: 71929
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 13/28] vhost-user: call set_msgfds unconditionally
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+It is fine to call set_msgfds() with 0 fd, and ensures any previous fd
+array is cleared.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit df3485a14821edf75b1d3ee6ca38cd80fa989dbf)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/vhost-user.c | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/hw/virtio/vhost-user.c b/hw/virtio/vhost-user.c
+index 5914e85..69d743b 100644
+--- a/hw/virtio/vhost-user.c
++++ b/hw/virtio/vhost-user.c
+@@ -188,9 +188,7 @@ static int vhost_user_write(struct vhost_dev *dev, VhostUserMsg *msg,
+         return 0;
+     }
+ 
+-    if (fd_num) {
+-        qemu_chr_fe_set_msgfds(chr, fds, fd_num);
+-    }
++    qemu_chr_fe_set_msgfds(chr, fds, fd_num);
+ 
+     return qemu_chr_fe_write_all(chr, (const uint8_t *) msg, size) == size ?
+             0 : -1;
+-- 
+1.8.3.1
+

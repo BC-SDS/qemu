@@ -1,0 +1,172 @@
+From ae8a4e7df542f84f65929d438cdac9bf9d6937c5 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:45 +0200
+Subject: [PATCH 27/37] kvm-irqchip: x86: add msi route notify fn
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-27-git-send-email-peterx@redhat.com>
+Patchwork-id: 72011
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 26/34] kvm-irqchip: x86: add msi route notify fn
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+One more IEC notifier is added to let msi routes know about the IEC
+changes. When interrupt invalidation happens, all registered msi routes
+will be updated for all PCI devices.
+
+Since both vfio and vhost are possible gsi route consumers, this patch
+will go one step further to keep them safe in split irqchip mode and
+when irqfd is enabled.
+
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+[move trace-events lines into target-i386/trace-events]
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit e1d4fb2de594ab0cbe78846bc79617b9bd50c867)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+
+Moving splitted trace events into the big trace-event file.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/pci/pci.c         | 15 +++++++++++++++
+ include/hw/pci/pci.h |  2 ++
+ kvm-all.c            | 10 +---------
+ target-i386/kvm.c    | 30 ++++++++++++++++++++++++++++++
+ trace-events         |  1 +
+ 5 files changed, 49 insertions(+), 9 deletions(-)
+
+diff --git a/hw/pci/pci.c b/hw/pci/pci.c
+index 117825e..df9bf93 100644
+--- a/hw/pci/pci.c
++++ b/hw/pci/pci.c
+@@ -2599,6 +2599,21 @@ PCIDevice *pci_get_function_0(PCIDevice *pci_dev)
+     }
+ }
+ 
++MSIMessage pci_get_msi_message(PCIDevice *dev, int vector)
++{
++    MSIMessage msg;
++    if (msix_enabled(dev)) {
++        msg = msix_get_message(dev, vector);
++    } else if (msi_enabled(dev)) {
++        msg = msi_get_message(dev, vector);
++    } else {
++        /* Should never happen */
++        error_report("%s: unknown interrupt type", __func__);
++        abort();
++    }
++    return msg;
++}
++
+ static const TypeInfo pci_device_type_info = {
+     .name = TYPE_PCI_DEVICE,
+     .parent = TYPE_DEVICE,
+diff --git a/include/hw/pci/pci.h b/include/hw/pci/pci.h
+index 3254749..929ec2f 100644
+--- a/include/hw/pci/pci.h
++++ b/include/hw/pci/pci.h
+@@ -808,4 +808,6 @@ extern const VMStateDescription vmstate_pci_device;
+     .offset     = vmstate_offset_pointer(_state, _field, PCIDevice), \
+ }
+ 
++MSIMessage pci_get_msi_message(PCIDevice *dev, int vector);
++
+ #endif
+diff --git a/kvm-all.c b/kvm-all.c
+index f4a5873..a830f8e 100644
+--- a/kvm-all.c
++++ b/kvm-all.c
+@@ -1240,15 +1240,7 @@ int kvm_irqchip_add_msi_route(KVMState *s, int vector, PCIDevice *dev)
+     MSIMessage msg = {0, 0};
+ 
+     if (dev) {
+-        if (msix_enabled(dev)) {
+-            msg = msix_get_message(dev, vector);
+-        } else if (msi_enabled(dev)) {
+-            msg = msi_get_message(dev, vector);
+-        } else {
+-            /* Should never happen */
+-            error_report("%s: unknown interrupt type", __func__);
+-            abort();
+-        }
++        msg = pci_get_msi_message(dev, vector);
+     }
+ 
+     if (kvm_gsi_direct_mapping()) {
+diff --git a/target-i386/kvm.c b/target-i386/kvm.c
+index 915229d..32757f0 100644
+--- a/target-i386/kvm.c
++++ b/target-i386/kvm.c
+@@ -37,6 +37,7 @@
+ #include "hw/i386/apic_internal.h"
+ #include "hw/i386/apic-msidef.h"
+ #include "hw/i386/intel_iommu.h"
++#include "hw/i386/x86-iommu.h"
+ 
+ #include "exec/ioport.h"
+ #include "standard-headers/asm-x86/hyperv.h"
+@@ -3412,9 +3413,26 @@ struct MSIRouteEntry {
+ static QLIST_HEAD(, MSIRouteEntry) msi_route_list = \
+     QLIST_HEAD_INITIALIZER(msi_route_list);
+ 
++static void kvm_update_msi_routes_all(void *private, bool global,
++                                      uint32_t index, uint32_t mask)
++{
++    int cnt = 0;
++    MSIRouteEntry *entry;
++    MSIMessage msg;
++    /* TODO: explicit route update */
++    QLIST_FOREACH(entry, &msi_route_list, list) {
++        cnt++;
++        msg = pci_get_msi_message(entry->dev, entry->vector);
++        kvm_irqchip_update_msi_route(kvm_state, entry->virq,
++                                     msg, entry->dev);
++    }
++    trace_kvm_x86_update_msi_routes(cnt);
++}
++
+ int kvm_arch_add_msi_route_post(struct kvm_irq_routing_entry *route,
+                                 int vector, PCIDevice *dev)
+ {
++    static bool notify_list_inited = false;
+     MSIRouteEntry *entry;
+ 
+     if (!dev) {
+@@ -3431,6 +3449,18 @@ int kvm_arch_add_msi_route_post(struct kvm_irq_routing_entry *route,
+     QLIST_INSERT_HEAD(&msi_route_list, entry, list);
+ 
+     trace_kvm_x86_add_msi_route(route->gsi);
++
++    if (!notify_list_inited) {
++        /* For the first time we do add route, add ourselves into
++         * IOMMU's IEC notify list if needed. */
++        X86IOMMUState *iommu = x86_iommu_get_default();
++        if (iommu) {
++            x86_iommu_iec_register_notifier(iommu,
++                                            kvm_update_msi_routes_all,
++                                            NULL);
++        }
++        notify_list_inited = true;
++    }
+     return 0;
+ }
+ 
+diff --git a/trace-events b/trace-events
+index 3dee5e1..c12911b 100644
+--- a/trace-events
++++ b/trace-events
+@@ -2161,6 +2161,7 @@ virtio_input_queue_full(void) "queue full"
+ kvm_x86_fixup_msi_error(uint32_t gsi) "VT-d failed to remap interrupt for GSI %" PRIu32
+ kvm_x86_add_msi_route(int virq) "Adding route entry for virq %d"
+ kvm_x86_remove_msi_route(int virq) "Removing route entry for virq %d"
++kvm_x86_update_msi_routes(int num) "Updated %d MSI routes"
+ 
+ # hw/i386/x86-iommu.c
+ x86_iommu_iec_notify(bool global, uint32_t index, uint32_t mask) "Notify IEC invalidation: global=%d index=%" PRIu32 " mask=%" PRIu32
+-- 
+1.8.3.1
+

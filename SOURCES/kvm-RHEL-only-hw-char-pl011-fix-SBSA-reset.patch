@@ -1,0 +1,60 @@
+From 79bbd3913fe6f8b7981dc8dc69bdcb39c16f6b45 Mon Sep 17 00:00:00 2001
+From: Andrew Jones <drjones@redhat.com>
+Date: Mon, 1 Aug 2016 14:27:09 +0200
+Subject: [PATCH 85/99] RHEL-only: hw/char/pl011: fix SBSA reset
+
+RH-Author: Andrew Jones <drjones@redhat.com>
+Message-id: <1470061629-6395-1-git-send-email-drjones@redhat.com>
+Patchwork-id: 71697
+O-Subject: [AArch64 RHEL-7.3 qemu-kvm-rhev PATCH] RHEL-only: hw/char/pl011: fix SBSA reset
+Bugzilla: 1266048
+RH-Acked-by: Auger Eric <eric.auger@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Wei Huang <wei@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1266048
+Brew: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11470048
+Upstream: No, under discussion; see https://lkml.org/lkml/2016/8/1/247
+
+When booting Linux with an SBSA UART, e.g. when booting mach-virt
+with ACPI, if the user types on the console during boot, then when
+the login prompt appears she won't be able to log in. This is
+because during boot the SBSA UART needs to be reset, but the SBSA
+specification doesn't provide registers to enable/disable the FIFOs.
+This patch observes a couple registers the SBSA UART does write to
+in order to attempt to guess when a reset is needed, and then do it.
+We risk losing some characters from the FIFO if the guess is wrong,
+but the risk of that should be quite low.
+
+Signed-off-by: Andrew Jones <drjones@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/char/pl011.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/hw/char/pl011.c b/hw/char/pl011.c
+index 210c87b..9a5348f 100644
+--- a/hw/char/pl011.c
++++ b/hw/char/pl011.c
+@@ -186,6 +186,18 @@ static void pl011_write(void *opaque, hwaddr offset,
+         pl011_update(s);
+         break;
+     case 17: /* UARTICR */
++        /*
++         * RHEL-only, fixes BZ1266048
++         *
++         * Look for the "signature" of a driver init or shutdown in
++         * order to know that we need to reset the SBSA UART. Yes,
++         * this is hacky, but as SBSA drivers aren't required to write
++         * UARTLCR_H or UARTCR, then we don't have much choice...
++         */
++        if (s->int_enabled == 0 && value == 0xffff) {
++            s->read_count = 0;
++            s->read_pos = 0;
++        }
+         s->int_level &= ~value;
+         pl011_update(s);
+         break;
+-- 
+1.8.3.1
+

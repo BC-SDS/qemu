@@ -1,0 +1,60 @@
+From e3e912a5a660f7769202c5869a1bc4fd6e071954 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:39 +0200
+Subject: [PATCH 19/30] vhost-net: vhost_migration_done is vhost-user specific
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-20-marcandre.lureau@redhat.com>
+Patchwork-id: 71935
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 19/28] vhost-net: vhost_migration_done is vhost-user specific
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Either the callback is mandatory to implement, in which case an assert()
+is more appropriate, or it's not and we can't tell much whether the
+function should fail or not (given it's name, I guess it should silently
+success by default). Instead, make the implementation mandatory and
+vhost-user specific to be more clear about its usage.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 51f7aca973be7550227102055218dffb98fb6990)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/vhost_net.c | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/hw/net/vhost_net.c b/hw/net/vhost_net.c
+index d115354..d7203af 100644
+--- a/hw/net/vhost_net.c
++++ b/hw/net/vhost_net.c
+@@ -383,13 +383,11 @@ void vhost_net_cleanup(struct vhost_net *net)
+ int vhost_net_notify_migration_done(struct vhost_net *net, char* mac_addr)
+ {
+     const VhostOps *vhost_ops = net->dev.vhost_ops;
+-    int r = -1;
+ 
+-    if (vhost_ops->vhost_migration_done) {
+-        r = vhost_ops->vhost_migration_done(&net->dev, mac_addr);
+-    }
++    assert(vhost_ops->backend_type == VHOST_BACKEND_TYPE_USER);
++    assert(vhost_ops->vhost_migration_done);
+ 
+-    return r;
++    return vhost_ops->vhost_migration_done(&net->dev, mac_addr);
+ }
+ 
+ bool vhost_net_virtqueue_pending(VHostNetState *net, int idx)
+-- 
+1.8.3.1
+

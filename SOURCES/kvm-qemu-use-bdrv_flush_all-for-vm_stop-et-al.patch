@@ -1,0 +1,61 @@
+From 42539f0839faf9bca930bed226d7f009fa554f6e Mon Sep 17 00:00:00 2001
+From: John Snow <jsnow@redhat.com>
+Date: Mon, 19 Sep 2016 18:16:11 +0200
+Subject: [PATCH 18/18] qemu: use bdrv_flush_all for vm_stop et al
+
+RH-Author: John Snow <jsnow@redhat.com>
+Message-id: <1474308971-28285-3-git-send-email-jsnow@redhat.com>
+Patchwork-id: 72380
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 2/2] qemu: use bdrv_flush_all for vm_stop et al
+Bugzilla: 1338638
+RH-Acked-by: Max Reitz <mreitz@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Kevin Wolf <kwolf@redhat.com>
+
+Reimplement bdrv_flush_all for vm_stop. In contrast to blk_flush_all,
+bdrv_flush_all does not have device model restrictions. This allows
+us to flush and halt unconditionally without error.
+
+This allows us to do things like migrate when we have a device with
+an open tray, but has a node that may need to be flushed, or nodes
+that aren't currently attached to any device and need to be flushed.
+
+Specifically, this allows us to migrate when we have a CDROM with
+an open tray.
+
+Signed-off-by: John Snow <jsnow@redhat.com>
+Reviewed-by: Kevin Wolf <kwolf@redhat.com>
+(cherry picked from commit f81d28d428875b7bc75f1dfeabe3ba28c34134d8)
+Signed-off-by: John Snow <jsnow@redhat.com>
+
+Note: Commit hash can be incorrect due early commit (due to deadline)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ cpus.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/cpus.c b/cpus.c
+index c826954..c202019 100644
+--- a/cpus.c
++++ b/cpus.c
+@@ -743,7 +743,7 @@ static int do_vm_stop(RunState state)
+     }
+ 
+     bdrv_drain_all();
+-    ret = blk_flush_all();
++    ret = bdrv_flush_all();
+ 
+     return ret;
+ }
+@@ -1486,7 +1486,7 @@ int vm_stop_force_state(RunState state)
+         bdrv_drain_all();
+         /* Make sure to return an error if the flush in a previous vm_stop()
+          * failed. */
+-        return blk_flush_all();
++        return bdrv_flush_all();
+     }
+ }
+ 
+-- 
+1.8.3.1
+

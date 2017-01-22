@@ -1,0 +1,85 @@
+From b763bdb043bdbf92df7d4c1acdf1b4d9ca923388 Mon Sep 17 00:00:00 2001
+From: Bandan Das <bsd@redhat.com>
+Date: Mon, 23 May 2016 18:07:19 +0200
+Subject: [PATCH 04/24] nmi: remove x86 specific nmi handling
+
+RH-Author: Bandan Das <bsd@redhat.com>
+Message-id: <1464026840-20552-3-git-send-email-bsd@redhat.com>
+Patchwork-id: 70433
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/3] nmi: remove x86 specific nmi handling
+Bugzilla: 1335720
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+nmi_monitor_handle is wired to call the x86 nmi
+handler. So, we can directly use it at call sites.
+
+Signed-off-by: Bandan Das <bsd@redhat.com>
+Message-Id: <1463761717-26558-3-git-send-email-bsd@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit f7e981f29548fe4af7812f5920304fe607e5bf0d)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/core/nmi.c          | 19 -------------------
+ hw/watchdog/watchdog.c |  2 +-
+ include/hw/nmi.h       |  1 -
+ 3 files changed, 1 insertion(+), 21 deletions(-)
+
+diff --git a/hw/core/nmi.c b/hw/core/nmi.c
+index e8bcc41..bfd0896 100644
+--- a/hw/core/nmi.c
++++ b/hw/core/nmi.c
+@@ -73,25 +73,6 @@ void nmi_monitor_handle(int cpu_index, Error **errp)
+     }
+ }
+ 
+-void inject_nmi(void)
+-{
+-#if defined(TARGET_I386)
+-    CPUState *cs;
+-
+-    CPU_FOREACH(cs) {
+-        X86CPU *cpu = X86_CPU(cs);
+-
+-        if (!cpu->apic_state) {
+-            cpu_interrupt(cs, CPU_INTERRUPT_NMI);
+-        } else {
+-            apic_deliver_nmi(cpu->apic_state);
+-        }
+-    }
+-#else
+-    nmi_monitor_handle(0, NULL);
+-#endif
+-}
+-
+ static const TypeInfo nmi_info = {
+     .name          = TYPE_NMI,
+     .parent        = TYPE_INTERFACE,
+diff --git a/hw/watchdog/watchdog.c b/hw/watchdog/watchdog.c
+index bbf3646..2aeaf1f 100644
+--- a/hw/watchdog/watchdog.c
++++ b/hw/watchdog/watchdog.c
+@@ -143,7 +143,7 @@ void watchdog_perform_action(void)
+     case WDT_NMI:
+         qapi_event_send_watchdog(WATCHDOG_EXPIRATION_ACTION_INJECT_NMI,
+                                  &error_abort);
+-        inject_nmi();
++        nmi_monitor_handle(0, NULL);
+         break;
+     }
+ }
+diff --git a/include/hw/nmi.h b/include/hw/nmi.h
+index f4cec62..b541772 100644
+--- a/include/hw/nmi.h
++++ b/include/hw/nmi.h
+@@ -45,6 +45,5 @@ typedef struct NMIClass {
+ } NMIClass;
+ 
+ void nmi_monitor_handle(int cpu_index, Error **errp);
+-void inject_nmi(void);
+ 
+ #endif /* NMI_H */
+-- 
+1.8.3.1
+

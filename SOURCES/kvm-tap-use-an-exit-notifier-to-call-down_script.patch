@@ -1,0 +1,104 @@
+From 03da94a392ae0fcc37ab753e7c018019ef184ae6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 14 Jul 2016 20:58:00 +0200
+Subject: [PATCH 18/27] tap: use an exit notifier to call down_script
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160714205802.2896-3-marcandre.lureau@redhat.com>
+Patchwork-id: 71190
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 2/4] tap: use an exit notifier to call down_script
+Bugzilla: 1354090
+RH-Acked-by: Xiao Wang <jasowang@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+
+From: Marc-André Lureau <marcandre.lureau@redhat.com>
+
+We would like to move back net_cleanup() at the end of main function,
+like it used to be until f30dbae63a46f23116715dff8d130c, but minimum
+tap cleanup is necessary regarless at exit() time. Use an exit notifier
+to call TAP down_script. If net_cleanup() is called first, then remove
+the exit notifier as it will become a dangling pointer otherwise.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Suggested-by: Paolo Bonzini <pbonzini@redhat.com>
+Message-Id: <20160711144847.16651-1-marcandre.lureau@redhat.com>
+Reviewed-by: Jason Wang <jasowang@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+
+(cherry picked from commit 9e32ff32995f8c18f85f20e28ef09bae4ff2e48a)
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ net/tap.c | 27 ++++++++++++++++++++-------
+ 1 file changed, 20 insertions(+), 7 deletions(-)
+
+diff --git a/net/tap.c b/net/tap.c
+index 740e8a2..6d3969f 100644
+--- a/net/tap.c
++++ b/net/tap.c
+@@ -58,6 +58,7 @@ typedef struct TAPState {
+     bool enabled;
+     VHostNetState *vhost_net;
+     unsigned host_vnet_hdr_len;
++    Notifier exit;
+ } TAPState;
+ 
+ static void launch_script(const char *setup_script, const char *ifname,
+@@ -292,10 +293,22 @@ static void tap_set_offload(NetClientState *nc, int csum, int tso4,
+     tap_fd_set_offload(s->fd, csum, tso4, tso6, ecn, ufo);
+ }
+ 
++static void tap_exit_notify(Notifier *notifier, void *data)
++{
++    TAPState *s = container_of(notifier, TAPState, exit);
++    Error *err = NULL;
++
++    if (s->down_script[0]) {
++        launch_script(s->down_script, s->down_script_arg, s->fd, &err);
++        if (err) {
++            error_report_err(err);
++        }
++    }
++}
++
+ static void tap_cleanup(NetClientState *nc)
+ {
+     TAPState *s = DO_UPCAST(TAPState, nc, nc);
+-    Error *err = NULL;
+ 
+     if (s->vhost_net) {
+         vhost_net_cleanup(s->vhost_net);
+@@ -304,12 +317,8 @@ static void tap_cleanup(NetClientState *nc)
+ 
+     qemu_purge_queued_packets(nc);
+ 
+-    if (s->down_script[0]) {
+-        launch_script(s->down_script, s->down_script_arg, s->fd, &err);
+-        if (err) {
+-            error_report_err(err);
+-        }
+-    }
++    tap_exit_notify(&s->exit, NULL);
++    qemu_remove_exit_notifier(&s->exit);
+ 
+     tap_read_poll(s, false);
+     tap_write_poll(s, false);
+@@ -379,6 +388,10 @@ static TAPState *net_tap_fd_init(NetClientState *peer,
+     }
+     tap_read_poll(s, true);
+     s->vhost_net = NULL;
++
++    s->exit.notify = tap_exit_notify;
++    qemu_add_exit_notifier(&s->exit);
++
+     return s;
+ }
+ 
+-- 
+1.8.3.1
+

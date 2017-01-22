@@ -1,0 +1,48 @@
+From fdbafab6be0547f3caff0f1622b763546a184f16 Mon Sep 17 00:00:00 2001
+From: Xiao Wang <jasowang@redhat.com>
+Date: Thu, 21 Jul 2016 06:40:35 +0200
+Subject: [PATCH 08/35] net: Add macros for MAC address tracing
+
+RH-Author: Xiao Wang <jasowang@redhat.com>
+Message-id: <1469083246-12219-9-git-send-email-jasowang@redhat.com>
+Patchwork-id: 71255
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 08/19] net: Add macros for MAC address tracing
+Bugzilla: 1343092
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Dmitry Fleytman <dfleytma@redhat.com>
+
+From: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+
+These macros will be used by future commits introducing
+e1000e device emulation and by vmxnet3 tracing code.
+
+Signed-off-by: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+Signed-off-by: Leonid Bloch <leonid.bloch@ravellosystems.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+(cherry picked from commit 6d1d4939a6477f15f69234b426aaaae52369f22b)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/net/net.h | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/include/net/net.h b/include/net/net.h
+index 2c4b23a..b6fce96 100644
+--- a/include/net/net.h
++++ b/include/net/net.h
+@@ -9,6 +9,11 @@
+ #include "migration/vmstate.h"
+ #include "qapi-types.h"
+ 
++#define MAC_FMT "%02X:%02X:%02X:%02X:%02X:%02X"
++#define MAC_ARG(x) ((uint8_t *)(x))[0], ((uint8_t *)(x))[1], \
++                   ((uint8_t *)(x))[2], ((uint8_t *)(x))[3], \
++                   ((uint8_t *)(x))[4], ((uint8_t *)(x))[5]
++
+ #define MAX_QUEUE_NUM 1024
+ 
+ /* Maximum GSO packet size (64k) plus plenty of room for
+-- 
+1.8.3.1
+

@@ -1,0 +1,245 @@
+From 508ef1213cb00f0a033d631bbe57e704924a7b86 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:12 +0200
+Subject: [PATCH 05/27] spapr_iommu: Introduce "enabled" state for TCE table
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-6-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71092
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 05/16] spapr_iommu: Introduce "enabled" state for TCE table
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Alexey Kardashevskiy <aik@ozlabs.ru>
+
+Currently TCE tables are created once at start and their sizes never
+change. We are going to change that by introducing a Dynamic DMA windows
+support where DMA configuration may change during the guest execution.
+
+This changes spapr_tce_new_table() to create an empty zero-size IOMMU
+memory region (IOMMU MR). Only LIOBN is assigned by the time of creation.
+It still will be called once at the owner object (VIO or PHB) creation.
+
+This introduces an "enabled" state for TCE table objects, some
+helper functions are added:
+- spapr_tce_table_enable() receives TCE table parameters, stores in
+sPAPRTCETable and allocates a guest view of the TCE table
+(in the user space or KVM) and sets the correct size on the IOMMU MR;
+- spapr_tce_table_disable() disposes the table and resets the IOMMU MR
+size; it is made public as the following DDW code will be using it.
+
+This changes the PHB reset handler to do the default DMA initialization
+instead of spapr_phb_realize(). This does not make differenct now but
+later with more than just one DMA window, we will have to remove them all
+and create the default one on a system reset.
+
+No visible change in behaviour is expected except the actual table
+will be reallocated every reset. We might optimize this later.
+
+The other way to implement this would be dynamically create/remove
+the TCE table QOM objects but this would make migration impossible
+as the migration code expects all QOM objects to exist at the receiver
+so we have to have TCE table objects created when migration begins.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit df7625d422a61acbdb9b10a5b4f3bd576ec94c50)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_iommu.c   | 68 ++++++++++++++++++++++++++++++++------------------
+ hw/ppc/spapr_pci.c     |  8 +++---
+ hw/ppc/spapr_vio.c     |  8 +++---
+ include/hw/ppc/spapr.h |  9 +++----
+ 4 files changed, 56 insertions(+), 37 deletions(-)
+
+diff --git a/hw/ppc/spapr_iommu.c b/hw/ppc/spapr_iommu.c
+index 5f4f387..e54f362 100644
+--- a/hw/ppc/spapr_iommu.c
++++ b/hw/ppc/spapr_iommu.c
+@@ -17,6 +17,7 @@
+  * License along with this library; if not, see <http://www.gnu.org/licenses/>.
+  */
+ #include "qemu/osdep.h"
++#include "qemu/error-report.h"
+ #include "hw/hw.h"
+ #include "sysemu/kvm.h"
+ #include "hw/qdev.h"
+@@ -174,15 +175,9 @@ static int spapr_tce_table_realize(DeviceState *dev)
+     sPAPRTCETable *tcet = SPAPR_TCE_TABLE(dev);
+ 
+     tcet->fd = -1;
+-    tcet->table = spapr_tce_alloc_table(tcet->liobn,
+-                                        tcet->page_shift,
+-                                        tcet->nb_table,
+-                                        &tcet->fd,
+-                                        tcet->need_vfio);
+-
++    tcet->need_vfio = false;
+     memory_region_init_iommu(&tcet->iommu, OBJECT(dev), &spapr_iommu_ops,
+-                             "iommu-spapr",
+-                             (uint64_t)tcet->nb_table << tcet->page_shift);
++                             "iommu-spapr", 0);
+ 
+     QLIST_INSERT_HEAD(&spapr_tce_tables, tcet, list);
+ 
+@@ -224,14 +219,10 @@ void spapr_tce_set_need_vfio(sPAPRTCETable *tcet, bool need_vfio)
+     tcet->table = newtable;
+ }
+ 
+-sPAPRTCETable *spapr_tce_new_table(DeviceState *owner, uint32_t liobn,
+-                                   uint64_t bus_offset,
+-                                   uint32_t page_shift,
+-                                   uint32_t nb_table,
+-                                   bool need_vfio)
++sPAPRTCETable *spapr_tce_new_table(DeviceState *owner, uint32_t liobn)
+ {
+     sPAPRTCETable *tcet;
+-    char tmp[64];
++    char tmp[32];
+ 
+     if (spapr_tce_find_by_liobn(liobn)) {
+         fprintf(stderr, "Attempted to create TCE table with duplicate"
+@@ -239,16 +230,8 @@ sPAPRTCETable *spapr_tce_new_table(DeviceState *owner, uint32_t liobn,
+         return NULL;
+     }
+ 
+-    if (!nb_table) {
+-        return NULL;
+-    }
+-
+     tcet = SPAPR_TCE_TABLE(object_new(TYPE_SPAPR_TCE_TABLE));
+     tcet->liobn = liobn;
+-    tcet->bus_offset = bus_offset;
+-    tcet->page_shift = page_shift;
+-    tcet->nb_table = nb_table;
+-    tcet->need_vfio = need_vfio;
+ 
+     snprintf(tmp, sizeof(tmp), "tce-table-%x", liobn);
+     object_property_add_child(OBJECT(owner), tmp, OBJECT(tcet), NULL);
+@@ -258,14 +241,51 @@ sPAPRTCETable *spapr_tce_new_table(DeviceState *owner, uint32_t liobn,
+     return tcet;
+ }
+ 
++void spapr_tce_table_enable(sPAPRTCETable *tcet,
++                            uint32_t page_shift, uint64_t bus_offset,
++                            uint32_t nb_table)
++{
++    if (tcet->nb_table) {
++        error_report("Warning: trying to enable already enabled TCE table");
++        return;
++    }
++
++    tcet->bus_offset = bus_offset;
++    tcet->page_shift = page_shift;
++    tcet->nb_table = nb_table;
++    tcet->table = spapr_tce_alloc_table(tcet->liobn,
++                                        tcet->page_shift,
++                                        tcet->nb_table,
++                                        &tcet->fd,
++                                        tcet->need_vfio);
++
++    memory_region_set_size(&tcet->iommu,
++                           (uint64_t)tcet->nb_table << tcet->page_shift);
++}
++
++static void spapr_tce_table_disable(sPAPRTCETable *tcet)
++{
++    if (!tcet->nb_table) {
++        return;
++    }
++
++    memory_region_set_size(&tcet->iommu, 0);
++
++    spapr_tce_free_table(tcet->table, tcet->fd, tcet->nb_table);
++    tcet->fd = -1;
++    tcet->table = NULL;
++    tcet->bus_offset = 0;
++    tcet->page_shift = 0;
++    tcet->nb_table = 0;
++}
++
+ static void spapr_tce_table_unrealize(DeviceState *dev, Error **errp)
+ {
+     sPAPRTCETable *tcet = SPAPR_TCE_TABLE(dev);
+ 
+     QLIST_REMOVE(tcet, list);
+ 
+-    spapr_tce_free_table(tcet->table, tcet->fd, tcet->nb_table);
+-    tcet->fd = -1;
++    spapr_tce_table_disable(tcet);
+ }
+ 
+ MemoryRegion *spapr_tce_get_iommu(sPAPRTCETable *tcet)
+diff --git a/hw/ppc/spapr_pci.c b/hw/ppc/spapr_pci.c
+index 742d127..beeac06 100644
+--- a/hw/ppc/spapr_pci.c
++++ b/hw/ppc/spapr_pci.c
+@@ -1464,8 +1464,7 @@ static void spapr_phb_realize(DeviceState *dev, Error **errp)
+     }
+ 
+     nb_table = sphb->dma_win_size >> SPAPR_TCE_PAGE_SHIFT;
+-    tcet = spapr_tce_new_table(DEVICE(sphb), sphb->dma_liobn,
+-                               0, SPAPR_TCE_PAGE_SHIFT, nb_table, false);
++    tcet = spapr_tce_new_table(DEVICE(sphb), sphb->dma_liobn);
+     if (!tcet) {
+         error_setg(errp, "Unable to create TCE table for %s",
+                    sphb->dtbusname);
+@@ -1473,7 +1472,10 @@ static void spapr_phb_realize(DeviceState *dev, Error **errp)
+     }
+ 
+     /* Register default 32bit DMA window */
+-    memory_region_add_subregion(&sphb->iommu_root, sphb->dma_win_addr,
++    spapr_tce_table_enable(tcet, SPAPR_TCE_PAGE_SHIFT, sphb->dma_win_addr,
++                           nb_table);
++
++    memory_region_add_subregion(&sphb->iommu_root, tcet->bus_offset,
+                                 spapr_tce_get_iommu(tcet));
+ 
+     sphb->msi = g_hash_table_new_full(g_int_hash, g_int_equal, g_free, g_free);
+diff --git a/hw/ppc/spapr_vio.c b/hw/ppc/spapr_vio.c
+index 8aa021f..a7d49a0 100644
+--- a/hw/ppc/spapr_vio.c
++++ b/hw/ppc/spapr_vio.c
+@@ -482,11 +482,9 @@ static void spapr_vio_busdev_realize(DeviceState *qdev, Error **errp)
+         memory_region_add_subregion_overlap(&dev->mrroot, 0, &dev->mrbypass, 1);
+         address_space_init(&dev->as, &dev->mrroot, qdev->id);
+ 
+-        dev->tcet = spapr_tce_new_table(qdev, liobn,
+-                                        0,
+-                                        SPAPR_TCE_PAGE_SHIFT,
+-                                        pc->rtce_window_size >>
+-                                        SPAPR_TCE_PAGE_SHIFT, false);
++        dev->tcet = spapr_tce_new_table(qdev, liobn);
++        spapr_tce_table_enable(dev->tcet, SPAPR_TCE_PAGE_SHIFT, 0,
++                               pc->rtce_window_size >> SPAPR_TCE_PAGE_SHIFT);
+         dev->tcet->vdev = dev;
+         memory_region_add_subregion_overlap(&dev->mrroot, 0,
+                                             spapr_tce_get_iommu(dev->tcet), 2);
+diff --git a/include/hw/ppc/spapr.h b/include/hw/ppc/spapr.h
+index 815d5ee..26c327d 100644
+--- a/include/hw/ppc/spapr.h
++++ b/include/hw/ppc/spapr.h
+@@ -561,11 +561,10 @@ void spapr_events_fdt_skel(void *fdt, uint32_t epow_irq);
+ int spapr_h_cas_compose_response(sPAPRMachineState *sm,
+                                  target_ulong addr, target_ulong size,
+                                  bool cpu_update, bool memory_update);
+-sPAPRTCETable *spapr_tce_new_table(DeviceState *owner, uint32_t liobn,
+-                                   uint64_t bus_offset,
+-                                   uint32_t page_shift,
+-                                   uint32_t nb_table,
+-                                   bool need_vfio);
++sPAPRTCETable *spapr_tce_new_table(DeviceState *owner, uint32_t liobn);
++void spapr_tce_table_enable(sPAPRTCETable *tcet,
++                            uint32_t page_shift, uint64_t bus_offset,
++                            uint32_t nb_table);
+ void spapr_tce_set_need_vfio(sPAPRTCETable *tcet, bool need_vfio);
+ 
+ MemoryRegion *spapr_tce_get_iommu(sPAPRTCETable *tcet);
+-- 
+1.8.3.1
+

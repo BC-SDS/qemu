@@ -1,0 +1,51 @@
+From 0ead9fc22a6cf9263fccf502593e63a37e5acb70 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:34 +0200
+Subject: [PATCH 14/30] vhost-user: check qemu_chr_fe_set_msgfds() return value
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-15-marcandre.lureau@redhat.com>
+Patchwork-id: 71930
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 14/28] vhost-user: check qemu_chr_fe_set_msgfds() return value
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Check qemu_chr_fe_set_msgfds() for errors, to make sure the message to
+be sent is correct.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 6fab2f3f6064ad0a712c6d9213b9151bcc87c3d6)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/vhost-user.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/hw/virtio/vhost-user.c b/hw/virtio/vhost-user.c
+index 69d743b..b798fc2 100644
+--- a/hw/virtio/vhost-user.c
++++ b/hw/virtio/vhost-user.c
+@@ -188,7 +188,9 @@ static int vhost_user_write(struct vhost_dev *dev, VhostUserMsg *msg,
+         return 0;
+     }
+ 
+-    qemu_chr_fe_set_msgfds(chr, fds, fd_num);
++    if (qemu_chr_fe_set_msgfds(chr, fds, fd_num) < 0) {
++        return -1;
++    }
+ 
+     return qemu_chr_fe_write_all(chr, (const uint8_t *) msg, size) == size ?
+             0 : -1;
+-- 
+1.8.3.1
+

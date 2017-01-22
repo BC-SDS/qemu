@@ -1,0 +1,124 @@
+From 414792ef114172078f4252e8fa6645db5e32aa7d Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:49 +0200
+Subject: [PATCH 16/34] hmp: Add 'info hotpluggable-cpus' HMP command
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-17-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71136
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 16/27] hmp: Add 'info hotpluggable-cpus' HMP command
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+This is the HMP equivalent for QMP query-hotpluggable-cpus.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+[dwg: Fixed problem with printf formats on 32-bit host]
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+
+(cherry picked from commit d2d8d46ff7f3edb21e09ebace775474d356bb6b7)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hmp-commands-info.hx | 14 ++++++++++++++
+ hmp.c                | 42 ++++++++++++++++++++++++++++++++++++++++++
+ hmp.h                |  1 +
+ 3 files changed, 57 insertions(+)
+
+diff --git a/hmp-commands-info.hx b/hmp-commands-info.hx
+index 117ba8a..368647a 100644
+--- a/hmp-commands-info.hx
++++ b/hmp-commands-info.hx
+@@ -800,6 +800,20 @@ STEXI
+ Display the latest dump status.
+ ETEXI
+ 
++    {
++        .name       = "hotpluggable-cpus",
++        .args_type  = "",
++        .params     = "",
++        .help       = "Show information about hotpluggable CPUs",
++        .mhandler.cmd = hmp_hotpluggable_cpus,
++    },
++
++STEXI
++@item info hotpluggable-cpus
++@findex hotpluggable-cpus
++Show information about hotpluggable CPUs
++ETEXI
++
+ STEXI
+ @end table
+ ETEXI
+diff --git a/hmp.c b/hmp.c
+index 119dd1b..30120f6 100644
+--- a/hmp.c
++++ b/hmp.c
+@@ -2395,3 +2395,45 @@ void hmp_info_dump(Monitor *mon, const QDict *qdict)
+ 
+     qapi_free_DumpQueryResult(result);
+ }
++
++void hmp_hotpluggable_cpus(Monitor *mon, const QDict *qdict)
++{
++    Error *err = NULL;
++    HotpluggableCPUList *l = qmp_query_hotpluggable_cpus(&err);
++    HotpluggableCPUList *saved = l;
++    CpuInstanceProperties *c;
++
++    if (err != NULL) {
++        hmp_handle_error(mon, &err);
++        return;
++    }
++
++    monitor_printf(mon, "Hotpluggable CPUs:\n");
++    while (l) {
++        monitor_printf(mon, "  type: \"%s\"\n", l->value->type);
++        monitor_printf(mon, "  vcpus_count: \"%" PRIu64 "\"\n",
++                       l->value->vcpus_count);
++        if (l->value->has_qom_path) {
++            monitor_printf(mon, "  qom_path: \"%s\"\n", l->value->qom_path);
++        }
++
++        c = l->value->props;
++        monitor_printf(mon, "  CPUInstance Properties:\n");
++        if (c->has_node) {
++            monitor_printf(mon, "    node: \"%" PRIu64 "\"\n", c->node);
++        }
++        if (c->has_socket) {
++            monitor_printf(mon, "    socket: \"%" PRIu64 "\"\n", c->socket);
++        }
++        if (c->has_core) {
++            monitor_printf(mon, "    core: \"%" PRIu64 "\"\n", c->core);
++        }
++        if (c->has_thread) {
++            monitor_printf(mon, "    thread: \"%" PRIu64 "\"\n", c->thread);
++        }
++
++        l = l->next;
++    }
++
++    qapi_free_HotpluggableCPUList(saved);
++}
+diff --git a/hmp.h b/hmp.h
+index e9c3d6c..05485d3 100644
+--- a/hmp.h
++++ b/hmp.h
+@@ -133,5 +133,6 @@ void hmp_rocker_ports(Monitor *mon, const QDict *qdict);
+ void hmp_rocker_of_dpa_flows(Monitor *mon, const QDict *qdict);
+ void hmp_rocker_of_dpa_groups(Monitor *mon, const QDict *qdict);
+ void hmp_info_dump(Monitor *mon, const QDict *qdict);
++void hmp_hotpluggable_cpus(Monitor *mon, const QDict *qdict);
+ 
+ #endif
+-- 
+1.8.3.1
+

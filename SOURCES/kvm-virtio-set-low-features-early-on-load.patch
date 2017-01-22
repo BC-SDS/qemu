@@ -1,0 +1,66 @@
+From 2c7482486c5e079d3f43cb0cc6954fe6f1f33c22 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Mon, 15 Aug 2016 10:40:17 +0200
+Subject: [PATCH 16/17] virtio: set low features early on load
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1471257618-19311-2-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 71957
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/2] virtio: set low features early on load
+Bugzilla: 1365747
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Xiao Wang <jasowang@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: "Michael S. Tsirkin" <mst@redhat.com>
+
+virtio migrates the low 32 feature bits twice, the first copy is there
+for compatibility but ever since
+019a3edbb25f1571e876f8af1ce4c55412939e5d: ("virtio: make features 64bit
+wide") it's ignored on load. This is wrong since virtio_net_load tests
+self announcement and guest offloads before the second copy including
+high feature bits is loaded.  This means that self announcement, control
+vq and guest offloads are all broken after migration.
+
+Fix it up by loading low feature bits: somewhat ugly since high and low
+bits become out of sync temporarily, but seems unavoidable for
+compatibility.  The right thing to do for new features is probably to
+test the host features, anyway.
+
+Fixes: 019a3edbb25f1571e876f8af1ce4c55412939e5d
+    ("virtio: make features 64bit wide")
+Cc: qemu-stable@nongnu.org
+Reported-by: Robin Geuze <robing@transip.nl>
+Tested-by: Robin Geuze <robing@transip.nl>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 62cee1a28aada2cce4b0e1fb835d8fc830aed7ac)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/virtio.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/hw/virtio/virtio.c b/hw/virtio/virtio.c
+index d5933d1..300ce30 100644
+--- a/hw/virtio/virtio.c
++++ b/hw/virtio/virtio.c
+@@ -1511,6 +1511,16 @@ int virtio_load(VirtIODevice *vdev, QEMUFile *f, int version_id)
+     }
+     qemu_get_be32s(f, &features);
+ 
++    /*
++     * Temporarily set guest_features low bits - needed by
++     * virtio net load code testing for VIRTIO_NET_F_CTRL_GUEST_OFFLOADS
++     * VIRTIO_NET_F_GUEST_ANNOUNCE and VIRTIO_NET_F_CTRL_VQ.
++     *
++     * Note: devices should always test host features in future - don't create
++     * new dependencies like this.
++     */
++    vdev->guest_features = features;
++
+     config_len = qemu_get_be32(f);
+ 
+     /*
+-- 
+1.8.3.1
+

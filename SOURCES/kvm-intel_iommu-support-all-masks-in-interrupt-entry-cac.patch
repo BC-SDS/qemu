@@ -1,0 +1,66 @@
+From 1cc4c00efe7f085d089ff7dae20d8b58354762e0 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:47 +0200
+Subject: [PATCH 29/37] intel_iommu: support all masks in interrupt entry cache
+ invalidation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-29-git-send-email-peterx@redhat.com>
+Patchwork-id: 72013
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 28/34] intel_iommu: support all masks in interrupt entry cache invalidation
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+From: Radim Krčmář <rkrcmar@redhat.com>
+
+Linux guests do not gracefully handle cases when the invalidation mask
+they wanted is not supported, probably because real hardware always
+allowed all.
+
+We can just say that all 16 masks are supported, because both
+ioapic_iec_notifier and kvm_update_msi_routes_all invalidate all caches.
+
+Signed-off-by: Radim Krčmář <rkrcmar@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit a3f409cb4a35d9aa6a4d24a7a1e05423e189cb7a)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/intel_iommu.c          | 2 +-
+ hw/i386/intel_iommu_internal.h | 1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index 5a97548..df2678b 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -2362,7 +2362,7 @@ static void vtd_init(IntelIOMMUState *s)
+     s->ecap = VTD_ECAP_QI | VTD_ECAP_IRO;
+ 
+     if (x86_iommu->intr_supported) {
+-        s->ecap |= VTD_ECAP_IR | VTD_ECAP_EIM;
++        s->ecap |= VTD_ECAP_IR | VTD_ECAP_EIM | VTD_ECAP_MHMV;
+     }
+ 
+     vtd_reset_context_cache(s);
+diff --git a/hw/i386/intel_iommu_internal.h b/hw/i386/intel_iommu_internal.h
+index 72b0114..0829a50 100644
+--- a/hw/i386/intel_iommu_internal.h
++++ b/hw/i386/intel_iommu_internal.h
+@@ -186,6 +186,7 @@
+ /* Interrupt Remapping support */
+ #define VTD_ECAP_IR                 (1ULL << 3)
+ #define VTD_ECAP_EIM                (1ULL << 4)
++#define VTD_ECAP_MHMV               (15ULL << 20)
+ 
+ /* CAP_REG */
+ /* (offset >> 4) << 24 */
+-- 
+1.8.3.1
+

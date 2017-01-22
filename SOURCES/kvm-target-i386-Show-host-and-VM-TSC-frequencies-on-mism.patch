@@ -1,0 +1,48 @@
+From 11b9d609f920b049385f80163fac4a8ec7eb0be9 Mon Sep 17 00:00:00 2001
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Fri, 15 Jul 2016 17:15:37 +0200
+Subject: [PATCH 6/6] target-i386: Show host and VM TSC frequencies on mismatch
+
+RH-Author: Eduardo Habkost <ehabkost@redhat.com>
+Message-id: <1468602937-5014-1-git-send-email-ehabkost@redhat.com>
+Patchwork-id: 71199
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH] target-i386: Show host and VM TSC frequencies on mismatch
+Bugzilla: 1351442
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Bandan Das <bsd@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1351442
+Brew build: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11359256
+
+Improve the TSC frequency mismatch warning to show the host and
+VM TSC frequencies.
+
+Reviewed-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Reviewed-by: Marcelo Tosatti <mtosatti@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit d6276d26bd92c683c7ca194b6f6f48fd8994c1ed)
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/kvm.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/target-i386/kvm.c b/target-i386/kvm.c
+index 799fdfa..abad411 100644
+--- a/target-i386/kvm.c
++++ b/target-i386/kvm.c
+@@ -556,7 +556,9 @@ static int kvm_arch_set_tsc_khz(CPUState *cs)
+                        -ENOTSUP;
+         if (cur_freq <= 0 || cur_freq != env->tsc_khz) {
+             error_report("warning: TSC frequency mismatch between "
+-                         "VM and host, and TSC scaling unavailable");
++                         "VM (%" PRId64 " kHz) and host (%d kHz), "
++                         "and TSC scaling unavailable",
++                         env->tsc_khz, cur_freq);
+             return r;
+         }
+     }
+-- 
+1.8.3.1
+

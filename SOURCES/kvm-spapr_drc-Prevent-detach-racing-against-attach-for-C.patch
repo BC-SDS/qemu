@@ -1,0 +1,93 @@
+From 92a89364e07b07d1fcf5c338bca3d2ff9f535a72 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:41 +0200
+Subject: [PATCH 08/34] spapr_drc: Prevent detach racing against attach for CPU
+ DR
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-9-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71128
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 08/27] spapr_drc: Prevent detach racing against attach for CPU DR
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+If a CPU is hot removed while hotplug of the same is still in progress,
+the guest crashes. Prevent this by ensuring that detach is done only
+after attach has completed.
+
+The existing code already prevents such race for PCI hotplug. However
+given that CPU is a logical DR unlike PCI and starts with ISOLATED
+state, we need a logic that works for CPU too.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Reviewed-by: Michael Roth <mdroth@linux.vnet.ibm.com>
+Signed-off-by: Michael Roth <mdroth@linux.vnet.ibm.com>
+               [Don't set awaiting_attach for PCI devices]
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit aab99135b63522267c6fdae04712cb2f02c8c7de)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_drc.c         | 12 ++++++++++++
+ include/hw/ppc/spapr_drc.h |  1 +
+ 2 files changed, 13 insertions(+)
+
+diff --git a/hw/ppc/spapr_drc.c b/hw/ppc/spapr_drc.c
+index 1f5f1d7..e146267 100644
+--- a/hw/ppc/spapr_drc.c
++++ b/hw/ppc/spapr_drc.c
+@@ -140,6 +140,8 @@ static uint32_t set_allocation_state(sPAPRDRConnector *drc,
+             DPRINTFN("finalizing device removal");
+             drck->detach(drc, DEVICE(drc->dev), drc->detach_cb,
+                          drc->detach_cb_opaque, NULL);
++        } else if (drc->allocation_state == SPAPR_DR_ALLOCATION_STATE_USABLE) {
++            drc->awaiting_allocation = false;
+         }
+     }
+     return RTAS_OUT_SUCCESS;
+@@ -376,6 +378,10 @@ static void attach(sPAPRDRConnector *drc, DeviceState *d, void *fdt,
+     drc->signalled = (drc->type != SPAPR_DR_CONNECTOR_TYPE_PCI)
+                      ? true : coldplug;
+ 
++    if (drc->type != SPAPR_DR_CONNECTOR_TYPE_PCI) {
++        drc->awaiting_allocation = true;
++    }
++
+     object_property_add_link(OBJECT(drc), "device",
+                              object_get_typename(OBJECT(drc->dev)),
+                              (Object **)(&drc->dev),
+@@ -424,6 +430,12 @@ static void detach(sPAPRDRConnector *drc, DeviceState *d,
+         return;
+     }
+ 
++    if (drc->awaiting_allocation) {
++        drc->awaiting_release = true;
++        DPRINTFN("awaiting allocation to complete before removal");
++        return;
++    }
++
+     drc->indicator_state = SPAPR_DR_INDICATOR_STATE_INACTIVE;
+ 
+     if (drc->detach_cb) {
+diff --git a/include/hw/ppc/spapr_drc.h b/include/hw/ppc/spapr_drc.h
+index fa21ba0..08e8411 100644
+--- a/include/hw/ppc/spapr_drc.h
++++ b/include/hw/ppc/spapr_drc.h
+@@ -152,6 +152,7 @@ typedef struct sPAPRDRConnector {
+ 
+     bool awaiting_release;
+     bool signalled;
++    bool awaiting_allocation;
+ 
+     /* device pointer, via link property */
+     DeviceState *dev;
+-- 
+1.8.3.1
+

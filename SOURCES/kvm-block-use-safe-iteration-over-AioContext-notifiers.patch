@@ -1,0 +1,155 @@
+From 51c6dea02c197009f93116ea9ddbe7557cb4c638 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Tue, 21 Jun 2016 13:34:19 +0200
+Subject: [PATCH 17/25] block: use safe iteration over AioContext notifiers
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466516062-20048-7-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70723
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 6/9] block: use safe iteration over AioContext notifiers
+Bugzilla: 1265179
+RH-Acked-by: Jeffrey Cody <jcody@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+It's possible that an AioContext notifier user was close to finishing
+when .detach_aio_context() or .attached_aio_context() is called.  In
+that case they may call bdrv_remove_aio_context_notifier() during the
+callback.
+
+Use safe iteration to avoid crashing when the notifier list is modified
+during iteration.  We must not only handle the case where the current
+aio notifier is removed during a callback but also the one where any
+other aio notifier is removed.
+
+The next patch adds an AioContext notifier for block jobs and they
+really could be terminating just as .detach_aio_context() is invoked.
+
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Message-id: 1466096189-6477-6-git-send-email-stefanha@redhat.com
+(cherry picked from commit e8a095dadb70e2ea6d5169d261920db3747bfa45)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+  block.c
+
+  Context conflict because downstream does not use BdrvChild.
+---
+ block.c                   | 46 ++++++++++++++++++++++++++++++++++++----------
+ include/block/block_int.h |  2 ++
+ 2 files changed, 38 insertions(+), 10 deletions(-)
+
+diff --git a/block.c b/block.c
+index d4939b4..4387ccb 100644
+--- a/block.c
++++ b/block.c
+@@ -3620,17 +3620,33 @@ AioContext *bdrv_get_aio_context(BlockDriverState *bs)
+     return bs->aio_context;
+ }
+ 
++static void bdrv_do_remove_aio_context_notifier(BdrvAioNotifier *ban)
++{
++    QLIST_REMOVE(ban, list);
++    g_free(ban);
++}
++
+ void bdrv_detach_aio_context(BlockDriverState *bs)
+ {
+-    BdrvAioNotifier *baf;
++    BdrvAioNotifier *baf, *baf_tmp;
+ 
+     if (!bs->drv) {
+         return;
+     }
+ 
+-    QLIST_FOREACH(baf, &bs->aio_notifiers, list) {
+-        baf->detach_aio_context(baf->opaque);
++    assert(!bs->walking_aio_notifiers);
++    bs->walking_aio_notifiers = true;
++    QLIST_FOREACH_SAFE(baf, &bs->aio_notifiers, list, baf_tmp) {
++        if (baf->deleted) {
++            bdrv_do_remove_aio_context_notifier(baf);
++        } else {
++            baf->detach_aio_context(baf->opaque);
++        }
+     }
++    /* Never mind iterating again to check for ->deleted.  bdrv_close() will
++     * remove remaining aio notifiers if we aren't called again.
++     */
++    bs->walking_aio_notifiers = false;
+ 
+     if (bs->throttle_state) {
+         throttle_timers_detach_aio_context(&bs->throttle_timers);
+@@ -3651,7 +3667,7 @@ void bdrv_detach_aio_context(BlockDriverState *bs)
+ void bdrv_attach_aio_context(BlockDriverState *bs,
+                              AioContext *new_context)
+ {
+-    BdrvAioNotifier *ban;
++    BdrvAioNotifier *ban, *ban_tmp;
+ 
+     if (!bs->drv) {
+         return;
+@@ -3672,9 +3688,16 @@ void bdrv_attach_aio_context(BlockDriverState *bs,
+         throttle_timers_attach_aio_context(&bs->throttle_timers, new_context);
+     }
+ 
+-    QLIST_FOREACH(ban, &bs->aio_notifiers, list) {
+-        ban->attached_aio_context(new_context, ban->opaque);
++    assert(!bs->walking_aio_notifiers);
++    bs->walking_aio_notifiers = true;
++    QLIST_FOREACH_SAFE(ban, &bs->aio_notifiers, list, ban_tmp) {
++        if (ban->deleted) {
++            bdrv_do_remove_aio_context_notifier(ban);
++        } else {
++            ban->attached_aio_context(new_context, ban->opaque);
++        }
+     }
++    bs->walking_aio_notifiers = false;
+ }
+ 
+ void bdrv_set_aio_context(BlockDriverState *bs, AioContext *new_context)
+@@ -3716,11 +3739,14 @@ void bdrv_remove_aio_context_notifier(BlockDriverState *bs,
+     QLIST_FOREACH_SAFE(ban, &bs->aio_notifiers, list, ban_next) {
+         if (ban->attached_aio_context == attached_aio_context &&
+             ban->detach_aio_context   == detach_aio_context   &&
+-            ban->opaque               == opaque)
++            ban->opaque               == opaque               &&
++            ban->deleted              == false)
+         {
+-            QLIST_REMOVE(ban, list);
+-            g_free(ban);
+-
++            if (bs->walking_aio_notifiers) {
++                ban->deleted = true;
++            } else {
++                bdrv_do_remove_aio_context_notifier(ban);
++            }
+             return;
+         }
+     }
+diff --git a/include/block/block_int.h b/include/block/block_int.h
+index 10d8759..b340f56 100644
+--- a/include/block/block_int.h
++++ b/include/block/block_int.h
+@@ -356,6 +356,7 @@ typedef struct BdrvAioNotifier {
+     void (*detach_aio_context)(void *opaque);
+ 
+     void *opaque;
++    bool deleted;
+ 
+     QLIST_ENTRY(BdrvAioNotifier) list;
+ } BdrvAioNotifier;
+@@ -404,6 +405,7 @@ struct BlockDriverState {
+      * BDS may register themselves in this list to be notified of changes
+      * regarding this BDS's context */
+     QLIST_HEAD(, BdrvAioNotifier) aio_notifiers;
++    bool walking_aio_notifiers; /* to make removal during iteration safe */
+ 
+     char filename[PATH_MAX];
+     char backing_file[PATH_MAX]; /* if non zero, the image is a diff of
+-- 
+1.8.3.1
+

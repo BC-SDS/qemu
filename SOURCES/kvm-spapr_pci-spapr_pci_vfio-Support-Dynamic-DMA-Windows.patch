@@ -1,0 +1,684 @@
+From 19203fe80c5f03d428cf90d85b45e905b9d9eada Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:23 +0200
+Subject: [PATCH 16/27] spapr_pci/spapr_pci_vfio: Support Dynamic DMA Windows
+ (DDW)
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-17-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71103
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 16/16] spapr_pci/spapr_pci_vfio: Support Dynamic DMA Windows (DDW)
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Alexey Kardashevskiy <aik@ozlabs.ru>
+
+This adds support for Dynamic DMA Windows (DDW) option defined by
+the SPAPR specification which allows to have additional DMA window(s)
+
+The "ddw" property is enabled by default on a PHB but for compatibility
+the pseries-2.6 machine and older disable it.
+This also creates a single DMA window for the older machines to
+maintain backward migration.
+
+This implements DDW for PHB with emulated and VFIO devices. The host
+kernel support is required. The advertised IOMMU page sizes are 4K and
+64K; 16M pages are supported but not advertised by default, in order to
+enable them, the user has to specify "pgsz" property for PHB and
+enable huge pages for RAM.
+
+The existing linux guests try creating one additional huge DMA window
+with 64K or 16MB pages and map the entire guest RAM to. If succeeded,
+the guest switches to dma_direct_ops and never calls TCE hypercalls
+(H_PUT_TCE,...) again. This enables VFIO devices to use the entire RAM
+and not waste time on map/unmap later. This adds a "dma64_win_addr"
+property which is a bus address for the 64bit window and by default
+set to 0x800.0000.0000.0000 as this is what the modern POWER8 hardware
+uses and this allows having emulated and VFIO devices on the same bus.
+
+This adds 4 RTAS handlers:
+* ibm,query-pe-dma-window
+* ibm,create-pe-dma-window
+* ibm,remove-pe-dma-window
+* ibm,reset-pe-dma-window
+These are registered from type_init() callback.
+
+These RTAS handlers are implemented in a separate file to avoid polluting
+spapr_iommu.c with PCI.
+
+This changes sPAPRPHBState::dma_liobn to an array to allow 2 LIOBNs
+and updates all references to dma_liobn. However this does not add
+64bit LIOBN to the migration stream as in fact even 32bit LIOBN is
+rather pointless there (as it is a PHB property and the management
+software can/should pass LIOBNs via CLI) but we keep it for the backward
+migration support.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit ae4de14cd36b6a899d83df9595be3971ac0802d4)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	hw/ppc/spapr.c
+
+Correct conflict due to downstream vs. upstream machine types.
+
+	hw/ppc/spapr_pci.c
+
+Correct context conflict in #includes
+
+	hw/ppc/trace-events
+
+Correct conflict because upstream has split trace-events into multiple
+files, but downstream it's all still one big file.
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+---
+ hw/ppc/Makefile.objs        |   1 +
+ hw/ppc/spapr.c              |   5 +
+ hw/ppc/spapr_pci.c          |  75 ++++++++---
+ hw/ppc/spapr_rtas_ddw.c     | 295 ++++++++++++++++++++++++++++++++++++++++++++
+ include/hw/pci-host/spapr.h |   8 +-
+ include/hw/ppc/spapr.h      |  16 ++-
+ trace-events                |   4 +
+ 7 files changed, 384 insertions(+), 20 deletions(-)
+ create mode 100644 hw/ppc/spapr_rtas_ddw.c
+
+diff --git a/hw/ppc/Makefile.objs b/hw/ppc/Makefile.objs
+index 15c9013..57f7495 100644
+--- a/hw/ppc/Makefile.objs
++++ b/hw/ppc/Makefile.objs
+@@ -7,6 +7,7 @@ obj-$(CONFIG_PSERIES) += spapr_pci.o spapr_rtc.o spapr_drc.o
+ ifeq ($(CONFIG_PCI)$(CONFIG_PSERIES)$(CONFIG_LINUX), yyy)
+ obj-y += spapr_pci_vfio.o
+ endif
++obj-$(CONFIG_PSERIES) += spapr_rtas_ddw.o
+ # PowerPC 4xx boards
+ obj-y += ppc4xx_devs.o ppc405_uc.o
+ # PReP
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index 328b347..a971579 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -2503,6 +2503,11 @@ DEFINE_SPAPR_MACHINE(rhel730, "rhel7.3.0", true);
+         .driver   = "spapr-vlan", \
+         .property = "use-rx-buffer-pools", \
+         .value    = "off", \
++    }, \
++    { \
++        .driver   = TYPE_SPAPR_PCI_HOST_BRIDGE,\
++        .property = "ddw",\
++        .value    = stringify(off),\
+     },
+ 
+ static void spapr_machine_rhel720_instance_options(MachineState *machine)
+diff --git a/hw/ppc/spapr_pci.c b/hw/ppc/spapr_pci.c
+index e07400c..8e3eae1 100644
+--- a/hw/ppc/spapr_pci.c
++++ b/hw/ppc/spapr_pci.c
+@@ -35,6 +35,7 @@
+ #include "hw/ppc/spapr.h"
+ #include "hw/pci-host/spapr.h"
+ #include "exec/address-spaces.h"
++#include "exec/ram_addr.h"
+ #include <libfdt.h>
+ #include "trace.h"
+ #include "qemu/error-report.h"
+@@ -44,6 +45,7 @@
+ #include "hw/pci/pci_bus.h"
+ #include "hw/ppc/spapr_drc.h"
+ #include "sysemu/device_tree.h"
++#include "sysemu/hostmem.h"
+ 
+ #include "hw/vfio/vfio.h"
+ 
+@@ -1303,11 +1305,14 @@ static void spapr_phb_realize(DeviceState *dev, Error **errp)
+     PCIBus *bus;
+     uint64_t msi_window_size = 4096;
+     sPAPRTCETable *tcet;
++    const unsigned windows_supported =
++        sphb->ddw_enabled ? SPAPR_PCI_DMA_MAX_WINDOWS : 1;
+ 
+     if (sphb->index != (uint32_t)-1) {
+         hwaddr windows_base;
+ 
+-        if ((sphb->buid != (uint64_t)-1) || (sphb->dma_liobn != (uint32_t)-1)
++        if ((sphb->buid != (uint64_t)-1) || (sphb->dma_liobn[0] != (uint32_t)-1)
++            || (sphb->dma_liobn[1] != (uint32_t)-1 && windows_supported == 2)
+             || (sphb->mem_win_addr != (hwaddr)-1)
+             || (sphb->io_win_addr != (hwaddr)-1)) {
+             error_setg(errp, "Either \"index\" or other parameters must"
+@@ -1322,7 +1327,9 @@ static void spapr_phb_realize(DeviceState *dev, Error **errp)
+         }
+ 
+         sphb->buid = SPAPR_PCI_BASE_BUID + sphb->index;
+-        sphb->dma_liobn = SPAPR_PCI_LIOBN(sphb->index, 0);
++        for (i = 0; i < windows_supported; ++i) {
++            sphb->dma_liobn[i] = SPAPR_PCI_LIOBN(sphb->index, i);
++        }
+ 
+         windows_base = SPAPR_PCI_WINDOW_BASE
+             + sphb->index * SPAPR_PCI_WINDOW_SPACING;
+@@ -1335,8 +1342,9 @@ static void spapr_phb_realize(DeviceState *dev, Error **errp)
+         return;
+     }
+ 
+-    if (sphb->dma_liobn == (uint32_t)-1) {
+-        error_setg(errp, "LIOBN not specified for PHB");
++    if ((sphb->dma_liobn[0] == (uint32_t)-1) ||
++        ((sphb->dma_liobn[1] == (uint32_t)-1) && (windows_supported > 1))) {
++        error_setg(errp, "LIOBN(s) not specified for PHB");
+         return;
+     }
+ 
+@@ -1454,16 +1462,18 @@ static void spapr_phb_realize(DeviceState *dev, Error **errp)
+         }
+     }
+ 
+-    tcet = spapr_tce_new_table(DEVICE(sphb), sphb->dma_liobn);
+-    if (!tcet) {
+-        error_setg(errp, "Unable to create TCE table for %s",
+-                   sphb->dtbusname);
+-        return;
++    /* DMA setup */
++    for (i = 0; i < windows_supported; ++i) {
++        tcet = spapr_tce_new_table(DEVICE(sphb), sphb->dma_liobn[i]);
++        if (!tcet) {
++            error_setg(errp, "Creating window#%d failed for %s",
++                       i, sphb->dtbusname);
++            return;
++        }
++        memory_region_add_subregion_overlap(&sphb->iommu_root, 0,
++                                            spapr_tce_get_iommu(tcet), 0);
+     }
+ 
+-    memory_region_add_subregion_overlap(&sphb->iommu_root, 0,
+-                                        spapr_tce_get_iommu(tcet), 0);
+-
+     sphb->msi = g_hash_table_new_full(g_int_hash, g_int_equal, g_free, g_free);
+ }
+ 
+@@ -1480,13 +1490,19 @@ static int spapr_phb_children_reset(Object *child, void *opaque)
+ 
+ void spapr_phb_dma_reset(sPAPRPHBState *sphb)
+ {
+-    sPAPRTCETable *tcet = spapr_tce_find_by_liobn(sphb->dma_liobn);
++    int i;
++    sPAPRTCETable *tcet;
++
++    for (i = 0; i < SPAPR_PCI_DMA_MAX_WINDOWS; ++i) {
++        tcet = spapr_tce_find_by_liobn(sphb->dma_liobn[i]);
+ 
+-    if (tcet && tcet->nb_table) {
+-        spapr_tce_table_disable(tcet);
++        if (tcet && tcet->nb_table) {
++            spapr_tce_table_disable(tcet);
++        }
+     }
+ 
+     /* Register default 32bit DMA window */
++    tcet = spapr_tce_find_by_liobn(sphb->dma_liobn[0]);
+     spapr_tce_table_enable(tcet, SPAPR_TCE_PAGE_SHIFT, sphb->dma_win_addr,
+                            sphb->dma_win_size >> SPAPR_TCE_PAGE_SHIFT);
+ }
+@@ -1508,7 +1524,8 @@ static void spapr_phb_reset(DeviceState *qdev)
+ static Property spapr_phb_properties[] = {
+     DEFINE_PROP_UINT32("index", sPAPRPHBState, index, -1),
+     DEFINE_PROP_UINT64("buid", sPAPRPHBState, buid, -1),
+-    DEFINE_PROP_UINT32("liobn", sPAPRPHBState, dma_liobn, -1),
++    DEFINE_PROP_UINT32("liobn", sPAPRPHBState, dma_liobn[0], -1),
++    DEFINE_PROP_UINT32("liobn64", sPAPRPHBState, dma_liobn[1], -1),
+     DEFINE_PROP_UINT64("mem_win_addr", sPAPRPHBState, mem_win_addr, -1),
+     DEFINE_PROP_UINT64("mem_win_size", sPAPRPHBState, mem_win_size,
+                        SPAPR_PCI_MMIO_WIN_SIZE),
+@@ -1520,6 +1537,11 @@ static Property spapr_phb_properties[] = {
+     /* Default DMA window is 0..1GB */
+     DEFINE_PROP_UINT64("dma_win_addr", sPAPRPHBState, dma_win_addr, 0),
+     DEFINE_PROP_UINT64("dma_win_size", sPAPRPHBState, dma_win_size, 0x40000000),
++    DEFINE_PROP_UINT64("dma64_win_addr", sPAPRPHBState, dma64_win_addr,
++                       0x800000000000000ULL),
++    DEFINE_PROP_BOOL("ddw", sPAPRPHBState, ddw_enabled, true),
++    DEFINE_PROP_UINT64("pgsz", sPAPRPHBState, page_size_mask,
++                       (1ULL << 12) | (1ULL << 16)),
+     DEFINE_PROP_END_OF_LIST(),
+ };
+ 
+@@ -1596,7 +1618,7 @@ static const VMStateDescription vmstate_spapr_pci = {
+     .post_load = spapr_pci_post_load,
+     .fields = (VMStateField[]) {
+         VMSTATE_UINT64_EQUAL(buid, sPAPRPHBState),
+-        VMSTATE_UINT32_EQUAL(dma_liobn, sPAPRPHBState),
++        VMSTATE_UINT32_EQUAL(dma_liobn[0], sPAPRPHBState),
+         VMSTATE_UINT64_EQUAL(mem_win_addr, sPAPRPHBState),
+         VMSTATE_UINT64_EQUAL(mem_win_size, sPAPRPHBState),
+         VMSTATE_UINT64_EQUAL(io_win_addr, sPAPRPHBState),
+@@ -1773,6 +1795,15 @@ int spapr_populate_pci_dt(sPAPRPHBState *phb,
+     uint32_t interrupt_map_mask[] = {
+         cpu_to_be32(b_ddddd(-1)|b_fff(0)), 0x0, 0x0, cpu_to_be32(-1)};
+     uint32_t interrupt_map[PCI_SLOT_MAX * PCI_NUM_PINS][7];
++    uint32_t ddw_applicable[] = {
++        cpu_to_be32(RTAS_IBM_QUERY_PE_DMA_WINDOW),
++        cpu_to_be32(RTAS_IBM_CREATE_PE_DMA_WINDOW),
++        cpu_to_be32(RTAS_IBM_REMOVE_PE_DMA_WINDOW)
++    };
++    uint32_t ddw_extensions[] = {
++        cpu_to_be32(1),
++        cpu_to_be32(RTAS_IBM_RESET_PE_DMA_WINDOW)
++    };
+     sPAPRTCETable *tcet;
+     PCIBus *bus = PCI_HOST_BRIDGE(phb)->bus;
+     sPAPRFDT s_fdt;
+@@ -1797,6 +1828,14 @@ int spapr_populate_pci_dt(sPAPRPHBState *phb,
+     _FDT(fdt_setprop_cell(fdt, bus_off, "ibm,pci-config-space-type", 0x1));
+     _FDT(fdt_setprop_cell(fdt, bus_off, "ibm,pe-total-#msi", XICS_IRQS));
+ 
++    /* Dynamic DMA window */
++    if (phb->ddw_enabled) {
++        _FDT(fdt_setprop(fdt, bus_off, "ibm,ddw-applicable", &ddw_applicable,
++                         sizeof(ddw_applicable)));
++        _FDT(fdt_setprop(fdt, bus_off, "ibm,ddw-extensions",
++                         &ddw_extensions, sizeof(ddw_extensions)));
++    }
++
+     /* Build the interrupt-map, this must matches what is done
+      * in pci_spapr_map_irq
+      */
+@@ -1820,7 +1859,7 @@ int spapr_populate_pci_dt(sPAPRPHBState *phb,
+     _FDT(fdt_setprop(fdt, bus_off, "interrupt-map", &interrupt_map,
+                      sizeof(interrupt_map)));
+ 
+-    tcet = spapr_tce_find_by_liobn(phb->dma_liobn);
++    tcet = spapr_tce_find_by_liobn(phb->dma_liobn[0]);
+     if (!tcet) {
+         return -1;
+     }
+diff --git a/hw/ppc/spapr_rtas_ddw.c b/hw/ppc/spapr_rtas_ddw.c
+new file mode 100644
+index 0000000..177dcff
+--- /dev/null
++++ b/hw/ppc/spapr_rtas_ddw.c
+@@ -0,0 +1,295 @@
++/*
++ * QEMU sPAPR Dynamic DMA windows support
++ *
++ * Copyright (c) 2015 Alexey Kardashevskiy, IBM Corporation.
++ *
++ *  This program is free software; you can redistribute it and/or modify
++ *  it under the terms of the GNU General Public License as published by
++ *  the Free Software Foundation; either version 2 of the License,
++ *  or (at your option) any later version.
++ *
++ *  This program is distributed in the hope that it will be useful,
++ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *  GNU General Public License for more details.
++ *
++ *  You should have received a copy of the GNU General Public License
++ *  along with this program; if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "qemu/osdep.h"
++#include "cpu.h"
++#include "qemu/error-report.h"
++#include "hw/ppc/spapr.h"
++#include "hw/pci-host/spapr.h"
++#include "trace.h"
++
++static int spapr_phb_get_active_win_num_cb(Object *child, void *opaque)
++{
++    sPAPRTCETable *tcet;
++
++    tcet = (sPAPRTCETable *) object_dynamic_cast(child, TYPE_SPAPR_TCE_TABLE);
++    if (tcet && tcet->nb_table) {
++        ++*(unsigned *)opaque;
++    }
++    return 0;
++}
++
++static unsigned spapr_phb_get_active_win_num(sPAPRPHBState *sphb)
++{
++    unsigned ret = 0;
++
++    object_child_foreach(OBJECT(sphb), spapr_phb_get_active_win_num_cb, &ret);
++
++    return ret;
++}
++
++static int spapr_phb_get_free_liobn_cb(Object *child, void *opaque)
++{
++    sPAPRTCETable *tcet;
++
++    tcet = (sPAPRTCETable *) object_dynamic_cast(child, TYPE_SPAPR_TCE_TABLE);
++    if (tcet && !tcet->nb_table) {
++        *(uint32_t *)opaque = tcet->liobn;
++        return 1;
++    }
++    return 0;
++}
++
++static unsigned spapr_phb_get_free_liobn(sPAPRPHBState *sphb)
++{
++    uint32_t liobn = 0;
++
++    object_child_foreach(OBJECT(sphb), spapr_phb_get_free_liobn_cb, &liobn);
++
++    return liobn;
++}
++
++static uint32_t spapr_page_mask_to_query_mask(uint64_t page_mask)
++{
++    int i;
++    uint32_t mask = 0;
++    const struct { int shift; uint32_t mask; } masks[] = {
++        { 12, RTAS_DDW_PGSIZE_4K },
++        { 16, RTAS_DDW_PGSIZE_64K },
++        { 24, RTAS_DDW_PGSIZE_16M },
++        { 25, RTAS_DDW_PGSIZE_32M },
++        { 26, RTAS_DDW_PGSIZE_64M },
++        { 27, RTAS_DDW_PGSIZE_128M },
++        { 28, RTAS_DDW_PGSIZE_256M },
++        { 34, RTAS_DDW_PGSIZE_16G },
++    };
++
++    for (i = 0; i < ARRAY_SIZE(masks); ++i) {
++        if (page_mask & (1ULL << masks[i].shift)) {
++            mask |= masks[i].mask;
++        }
++    }
++
++    return mask;
++}
++
++static void rtas_ibm_query_pe_dma_window(PowerPCCPU *cpu,
++                                         sPAPRMachineState *spapr,
++                                         uint32_t token, uint32_t nargs,
++                                         target_ulong args,
++                                         uint32_t nret, target_ulong rets)
++{
++    sPAPRPHBState *sphb;
++    uint64_t buid, max_window_size;
++    uint32_t avail, addr, pgmask = 0;
++    MachineState *machine = MACHINE(spapr);
++
++    if ((nargs != 3) || (nret != 5)) {
++        goto param_error_exit;
++    }
++
++    buid = ((uint64_t)rtas_ld(args, 1) << 32) | rtas_ld(args, 2);
++    addr = rtas_ld(args, 0);
++    sphb = spapr_pci_find_phb(spapr, buid);
++    if (!sphb || !sphb->ddw_enabled) {
++        goto param_error_exit;
++    }
++
++    /* Translate page mask to LoPAPR format */
++    pgmask = spapr_page_mask_to_query_mask(sphb->page_size_mask);
++
++    /*
++     * This is "Largest contiguous block of TCEs allocated specifically
++     * for (that is, are reserved for) this PE".
++     * Return the maximum number as maximum supported RAM size was in 4K pages.
++     */
++    if (machine->ram_size == machine->maxram_size) {
++        max_window_size = machine->ram_size;
++    } else {
++        MemoryHotplugState *hpms = &spapr->hotplug_memory;
++
++        max_window_size = hpms->base + memory_region_size(&hpms->mr);
++    }
++
++    avail = SPAPR_PCI_DMA_MAX_WINDOWS - spapr_phb_get_active_win_num(sphb);
++
++    rtas_st(rets, 0, RTAS_OUT_SUCCESS);
++    rtas_st(rets, 1, avail);
++    rtas_st(rets, 2, max_window_size >> SPAPR_TCE_PAGE_SHIFT);
++    rtas_st(rets, 3, pgmask);
++    rtas_st(rets, 4, 0); /* DMA migration mask, not supported */
++
++    trace_spapr_iommu_ddw_query(buid, addr, avail, max_window_size, pgmask);
++    return;
++
++param_error_exit:
++    rtas_st(rets, 0, RTAS_OUT_PARAM_ERROR);
++}
++
++static void rtas_ibm_create_pe_dma_window(PowerPCCPU *cpu,
++                                          sPAPRMachineState *spapr,
++                                          uint32_t token, uint32_t nargs,
++                                          target_ulong args,
++                                          uint32_t nret, target_ulong rets)
++{
++    sPAPRPHBState *sphb;
++    sPAPRTCETable *tcet = NULL;
++    uint32_t addr, page_shift, window_shift, liobn;
++    uint64_t buid, win_addr;
++    int windows;
++
++    if ((nargs != 5) || (nret != 4)) {
++        goto param_error_exit;
++    }
++
++    buid = ((uint64_t)rtas_ld(args, 1) << 32) | rtas_ld(args, 2);
++    addr = rtas_ld(args, 0);
++    sphb = spapr_pci_find_phb(spapr, buid);
++    if (!sphb || !sphb->ddw_enabled) {
++        goto param_error_exit;
++    }
++
++    page_shift = rtas_ld(args, 3);
++    window_shift = rtas_ld(args, 4);
++    liobn = spapr_phb_get_free_liobn(sphb);
++    windows = spapr_phb_get_active_win_num(sphb);
++
++    if (!(sphb->page_size_mask & (1ULL << page_shift)) ||
++        (window_shift < page_shift)) {
++        goto param_error_exit;
++    }
++
++    if (!liobn || !sphb->ddw_enabled || windows == SPAPR_PCI_DMA_MAX_WINDOWS) {
++        goto hw_error_exit;
++    }
++
++    tcet = spapr_tce_find_by_liobn(liobn);
++    if (!tcet) {
++        goto hw_error_exit;
++    }
++
++    win_addr = (windows == 0) ? sphb->dma_win_addr : sphb->dma64_win_addr;
++    spapr_tce_table_enable(tcet, page_shift, win_addr,
++                           1ULL << (window_shift - page_shift));
++    if (!tcet->nb_table) {
++        goto hw_error_exit;
++    }
++
++    trace_spapr_iommu_ddw_create(buid, addr, 1ULL << page_shift,
++                                 1ULL << window_shift, tcet->bus_offset, liobn);
++
++    rtas_st(rets, 0, RTAS_OUT_SUCCESS);
++    rtas_st(rets, 1, liobn);
++    rtas_st(rets, 2, tcet->bus_offset >> 32);
++    rtas_st(rets, 3, tcet->bus_offset & ((uint32_t) -1));
++
++    return;
++
++hw_error_exit:
++    rtas_st(rets, 0, RTAS_OUT_HW_ERROR);
++    return;
++
++param_error_exit:
++    rtas_st(rets, 0, RTAS_OUT_PARAM_ERROR);
++}
++
++static void rtas_ibm_remove_pe_dma_window(PowerPCCPU *cpu,
++                                          sPAPRMachineState *spapr,
++                                          uint32_t token, uint32_t nargs,
++                                          target_ulong args,
++                                          uint32_t nret, target_ulong rets)
++{
++    sPAPRPHBState *sphb;
++    sPAPRTCETable *tcet;
++    uint32_t liobn;
++
++    if ((nargs != 1) || (nret != 1)) {
++        goto param_error_exit;
++    }
++
++    liobn = rtas_ld(args, 0);
++    tcet = spapr_tce_find_by_liobn(liobn);
++    if (!tcet) {
++        goto param_error_exit;
++    }
++
++    sphb = SPAPR_PCI_HOST_BRIDGE(OBJECT(tcet)->parent);
++    if (!sphb || !sphb->ddw_enabled || !tcet->nb_table) {
++        goto param_error_exit;
++    }
++
++    spapr_tce_table_disable(tcet);
++    trace_spapr_iommu_ddw_remove(liobn);
++
++    rtas_st(rets, 0, RTAS_OUT_SUCCESS);
++    return;
++
++param_error_exit:
++    rtas_st(rets, 0, RTAS_OUT_PARAM_ERROR);
++}
++
++static void rtas_ibm_reset_pe_dma_window(PowerPCCPU *cpu,
++                                         sPAPRMachineState *spapr,
++                                         uint32_t token, uint32_t nargs,
++                                         target_ulong args,
++                                         uint32_t nret, target_ulong rets)
++{
++    sPAPRPHBState *sphb;
++    uint64_t buid;
++    uint32_t addr;
++
++    if ((nargs != 3) || (nret != 1)) {
++        goto param_error_exit;
++    }
++
++    buid = ((uint64_t)rtas_ld(args, 1) << 32) | rtas_ld(args, 2);
++    addr = rtas_ld(args, 0);
++    sphb = spapr_pci_find_phb(spapr, buid);
++    if (!sphb || !sphb->ddw_enabled) {
++        goto param_error_exit;
++    }
++
++    spapr_phb_dma_reset(sphb);
++    trace_spapr_iommu_ddw_reset(buid, addr);
++
++    rtas_st(rets, 0, RTAS_OUT_SUCCESS);
++
++    return;
++
++param_error_exit:
++    rtas_st(rets, 0, RTAS_OUT_PARAM_ERROR);
++}
++
++static void spapr_rtas_ddw_init(void)
++{
++    spapr_rtas_register(RTAS_IBM_QUERY_PE_DMA_WINDOW,
++                        "ibm,query-pe-dma-window",
++                        rtas_ibm_query_pe_dma_window);
++    spapr_rtas_register(RTAS_IBM_CREATE_PE_DMA_WINDOW,
++                        "ibm,create-pe-dma-window",
++                        rtas_ibm_create_pe_dma_window);
++    spapr_rtas_register(RTAS_IBM_REMOVE_PE_DMA_WINDOW,
++                        "ibm,remove-pe-dma-window",
++                        rtas_ibm_remove_pe_dma_window);
++    spapr_rtas_register(RTAS_IBM_RESET_PE_DMA_WINDOW,
++                        "ibm,reset-pe-dma-window",
++                        rtas_ibm_reset_pe_dma_window);
++}
++
++type_init(spapr_rtas_ddw_init)
+diff --git a/include/hw/pci-host/spapr.h b/include/hw/pci-host/spapr.h
+index 7848366..92aa610 100644
+--- a/include/hw/pci-host/spapr.h
++++ b/include/hw/pci-host/spapr.h
+@@ -32,6 +32,8 @@
+ #define SPAPR_PCI_HOST_BRIDGE(obj) \
+     OBJECT_CHECK(sPAPRPHBState, (obj), TYPE_SPAPR_PCI_HOST_BRIDGE)
+ 
++#define SPAPR_PCI_DMA_MAX_WINDOWS    2
++
+ typedef struct sPAPRPHBState sPAPRPHBState;
+ 
+ typedef struct spapr_pci_msi {
+@@ -56,7 +58,7 @@ struct sPAPRPHBState {
+     hwaddr mem_win_addr, mem_win_size, io_win_addr, io_win_size;
+     MemoryRegion memwindow, iowindow, msiwindow;
+ 
+-    uint32_t dma_liobn;
++    uint32_t dma_liobn[SPAPR_PCI_DMA_MAX_WINDOWS];
+     hwaddr dma_win_addr, dma_win_size;
+     AddressSpace iommu_as;
+     MemoryRegion iommu_root;
+@@ -71,6 +73,10 @@ struct sPAPRPHBState {
+     spapr_pci_msi_mig *msi_devs;
+ 
+     QLIST_ENTRY(sPAPRPHBState) list;
++
++    bool ddw_enabled;
++    uint64_t page_size_mask;
++    uint64_t dma64_win_addr;
+ };
+ 
+ #define SPAPR_PCI_MAX_INDEX          255
+diff --git a/include/hw/ppc/spapr.h b/include/hw/ppc/spapr.h
+index 971df3d..59fad22 100644
+--- a/include/hw/ppc/spapr.h
++++ b/include/hw/ppc/spapr.h
+@@ -412,6 +412,16 @@ int spapr_allocate_irq_block(int num, bool lsi, bool msi);
+ #define RTAS_OUT_NOT_AUTHORIZED                 -9002
+ #define RTAS_OUT_SYSPARM_PARAM_ERROR            -9999
+ 
++/* DDW pagesize mask values from ibm,query-pe-dma-window */
++#define RTAS_DDW_PGSIZE_4K       0x01
++#define RTAS_DDW_PGSIZE_64K      0x02
++#define RTAS_DDW_PGSIZE_16M      0x04
++#define RTAS_DDW_PGSIZE_32M      0x08
++#define RTAS_DDW_PGSIZE_64M      0x10
++#define RTAS_DDW_PGSIZE_128M     0x20
++#define RTAS_DDW_PGSIZE_256M     0x40
++#define RTAS_DDW_PGSIZE_16G      0x80
++
+ /* RTAS tokens */
+ #define RTAS_TOKEN_BASE      0x2000
+ 
+@@ -453,8 +463,12 @@ int spapr_allocate_irq_block(int num, bool lsi, bool msi);
+ #define RTAS_IBM_SET_SLOT_RESET                 (RTAS_TOKEN_BASE + 0x23)
+ #define RTAS_IBM_CONFIGURE_PE                   (RTAS_TOKEN_BASE + 0x24)
+ #define RTAS_IBM_SLOT_ERROR_DETAIL              (RTAS_TOKEN_BASE + 0x25)
++#define RTAS_IBM_QUERY_PE_DMA_WINDOW            (RTAS_TOKEN_BASE + 0x26)
++#define RTAS_IBM_CREATE_PE_DMA_WINDOW           (RTAS_TOKEN_BASE + 0x27)
++#define RTAS_IBM_REMOVE_PE_DMA_WINDOW           (RTAS_TOKEN_BASE + 0x28)
++#define RTAS_IBM_RESET_PE_DMA_WINDOW            (RTAS_TOKEN_BASE + 0x29)
+ 
+-#define RTAS_TOKEN_MAX                          (RTAS_TOKEN_BASE + 0x26)
++#define RTAS_TOKEN_MAX                          (RTAS_TOKEN_BASE + 0x2A)
+ 
+ /* RTAS ibm,get-system-parameter token values */
+ #define RTAS_SYSPARM_SPLPAR_CHARACTERISTICS      20
+diff --git a/trace-events b/trace-events
+index 5b98a52..725f0d3 100644
+--- a/trace-events
++++ b/trace-events
+@@ -1434,6 +1434,10 @@ spapr_iommu_xlate(uint64_t liobn, uint64_t ioba, uint64_t tce, unsigned perm, un
+ spapr_iommu_new_table(uint64_t liobn, void *table, int fd) "liobn=%"PRIx64" table=%p fd=%d"
+ spapr_iommu_pre_save(uint64_t liobn, uint32_t nb, uint64_t offs, uint32_t ps) "liobn=%"PRIx64" %"PRIx32" bus_offset=%"PRIx64" ps=%"PRIu32
+ spapr_iommu_post_load(uint64_t liobn, uint32_t pre_nb, uint32_t post_nb, uint64_t offs, uint32_t ps) "liobn=%"PRIx64" %"PRIx32" => %"PRIx32" bus_offset=%"PRIx64" ps=%"PRIu32
++spapr_iommu_ddw_query(uint64_t buid, uint32_t cfgaddr, unsigned wa, uint64_t win_size, uint32_t pgmask) "buid=%"PRIx64" addr=%"PRIx32", %u windows available, max window size=%"PRIx64", mask=%"PRIx32
++spapr_iommu_ddw_create(uint64_t buid, uint32_t cfgaddr, uint64_t pg_size, uint64_t req_size, uint64_t start, uint32_t liobn) "buid=%"PRIx64" addr=%"PRIx32", page size=0x%"PRIx64", requested=0x%"PRIx64", start addr=%"PRIx64", liobn=%"PRIx32
++spapr_iommu_ddw_remove(uint32_t liobn) "liobn=%"PRIx32
++spapr_iommu_ddw_reset(uint64_t buid, uint32_t cfgaddr) "buid=%"PRIx64" addr=%"PRIx32
+ 
+ # hw/ppc/ppc.c
+ ppc_tb_adjust(uint64_t offs1, uint64_t offs2, int64_t diff, int64_t seconds) "adjusted from 0x%"PRIx64" to 0x%"PRIx64", diff %"PRId64" (%"PRId64"s)"
+-- 
+1.8.3.1
+

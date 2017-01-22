@@ -1,0 +1,38 @@
+From d698fcd5428b906501107dc4f0b21b4405238b5e Mon Sep 17 00:00:00 2001
+From: Yaowei Bai <baiyaowei@cmss.chinamobile.com>
+Date: Tue, 27 Dec 2016 16:22:20 +0800
+Subject: [PATCH] migration: Fix migrated VM lost connection due to ovs-agent
+ port latency
+
+Normally the rarp datagrams pass through tap-1->qvb-1->qvo-1->bond3
+->switch. However we noticed they stoped at qvo-1 and didn't arrived
+at switch.
+
+That's because at the moment of datagrams arrive at qvo-1, the tap
+configuration of qvo does not get ready. The datagrams are dropped
+because they don't match any VLAN flow in the br-int flow tables.
+
+So we increase the sending time of rarp datagrams to wait ovs-agent
+get tag configuration ready.
+
+Signed-off-by: Yaowei Bai <baiyaowei@cmss.chinamobile.com>
+---
+ include/migration/vmstate.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/include/migration/vmstate.h b/include/migration/vmstate.h
+index 84ee355..7a7475c 100644
+--- a/include/migration/vmstate.h
++++ b/include/migration/vmstate.h
+@@ -918,7 +918,7 @@ extern const VMStateInfo vmstate_info_bitmap;
+ #define VMSTATE_END_OF_LIST()                                         \
+     {}
+ 
+-#define SELF_ANNOUNCE_ROUNDS 5
++#define SELF_ANNOUNCE_ROUNDS 60
+ 
+ void loadvm_free_handlers(MigrationIncomingState *mis);
+ 
+-- 
+1.8.3.1
+

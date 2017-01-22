@@ -1,0 +1,49 @@
+From 3cf4556c02450830b06d61fb43b4c47ae63c6b68 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:24 +0200
+Subject: [PATCH 04/30] vhost: assert the log was cleaned up
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-5-marcandre.lureau@redhat.com>
+Patchwork-id: 71920
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 04/28] vhost: assert the log was cleaned up
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Make sure the log was released on cleanup, or it will leak (the
+alternative is to call vhost_log_put() unconditionally, but it may hide
+some dev state issues).
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 7b527247f09740920d8bc8aaa5ef4445256ca478)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/vhost.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/virtio/vhost.c b/hw/virtio/vhost.c
+index 1459be2..fc42d48 100644
+--- a/hw/virtio/vhost.c
++++ b/hw/virtio/vhost.c
+@@ -1138,6 +1138,7 @@ void vhost_dev_cleanup(struct vhost_dev *hdev)
+     g_free(hdev->mem);
+     g_free(hdev->mem_sections);
+     hdev->vhost_ops->vhost_backend_cleanup(hdev);
++    assert(!hdev->log);
+     QLIST_REMOVE(hdev, entry);
+ }
+ 
+-- 
+1.8.3.1
+

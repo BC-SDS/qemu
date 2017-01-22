@@ -1,0 +1,73 @@
+From 255a2d1a309601b7c9c12cf20012cf32a360dd77 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Thu, 9 Jun 2016 11:13:19 +0200
+Subject: [PATCH 01/25] 7.2 machine type compatibility
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1465470799-7407-2-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70577
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/1] 7.2 machine type compatibility
+Bugzilla: 1344269
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+Pull in compatibiltiy options from 2.5
+    pcmc->save_tsc_khz = false;
+    m->legacy_fw_cfg_order = 1;
+
+    property: isa-fdc.fallback = 144
+
+ Note: The broken_reserved_end flag was added in 2.5 upstream
+       (see 2f8b5008) however downstream it was backported to
+       rhel7.2.0 (see f33f0b622c53) meaning it's already set
+       for the pc-i440fx-7.1.0 machine type; the 7.2.0 machine
+       type is the same as 7.3.0.
+    We don't seem to enable either pvscsi or vmxnet.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc_piix.c   | 5 +++++
+ include/hw/compat.h | 4 ++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/hw/i386/pc_piix.c b/hw/i386/pc_piix.c
+index 3778257..5ac8e9d 100644
+--- a/hw/i386/pc_piix.c
++++ b/hw/i386/pc_piix.c
+@@ -1120,10 +1120,15 @@ static void pc_init_rhel720(MachineState *machine)
+ 
+ static void pc_machine_rhel720_options(MachineClass *m)
+ {
++    PCMachineClass *pcmc = PC_MACHINE_CLASS(m);
+     pc_machine_rhel730_options(m);
+     m->is_default = 0;
+     m->alias = NULL;
+     m->desc = "RHEL 7.2.0 PC (i440FX + PIIX, 1996)";
++    /* From pc_i440fx_2_5_machine_options */
++    pcmc->save_tsc_khz = false;
++    m->legacy_fw_cfg_order = 1;
++    /* Note: broken_reserved_end was already in 7.2 */
+     SET_MACHINE_COMPAT(m, PC_RHEL7_2_COMPAT);
+ }
+ 
+diff --git a/include/hw/compat.h b/include/hw/compat.h
+index 45e7419..f6c1f1c 100644
+--- a/include/hw/compat.h
++++ b/include/hw/compat.h
+@@ -188,5 +188,9 @@
+             .driver   = "fw_cfg_io",\
+             .property = "dma_enabled",\
+             .value    = "off",\
++        },{ /* HW_COMPAT_RHEL7_2 */ \
++            .driver   = "isa-fdc",\
++            .property = "fallback",\
++            .value    = "144",\
+         },
+ #endif /* HW_COMPAT_H */
+-- 
+1.8.3.1
+

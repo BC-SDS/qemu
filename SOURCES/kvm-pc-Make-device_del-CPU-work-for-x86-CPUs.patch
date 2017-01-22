@@ -1,0 +1,60 @@
+From a412000bfa8a4008413f23d0e9b4ce664347784e Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:15 +0200
+Subject: [PATCH 75/99] pc: Make device_del CPU work for x86 CPUs
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-71-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71686
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 70/78] pc: Make device_del CPU work for x86 CPUs
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+ACPI subsystem already has all logic in place the only
+thing left to eject CPU is destroy it and ammend
+present CPUs counter in CMOS, do so.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 8fe6374e8e0c8dacb85e9e97897291541dd61be6)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc.c | 11 +++++------
+ 1 file changed, 5 insertions(+), 6 deletions(-)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 133b9e8..e25a740 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1775,6 +1775,7 @@ static void pc_cpu_unplug_request_cb(HotplugHandler *hotplug_dev,
+ static void pc_cpu_unplug_cb(HotplugHandler *hotplug_dev,
+                              DeviceState *dev, Error **errp)
+ {
++    CPUArchId *found_cpu;
+     HotplugHandlerClass *hhc;
+     Error *local_err = NULL;
+     PCMachineState *pcms = PC_MACHINE(hotplug_dev);
+@@ -1786,13 +1787,11 @@ static void pc_cpu_unplug_cb(HotplugHandler *hotplug_dev,
+         goto out;
+     }
+ 
+-    /*
+-     * TODO: enable unplug once generic CPU remove bits land
+-     * for now guest will be able to eject CPU ACPI wise but
+-     * it will come back again on machine reset.
+-     */
+-    /*  object_unparent(OBJECT(dev)); */
++    found_cpu = pc_find_cpu_slot(pcms, CPU(dev), NULL);
++    found_cpu->cpu = NULL;
++    object_unparent(OBJECT(dev));
+ 
++    rtc_set_memory(pcms->rtc, 0x5f, rtc_get_memory(pcms->rtc, 0x5f) - 1);
+  out:
+     error_propagate(errp, local_err);
+ }
+-- 
+1.8.3.1
+

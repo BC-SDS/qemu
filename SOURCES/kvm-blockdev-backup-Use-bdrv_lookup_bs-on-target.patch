@@ -1,0 +1,62 @@
+From 9e41c54bccfe4cbd217de05c4a391ac7ced2ef6c Mon Sep 17 00:00:00 2001
+From: Fam Zheng <famz@redhat.com>
+Date: Wed, 22 Jun 2016 02:20:35 +0200
+Subject: [PATCH 4/8] blockdev-backup: Use bdrv_lookup_bs on target
+
+RH-Author: Fam Zheng <famz@redhat.com>
+Message-id: <20160622022038.17679-2-famz@redhat.com>
+Patchwork-id: 70732
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/4] blockdev-backup: Use bdrv_lookup_bs on target
+Bugzilla: 1336310 1339498
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+
+This allows backing up to a BDS that has not been attached to any BB.
+
+Signed-off-by: Fam Zheng <famz@redhat.com>
+Message-id: 1463969978-24970-2-git-send-email-famz@redhat.com
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+(cherry picked from commit 0d97891312d24891868e341674541f4147c7faf4)
+Signed-off-by: Fam Zheng <famz@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ blockdev.c | 13 +++----------
+ 1 file changed, 3 insertions(+), 10 deletions(-)
+
+diff --git a/blockdev.c b/blockdev.c
+index e53690f..3bef7c0 100644
+--- a/blockdev.c
++++ b/blockdev.c
+@@ -3375,7 +3375,7 @@ void do_blockdev_backup(const char *device, const char *target,
+                          BlockdevOnError on_target_error,
+                          BlockJobTxn *txn, Error **errp)
+ {
+-    BlockBackend *blk, *target_blk;
++    BlockBackend *blk;
+     BlockDriverState *bs;
+     BlockDriverState *target_bs;
+     Error *local_err = NULL;
+@@ -3406,17 +3406,10 @@ void do_blockdev_backup(const char *device, const char *target,
+     }
+     bs = blk_bs(blk);
+ 
+-    target_blk = blk_by_name(target);
+-    if (!target_blk) {
+-        error_setg(errp, "Device '%s' not found", target);
+-        goto out;
+-    }
+-
+-    if (!blk_is_available(target_blk)) {
+-        error_setg(errp, "Device '%s' has no medium", target);
++    target_bs = bdrv_lookup_bs(target, target, errp);
++    if (!target_bs) {
+         goto out;
+     }
+-    target_bs = blk_bs(target_blk);
+ 
+     bdrv_ref(target_bs);
+     bdrv_set_aio_context(target_bs, aio_context);
+-- 
+1.8.3.1
+

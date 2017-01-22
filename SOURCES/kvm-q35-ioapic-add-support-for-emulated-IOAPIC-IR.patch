@@ -1,0 +1,193 @@
+From 36711c9ecdce546eb54d3c2e699f1768caa8cacf Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:36 +0200
+Subject: [PATCH 18/37] q35: ioapic: add support for emulated IOAPIC IR
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-18-git-send-email-peterx@redhat.com>
+Patchwork-id: 72002
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 17/34] q35: ioapic: add support for emulated IOAPIC IR
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+This patch translates all IOAPIC interrupts into MSI ones. One pseudo
+ioapic address space is added to transfer the MSI message. By default,
+it will be system memory address space. When IR is enabled, it will be
+IOMMU address space.
+
+Currently, only emulated IOAPIC is supported.
+
+Idea suggested by Jan Kiszka and Rita Sinha in the following patch:
+
+https://lists.gnu.org/archive/html/qemu-devel/2016-03/msg01933.html
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit cb135f59b8059c3a372652377ef92fa4a49ad550)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/intel_iommu.c             |  6 +++++-
+ hw/i386/pc.c                      |  3 +++
+ hw/intc/ioapic.c                  | 28 ++++++++++++++++++++++++----
+ include/hw/i386/apic-msidef.h     |  1 +
+ include/hw/i386/ioapic_internal.h |  1 +
+ include/hw/i386/pc.h              |  4 ++++
+ 6 files changed, 38 insertions(+), 5 deletions(-)
+
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index ccfcc69..6ba5520 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -28,6 +28,7 @@
+ #include "hw/i386/pc.h"
+ #include "hw/boards.h"
+ #include "hw/i386/x86-iommu.h"
++#include "hw/pci-host/q35.h"
+ 
+ /*#define DEBUG_INTEL_IOMMU*/
+ #ifdef DEBUG_INTEL_IOMMU
+@@ -2367,7 +2368,8 @@ static AddressSpace *vtd_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
+ 
+ static void vtd_realize(DeviceState *dev, Error **errp)
+ {
+-    PCIBus *bus = PC_MACHINE(qdev_get_machine())->bus;
++    PCMachineState *pcms = PC_MACHINE(qdev_get_machine());
++    PCIBus *bus = pcms->bus;
+     IntelIOMMUState *s = INTEL_IOMMU_DEVICE(dev);
+ 
+     VTD_DPRINTF(GENERAL, "");
+@@ -2383,6 +2385,8 @@ static void vtd_realize(DeviceState *dev, Error **errp)
+     vtd_init(s);
+     sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, Q35_HOST_BRIDGE_IOMMU_ADDR);
+     pci_setup_iommu(bus, vtd_host_dma_iommu, dev);
++    /* Pseudo address space under root PCI bus. */
++    pcms->ioapic_as = vtd_host_dma_iommu(bus, s, Q35_PSEUDO_DEVFN_IOAPIC);
+ }
+ 
+ static void vtd_class_init(ObjectClass *klass, void *data)
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index eae64b0..ebf66f5 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1400,6 +1400,9 @@ void pc_memory_init(PCMachineState *pcms,
+         rom_add_option(option_rom[i].name, option_rom[i].bootindex);
+     }
+     pcms->fw_cfg = fw_cfg;
++
++    /* Init default IOAPIC address space */
++    pcms->ioapic_as = &address_space_memory;
+ }
+ 
+ qemu_irq pc_allocate_cpu_irq(void)
+diff --git a/hw/intc/ioapic.c b/hw/intc/ioapic.c
+index 310649d..f5ed632 100644
+--- a/hw/intc/ioapic.c
++++ b/hw/intc/ioapic.c
+@@ -28,6 +28,8 @@
+ #include "hw/i386/ioapic_internal.h"
+ #include "include/hw/pci/msi.h"
+ #include "sysemu/kvm.h"
++#include "target-i386/cpu.h"
++#include "hw/i386/apic-msidef.h"
+ 
+ //#define DEBUG_IOAPIC
+ 
+@@ -49,13 +51,15 @@ extern int ioapic_no;
+ 
+ static void ioapic_service(IOAPICCommonState *s)
+ {
++    AddressSpace *ioapic_as = PC_MACHINE(qdev_get_machine())->ioapic_as;
++    uint32_t addr, data;
+     uint8_t i;
+     uint8_t trig_mode;
+     uint8_t vector;
+     uint8_t delivery_mode;
+     uint32_t mask;
+     uint64_t entry;
+-    uint8_t dest;
++    uint16_t dest_idx;
+     uint8_t dest_mode;
+ 
+     for (i = 0; i < IOAPIC_NUM_PINS; i++) {
+@@ -66,7 +70,14 @@ static void ioapic_service(IOAPICCommonState *s)
+             entry = s->ioredtbl[i];
+             if (!(entry & IOAPIC_LVT_MASKED)) {
+                 trig_mode = ((entry >> IOAPIC_LVT_TRIGGER_MODE_SHIFT) & 1);
+-                dest = entry >> IOAPIC_LVT_DEST_SHIFT;
++                /*
++                 * By default, this would be dest_id[8] +
++                 * reserved[8]. When IR is enabled, this would be
++                 * interrupt_index[15] + interrupt_format[1]. This
++                 * field never means anything, but only used to
++                 * generate corresponding MSI.
++                 */
++                dest_idx = entry >> IOAPIC_LVT_DEST_IDX_SHIFT;
+                 dest_mode = (entry >> IOAPIC_LVT_DEST_MODE_SHIFT) & 1;
+                 delivery_mode =
+                     (entry >> IOAPIC_LVT_DELIV_MODE_SHIFT) & IOAPIC_DM_MASK;
+@@ -96,8 +107,17 @@ static void ioapic_service(IOAPICCommonState *s)
+ #else
+                 (void)coalesce;
+ #endif
+-                apic_deliver_irq(dest, dest_mode, delivery_mode, vector,
+-                                 trig_mode);
++                /* No matter whether IR is enabled, we translate
++                 * the IOAPIC message into a MSI one, and its
++                 * address space will decide whether we need a
++                 * translation. */
++                addr = APIC_DEFAULT_ADDRESS | \
++                    (dest_idx << MSI_ADDR_DEST_IDX_SHIFT) |
++                    (dest_mode << MSI_ADDR_DEST_MODE_SHIFT);
++                data = (vector << MSI_DATA_VECTOR_SHIFT) |
++                    (trig_mode << MSI_DATA_TRIGGER_SHIFT) |
++                    (delivery_mode << MSI_DATA_DELIVERY_MODE_SHIFT);
++                stl_le_phys(ioapic_as, addr, data);
+             }
+         }
+     }
+diff --git a/include/hw/i386/apic-msidef.h b/include/hw/i386/apic-msidef.h
+index 6e2eb71..8b4d4cc 100644
+--- a/include/hw/i386/apic-msidef.h
++++ b/include/hw/i386/apic-msidef.h
+@@ -25,6 +25,7 @@
+ #define MSI_ADDR_REDIRECTION_SHIFT      3
+ 
+ #define MSI_ADDR_DEST_ID_SHIFT          12
++#define MSI_ADDR_DEST_IDX_SHIFT         4
+ #define  MSI_ADDR_DEST_ID_MASK          0x00ffff0
+ 
+ #endif /* HW_APIC_MSIDEF_H */
+diff --git a/include/hw/i386/ioapic_internal.h b/include/hw/i386/ioapic_internal.h
+index cab9e67..31dafb3 100644
+--- a/include/hw/i386/ioapic_internal.h
++++ b/include/hw/i386/ioapic_internal.h
+@@ -31,6 +31,7 @@
+ #define IOAPIC_VERSION                  0x11
+ 
+ #define IOAPIC_LVT_DEST_SHIFT           56
++#define IOAPIC_LVT_DEST_IDX_SHIFT       48
+ #define IOAPIC_LVT_MASKED_SHIFT         16
+ #define IOAPIC_LVT_TRIGGER_MODE_SHIFT   15
+ #define IOAPIC_LVT_REMOTE_IRR_SHIFT     14
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index 73cf6f7..b58dbb6 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -72,6 +72,10 @@ struct PCMachineState {
+     /* NUMA information: */
+     uint64_t numa_nodes;
+     uint64_t *node_mem;
++
++    /* Address space used by IOAPIC device. All IOAPIC interrupts
++     * will be translated to MSI messages in the address space. */
++    AddressSpace *ioapic_as;
+ };
+ 
+ #define PC_MACHINE_ACPI_DEVICE_PROP "acpi-device"
+-- 
+1.8.3.1
+

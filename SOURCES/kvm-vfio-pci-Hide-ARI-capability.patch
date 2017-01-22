@@ -1,0 +1,58 @@
+From 8344c17b24080b240439a02005d1df3e3d17ff09 Mon Sep 17 00:00:00 2001
+From: Alex Williamson <alex.williamson@redhat.com>
+Date: Wed, 20 Jul 2016 16:46:19 +0200
+Subject: [PATCH 22/27] vfio/pci: Hide ARI capability
+
+RH-Author: Alex Williamson <alex.williamson@redhat.com>
+Message-id: <20160720164546.14038.12496.stgit@gimli.home>
+Patchwork-id: 71240
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH] vfio/pci: Hide ARI capability
+Bugzilla: 1356376
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Auger Eric <eric.auger@redhat.com>
+
+Upstream: 383a7af7ecd1f1b6587552b71b8bc517c6edea88
+
+QEMU supports ARI on downstream ports and assigned devices may support
+ARI in their extended capabilities.  The endpoint ARI capability
+specifies the next function, such that the OS doesn't need to walk
+each possible function, however this next function is relative to the
+host, not the guest.  This leads to device discovery issues when we
+combine separate functions into virtual multi-function packages in a
+guest.  For example, SR-IOV VFs are not enumerated by simply probing
+the function address space, therefore the ARI next-function field is
+zero.  When we combine multiple VFs together as a multi-function
+device in the guest, the guest OS identifies ARI is enabled, relies on
+this next-function field, and stops looking for additional function
+after the first is found.
+
+Long term we should expose the ARI capability to the guest to enable
+configurations with more than 8 functions per slot, but this requires
+additional QEMU PCI infrastructure to manage the next-function field
+for multiple, otherwise independent devices.  In the short term,
+hiding this capability allows equivalent functionality to what we
+currently have on non-express chipsets.
+
+Signed-off-by: Alex Williamson <alex.williamson@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/vfio/pci.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/vfio/pci.c b/hw/vfio/pci.c
+index 80f991d..62230e7 100644
+--- a/hw/vfio/pci.c
++++ b/hw/vfio/pci.c
+@@ -1852,6 +1852,7 @@ static int vfio_add_ext_cap(VFIOPCIDevice *vdev)
+ 
+         switch (cap_id) {
+         case PCI_EXT_CAP_ID_SRIOV: /* Read-only VF BARs confuse OVMF */
++        case PCI_EXT_CAP_ID_ARI: /* XXX Needs next function virtualization */
+             trace_vfio_add_ext_cap_dropped(vdev->vbasedev.name, cap_id, next);
+             break;
+         default:
+-- 
+1.8.3.1
+

@@ -1,0 +1,38 @@
+From 0b74460678bde675e4bd65d272eece5805bb36de Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Wed, 22 Jun 2016 14:03:15 +0200
+Subject: [PATCH 02/16] Disable sd-card
+
+RH-Author: Miroslav Rezanina <mrezanin@redhat.com>
+Message-id: <2a12e11ac596c42edf03c3046bcf2b2c27df3692.1466603432.git.mrezanin@redhat.com>
+Patchwork-id: 70747
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCHv3 02/10] Disable sd-card
+Bugzilla: 1333282
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+
+From: Miroslav Rezanina <mrezanin@redhat.com>
+
+We do not support sd-card device so disable it.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ default-configs/pci.mak | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/default-configs/pci.mak b/default-configs/pci.mak
+index 177915a..e12c609 100644
+--- a/default-configs/pci.mak
++++ b/default-configs/pci.mak
+@@ -16,7 +16,6 @@ CONFIG_SERIAL=y
+ CONFIG_SERIAL_PCI=y
+ CONFIG_WDT_IB6300ESB=y
+ CONFIG_PCI_TESTDEV=y
+-CONFIG_SD=y
+ CONFIG_VGA=y
+ CONFIG_VGA_PCI=y
+ CONFIG_IVSHMEM=$(CONFIG_EVENTFD)
+-- 
+1.8.3.1
+

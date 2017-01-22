@@ -1,0 +1,97 @@
+From f26da37912d1615ef4918ae9bee465de21faec28 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:40 +0200
+Subject: [PATCH 40/99] qdev: Use GList for global properties
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-36-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71652
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 35/78] qdev: Use GList for global properties
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Eduardo Habkost <ehabkost@redhat.com>
+
+If the same GlobalProperty struct is registered twice, the list
+entry gets corrupted, making tqe_next points to itself, and
+qdev_prop_set_globals() gets stuck in a loop. The bug can be
+easily reproduced by running:
+
+  $ qemu-system-x86_64 -rtc-td-hack -rtc-td-hack
+
+Change global_props to use GList instead of queue.h, making the
+code simpler and able to deal with properties being registered
+twice.
+
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit f9a8b5530d438f836f9697639814f585aaec554d)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/core/qdev-properties.c | 15 ++++++++-------
+ include/hw/qdev-core.h    |  1 -
+ 2 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/hw/core/qdev-properties.c b/hw/core/qdev-properties.c
+index 863ea1a..c10edee 100644
+--- a/hw/core/qdev-properties.c
++++ b/hw/core/qdev-properties.c
+@@ -1020,12 +1020,11 @@ void qdev_prop_set_ptr(DeviceState *dev, const char *name, void *value)
+     *ptr = value;
+ }
+ 
+-static QTAILQ_HEAD(, GlobalProperty) global_props =
+-        QTAILQ_HEAD_INITIALIZER(global_props);
++static GList *global_props;
+ 
+ void qdev_prop_register_global(GlobalProperty *prop)
+ {
+-    QTAILQ_INSERT_TAIL(&global_props, prop, next);
++    global_props = g_list_append(global_props, prop);
+ }
+ 
+ void qdev_prop_register_global_list(GlobalProperty *props)
+@@ -1039,10 +1038,11 @@ void qdev_prop_register_global_list(GlobalProperty *props)
+ 
+ int qdev_prop_check_globals(void)
+ {
+-    GlobalProperty *prop;
++    GList *l;
+     int ret = 0;
+ 
+-    QTAILQ_FOREACH(prop, &global_props, next) {
++    for (l = global_props; l; l = l->next) {
++        GlobalProperty *prop = l->data;
+         ObjectClass *oc;
+         DeviceClass *dc;
+         if (prop->used) {
+@@ -1073,9 +1073,10 @@ int qdev_prop_check_globals(void)
+ static void qdev_prop_set_globals_for_type(DeviceState *dev,
+                                 const char *typename)
+ {
+-    GlobalProperty *prop;
++    GList *l;
+ 
+-    QTAILQ_FOREACH(prop, &global_props, next) {
++    for (l = global_props; l; l = l->next) {
++        GlobalProperty *prop = l->data;
+         Error *err = NULL;
+ 
+         if (strcmp(typename, prop->driver) != 0) {
+diff --git a/include/hw/qdev-core.h b/include/hw/qdev-core.h
+index 1ce02b2..24aa0a7 100644
+--- a/include/hw/qdev-core.h
++++ b/include/hw/qdev-core.h
+@@ -266,7 +266,6 @@ typedef struct GlobalProperty {
+     const char *value;
+     bool user_provided;
+     bool used;
+-    QTAILQ_ENTRY(GlobalProperty) next;
+ } GlobalProperty;
+ 
+ /*** Board API.  This should go away once we have a machine config file.  ***/
+-- 
+1.8.3.1
+

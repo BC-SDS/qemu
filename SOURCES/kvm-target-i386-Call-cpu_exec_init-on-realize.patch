@@ -1,0 +1,60 @@
+From ebc4b10cac3d04cca65448918dc00496360feadd Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Fri, 5 Aug 2016 10:46:17 +0200
+Subject: [PATCH 08/99] target-i386: Call cpu_exec_init() on realize
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-4-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71619
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 03/78] target-i386: Call cpu_exec_init() on realize
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Eduardo Habkost <ehabkost@redhat.com>
+
+QOM instance_init functions are not supposed to have any side-effects,
+as new objects may be created at any moment for querying property
+information (see qmp_device_list_properties()).
+
+Calling cpu_exec_init() also affects QEMU's ability to handle errors
+during CPU creation, as some actions done by cpu_exec_init() can't be
+reverted.
+
+Move cpu_exec_init() call to realize so a simple object_new() won't
+trigger it, and so that it is called after some basic validation of CPU
+parameters.
+
+Reviewed-by: Igor Mammedov <imammedo@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 42ecabaae16c0054dde6d8b0fdf90a8c7cce270d)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/cpu.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 2db0967..175f628 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -3077,6 +3077,8 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
+         }
+     }
+ 
++    cpu_exec_init(cs, &error_abort);
++
+     if (tcg_enabled()) {
+         tcg_x86_init();
+     }
+@@ -3269,7 +3271,6 @@ static void x86_cpu_initfn(Object *obj)
+     FeatureWord w;
+ 
+     cs->env_ptr = env;
+-    cpu_exec_init(cs, &error_abort);
+ 
+     object_property_add(obj, "family", "int",
+                         x86_cpuid_version_get_family,
+-- 
+1.8.3.1
+

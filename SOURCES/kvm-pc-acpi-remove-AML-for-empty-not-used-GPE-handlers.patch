@@ -1,0 +1,75 @@
+From 8d19257253447189d183e28c36979a34cd70802e Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:12 +0200
+Subject: [PATCH 12/99] pc: acpi: remove AML for empty/not used GPE handlers
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-8-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71623
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 07/78] pc: acpi: remove AML for empty/not used GPE handlers
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+ACPI spec requires GPE handlers only for GPE events
+that hardware implements.
+So remove AML for not supported by QEMU device model
+events.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+(cherry picked from commit 86958d2dddd0c21a4a6602e418bc7818e5a4a964)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/acpi-build.c | 17 -----------------
+ 1 file changed, 17 deletions(-)
+
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index 907b8c2..9e2e523 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -2101,8 +2101,6 @@ build_dsdt(GArray *table_data, BIOSLinker *linker,
+     {
+         aml_append(scope, aml_name_decl("_HID", aml_string("ACPI0006")));
+ 
+-        aml_append(scope, aml_method("_L00", 0, AML_NOTSERIALIZED));
+-
+         if (misc->is_piix4) {
+             method = aml_method("_E01", 0, AML_NOTSERIALIZED);
+             aml_append(method,
+@@ -2110,8 +2108,6 @@ build_dsdt(GArray *table_data, BIOSLinker *linker,
+             aml_append(method, aml_call0("\\_SB.PCI0.PCNT"));
+             aml_append(method, aml_release(aml_name("\\_SB.PCI0.BLCK")));
+             aml_append(scope, method);
+-        } else {
+-            aml_append(scope, aml_method("_L01", 0, AML_NOTSERIALIZED));
+         }
+ 
+         method = aml_method("_E02", 0, AML_NOTSERIALIZED);
+@@ -2121,19 +2117,6 @@ build_dsdt(GArray *table_data, BIOSLinker *linker,
+         method = aml_method("_E03", 0, AML_NOTSERIALIZED);
+         aml_append(method, aml_call0(MEMORY_HOTPLUG_HANDLER_PATH));
+         aml_append(scope, method);
+-
+-        aml_append(scope, aml_method("_L04", 0, AML_NOTSERIALIZED));
+-        aml_append(scope, aml_method("_L05", 0, AML_NOTSERIALIZED));
+-        aml_append(scope, aml_method("_L06", 0, AML_NOTSERIALIZED));
+-        aml_append(scope, aml_method("_L07", 0, AML_NOTSERIALIZED));
+-        aml_append(scope, aml_method("_L08", 0, AML_NOTSERIALIZED));
+-        aml_append(scope, aml_method("_L09", 0, AML_NOTSERIALIZED));
+-        aml_append(scope, aml_method("_L0A", 0, AML_NOTSERIALIZED));
+-        aml_append(scope, aml_method("_L0B", 0, AML_NOTSERIALIZED));
+-        aml_append(scope, aml_method("_L0C", 0, AML_NOTSERIALIZED));
+-        aml_append(scope, aml_method("_L0D", 0, AML_NOTSERIALIZED));
+-        aml_append(scope, aml_method("_L0E", 0, AML_NOTSERIALIZED));
+-        aml_append(scope, aml_method("_L0F", 0, AML_NOTSERIALIZED));
+     }
+     aml_append(dsdt, scope);
+ 
+-- 
+1.8.3.1
+

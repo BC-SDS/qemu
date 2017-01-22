@@ -1,0 +1,88 @@
+From b165eeb3eb65c36aafee3831363e8af6367d19e3 Mon Sep 17 00:00:00 2001
+From: Bandan Das <bsd@redhat.com>
+Date: Tue, 3 Dec 2013 20:05:12 +0100
+Subject: pci-assign: cap number of devices that can be assigned
+
+RH-Author: Bandan Das <bsd@redhat.com>
+Message-id: <1386101113-31560-2-git-send-email-bsd@redhat.com>
+Patchwork-id: 55983
+O-Subject: [PATCH RHEL7 qemu-kvm v2 1/2] pci-assign: cap number of devices that can be assigned
+Bugzilla: 678368
+RH-Acked-by: Alex Williamson <alex.williamson@redhat.com>
+RH-Acked-by: Marcelo Tosatti <mtosatti@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+Legacy device assignment is not supported for RHEL7, nevertheless,
+it makes sense to enforce the limit here was well in case we need
+to support it in the future. Note that 8 is the limit enforced on
+RHEL 6, RHEL 5 too has a static limit of 8 assigned devices.
+
+Signed-off-by: Bandan Das <bsd@redhat.com>
+---
+ hw/i386/kvm/pci-assign.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/hw/i386/kvm/pci-assign.c b/hw/i386/kvm/pci-assign.c
+index bf425a2..bc4c539 100644
+--- a/hw/i386/kvm/pci-assign.c
++++ b/hw/i386/kvm/pci-assign.c
+@@ -126,8 +126,12 @@ typedef struct AssignedDevice {
+     MemoryRegion mmio;
+     char *configfd_name;
+     int32_t bootindex;
++    QLIST_ENTRY(AssignedDevice) next;
+ } AssignedDevice;
+ 
++#define MAX_DEV_ASSIGN_CMDLINE 8
++static QLIST_HEAD(, AssignedDevice) devs = QLIST_HEAD_INITIALIZER(devs);
++
+ #define TYPE_PCI_ASSIGN "kvm-pci-assign"
+ #define PCI_ASSIGN(obj) OBJECT_CHECK(AssignedDevice, (obj), TYPE_PCI_ASSIGN)
+ 
+@@ -1732,8 +1736,9 @@ static void reset_assigned_device(DeviceState *dev)
+ static void assigned_realize(struct PCIDevice *pci_dev, Error **errp)
+ {
+     AssignedDevice *dev = PCI_ASSIGN(pci_dev);
++    AssignedDevice *adev;
+     uint8_t e_intx;
+-    int r;
++    int r, i = 0;
+     Error *local_err = NULL;
+ 
+     if (!kvm_enabled()) {
+@@ -1741,6 +1746,16 @@ static void assigned_realize(struct PCIDevice *pci_dev, Error **errp)
+         goto exit_with_error;
+     }
+ 
++    QLIST_FOREACH(adev, &devs, next) {
++        i++;
++    }
++
++    if (i >= MAX_DEV_ASSIGN_CMDLINE) {
++        error_setg(&local_err, "pci-assign: Maximum supported assigned devices"
++                     " (%d) already attached\n", MAX_DEV_ASSIGN_CMDLINE);
++        goto exit_with_error;
++    }
++
+     if (!dev->host.domain && !dev->host.bus && !dev->host.slot &&
+         !dev->host.function) {
+         error_setg(&local_err, "no host device specified");
+@@ -1810,6 +1825,7 @@ static void assigned_realize(struct PCIDevice *pci_dev, Error **errp)
+         goto assigned_out;
+     }
+ 
++    QLIST_INSERT_HEAD(&devs, dev, next);
+     assigned_dev_load_option_rom(dev);
+ 
+     return;
+@@ -1829,6 +1845,7 @@ static void assigned_exitfn(struct PCIDevice *pci_dev)
+ {
+     AssignedDevice *dev = PCI_ASSIGN(pci_dev);
+ 
++    QLIST_REMOVE(dev, next);
+     deassign_device(dev);
+     free_assigned_device(dev);
+ }
+-- 
+2.5.5
+

@@ -1,0 +1,46 @@
+From f1d1c2e9701a23507188f4e5ea75bfbb146505bc Mon Sep 17 00:00:00 2001
+From: Marcel Apfelbaum <marcel@redhat.com>
+Date: Sun, 31 Jul 2016 18:03:03 +0200
+Subject: [PATCH 01/99] hw/pcie-root-port: Fix PCIe root port initialization
+
+RH-Author: Marcel Apfelbaum <marcel@redhat.com>
+Message-id: <1469988187-20816-2-git-send-email-marcel@redhat.com>
+Patchwork-id: 71528
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/5] hw/pcie-root-port: Fix PCIe root port initialization
+Bugzilla: 1323976
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+
+Specify the root port interrupt pin as part of the init
+process for cases when msi/msix are not enabled.
+
+Fixes "hw/pci/pci.c:196:23: runtime error: shift exponent -1 is negative"
+warning from clang's sanitizer.
+
+Reported-by: Peter Maydell <peter.maydell@linaro.org>
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 2c533c5479f0f712578422529b20651f01adb0f4)
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/pci-bridge/ioh3420.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/pci-bridge/ioh3420.c b/hw/pci-bridge/ioh3420.c
+index 0937fa3..554739f 100644
+--- a/hw/pci-bridge/ioh3420.c
++++ b/hw/pci-bridge/ioh3420.c
+@@ -98,6 +98,7 @@ static int ioh3420_initfn(PCIDevice *d)
+     PCIESlot *s = PCIE_SLOT(d);
+     int rc;
+ 
++    pci_config_set_interrupt_pin(d->config, 1);
+     pci_bridge_initfn(d, TYPE_PCIE_BUS);
+     pcie_port_init_reg(d);
+ 
+-- 
+1.8.3.1
+

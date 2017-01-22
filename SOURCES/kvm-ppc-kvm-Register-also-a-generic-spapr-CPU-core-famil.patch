@@ -1,0 +1,57 @@
+From 117baf6292ac59dd25f7e217c11f73913301d0df Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Wed, 10 Aug 2016 08:14:55 +0200
+Subject: [PATCH 06/17] ppc/kvm: Register also a generic spapr CPU core family
+ type
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1470816895-17800-6-git-send-email-thuth@redhat.com>
+Patchwork-id: 71897
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 5/5] ppc/kvm: Register also a generic spapr CPU core family type
+Bugzilla: 1363812
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+There is a regression with the "-cpu" parameter introduced by
+the spapr CPU hotplug code: We used to allow to specify a
+"CPU family" name with the "-cpu" parameter when running on KVM so
+that the user does not need to know the gory details of the exact
+CPU version of the host CPU. For example, it was possible to
+use "-cpu POWER8" on a POWER8E host CPU. This behavior does not
+work anymore with the new hot-pluggable spapr-cpu-core types.
+Since libvirt already heavily depends on the old behavior, this
+is quite a severe regression in the QEMU parameter interface.
+Let's fix it by supporting a CPU family type for the spapr-cpu-core
+on KVM, too.
+
+Buglink: https://bugzilla.redhat.com/show_bug.cgi?id=1363812
+Signed-off-by: Thomas Huth <thuth@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit d11b268e1765e8878c1150d463b9f6dc3a8d4456)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-ppc/kvm.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/target-ppc/kvm.c b/target-ppc/kvm.c
+index 9cdc1b1..032faa2 100644
+--- a/target-ppc/kvm.c
++++ b/target-ppc/kvm.c
+@@ -2410,8 +2410,11 @@ static int kvm_ppc_register_host_cpu_type(void)
+     type_info.class_init = NULL;
+     type_register(&type_info);
+     g_free((void *)type_info.name);
+-    type_info.instance_size = 0;
+-    type_info.instance_init = NULL;
++
++    /* Register generic spapr CPU family class for current host CPU type */
++    type_info.name = g_strdup_printf("%s-"TYPE_SPAPR_CPU_CORE, dc->desc);
++    type_register(&type_info);
++    g_free((void *)type_info.name);
+ #endif
+ 
+     return 0;
+-- 
+1.8.3.1
+

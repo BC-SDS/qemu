@@ -1,0 +1,59 @@
+From c7f116234fcc68f57d10993f95bc4c9281876b1b Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Thu, 25 Jun 2015 16:34:25 +0200
+Subject: Migration compat for pckbd
+
+Patchwork-id: 66497
+O-Subject: [RHEL-7.2 qemu-kvm-rhev PATCH 1/1] Migration compat for pckbd
+Bugzilla: 1215092
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+2.2 added a new subsection to the pc keyboard model to preserve
+the value of 'outport' across migration; to maintain migration
+backwards compatibility this patch disables it on older machine types.
+This leaves us no-worse-off than in older versions.
+
+Even with the new code, the value migrated in 'outport' isn't used
+anywhere in the pckbd model; for example the value migrated doesn't
+change the state of the A20 line or potentially do a reset.
+
+The only effect, as far as I can tell is if the guest were to
+explicitly read the outport value it might get a more sensible reply.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/input/pckbd.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/hw/input/pckbd.c b/hw/input/pckbd.c
+index 7ee113b..d6969ac 100644
+--- a/hw/input/pckbd.c
++++ b/hw/input/pckbd.c
+@@ -26,6 +26,7 @@
+ #include "hw/isa/isa.h"
+ #include "hw/i386/pc.h"
+ #include "hw/input/ps2.h"
++#include "migration/migration.h"
+ #include "sysemu/sysemu.h"
+ 
+ /* debug PC keyboard */
+@@ -395,6 +396,11 @@ static int kbd_outport_post_load(void *opaque, int version_id)
+ static bool kbd_outport_needed(void *opaque)
+ {
+     KBDState *s = opaque;
++
++    if (migrate_pre_2_2) {
++        return false;
++    }
++
+     return s->outport != kbd_outport_default(s);
+ }
+ 
+-- 
+2.5.5
+

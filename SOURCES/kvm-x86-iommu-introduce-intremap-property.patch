@@ -1,0 +1,85 @@
+From df16c714bc00c20a6f96554380bd344be97292a5 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:25 +0200
+Subject: [PATCH 07/37] x86-iommu: introduce "intremap" property
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-7-git-send-email-peterx@redhat.com>
+Patchwork-id: 71991
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 06/34] x86-iommu: introduce "intremap" property
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Adding one property for intel-iommu devices to specify whether we should
+support interrupt remapping. By default, IR is disabled. To enable it,
+we should use (take Intel IOMMU as example):
+
+  -device intel_iommu,intremap=on
+
+This property can be shared by Intel and future AMD IOMMUs.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 1121e0afdcfa0cd40e36bd3acff56a3fac4f70fd)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/x86-iommu.c         | 23 +++++++++++++++++++++++
+ include/hw/i386/x86-iommu.h |  1 +
+ 2 files changed, 24 insertions(+)
+
+diff --git a/hw/i386/x86-iommu.c b/hw/i386/x86-iommu.c
+index f395139..4280839 100644
+--- a/hw/i386/x86-iommu.c
++++ b/hw/i386/x86-iommu.c
+@@ -59,9 +59,32 @@ static void x86_iommu_class_init(ObjectClass *klass, void *data)
+     dc->realize = x86_iommu_realize;
+ }
+ 
++static bool x86_iommu_intremap_prop_get(Object *o, Error **errp)
++{
++    X86IOMMUState *s = X86_IOMMU_DEVICE(o);
++    return s->intr_supported;
++}
++
++static void x86_iommu_intremap_prop_set(Object *o, bool value, Error **errp)
++{
++    X86IOMMUState *s = X86_IOMMU_DEVICE(o);
++    s->intr_supported = value;
++}
++
++static void x86_iommu_instance_init(Object *o)
++{
++    X86IOMMUState *s = X86_IOMMU_DEVICE(o);
++
++    /* By default, do not support IR */
++    s->intr_supported = false;
++    object_property_add_bool(o, "intremap", x86_iommu_intremap_prop_get,
++                             x86_iommu_intremap_prop_set, NULL);
++}
++
+ static const TypeInfo x86_iommu_info = {
+     .name          = TYPE_X86_IOMMU_DEVICE,
+     .parent        = TYPE_SYS_BUS_DEVICE,
++    .instance_init = x86_iommu_instance_init,
+     .instance_size = sizeof(X86IOMMUState),
+     .class_init    = x86_iommu_class_init,
+     .class_size    = sizeof(X86IOMMUClass),
+diff --git a/include/hw/i386/x86-iommu.h b/include/hw/i386/x86-iommu.h
+index b2401a6..699dd06 100644
+--- a/include/hw/i386/x86-iommu.h
++++ b/include/hw/i386/x86-iommu.h
+@@ -43,6 +43,7 @@ struct X86IOMMUClass {
+ 
+ struct X86IOMMUState {
+     SysBusDevice busdev;
++    bool intr_supported;        /* Whether vIOMMU supports IR */
+ };
+ 
+ /**
+-- 
+1.8.3.1
+

@@ -1,0 +1,54 @@
+From fe9d1cfd3a665f454b6242fef5f38f555f5f87e7 Mon Sep 17 00:00:00 2001
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Fri, 8 Apr 2016 20:06:58 +0200
+Subject: [PATCH 1/4] pc: Use right HW_COMPAT_* macros at PC_RHEL7* compat
+ macros
+
+RH-Author: Eduardo Habkost <ehabkost@redhat.com>
+Message-id: <1460146019-30443-2-git-send-email-ehabkost@redhat.com>
+Patchwork-id: 69981
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 1/2] pc: Use right HW_COMPAT_* macros at PC_RHEL7* compat macros
+Bugzilla: 1318386
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1318386
+
+* PC_RHEL7_2_COMPAT was including the wrong HW_COMPAT_* macro
+* PC_RHEL7_1_COMPAT was not including HW_COMPAT_RHEL7_1
+
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+---
+ include/hw/i386/pc.h | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/i386/pc.h | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index f8224ec..d30bc1c 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -863,7 +863,7 @@ extern void igd_passthrough_isa_bridge_create(PCIBus *bus, uint16_t gpu_dev_id);
+ 
+ /* See include/hw/compat.h for shared compatibility lists */
+ #define PC_RHEL7_2_COMPAT \
+-        HW_COMPAT_RHEL7_1 \
++        HW_COMPAT_RHEL7_2 \
+ 	{\
+ 		.driver = "phenom" "-" TYPE_X86_CPU,\
+ 		.property = "rdtscp",\
+@@ -892,6 +892,7 @@ extern void igd_passthrough_isa_bridge_create(PCIBus *bus, uint16_t gpu_dev_id);
+ 
+ #define PC_RHEL7_1_COMPAT \
+         PC_RHEL7_2_COMPAT \
++        HW_COMPAT_RHEL7_1 \
+ 	{\
+ 		.driver = "kvm64" "-" TYPE_X86_CPU,\
+ 		.property = "vme",\
+-- 
+1.8.3.1
+

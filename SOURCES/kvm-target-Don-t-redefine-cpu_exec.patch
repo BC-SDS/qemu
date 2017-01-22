@@ -1,0 +1,572 @@
+From 1ea0ec3067d2687eb21f757ada5d78ca90a82f68 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:52 +0200
+Subject: [PATCH 52/99] target-*: Don't redefine cpu_exec()
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-48-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71663
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 47/78] target-*: Don't redefine cpu_exec()
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Peter Crosthwaite <crosthwaitepeter@gmail.com>
+
+This function needs to be converted to QOM hook and virtualised for
+multi-arch. This rename interferes, as cpu-qom will not have access
+to the renaming causing name divergence. This rename doesn't really do
+anything anyway so just delete it.
+
+Signed-off-by: Peter Crosthwaite <crosthwaite.peter@gmail.com>
+Message-Id: <69bd25a8678b8b31b91cd9760c777bed1aafb44e.1437212383.git.crosthwaite.peter@gmail.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Signed-off-by: Peter Crosthwaite <crosthwaitepeter@gmail.com>
+(cherry picked from commit 8642c1b81e0418df066a7960a7426d85a923a253)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/exec/cpu-all.h  |  2 ++
+ linux-user/main.c       | 32 ++++++++++++++++----------------
+ target-alpha/cpu.h      |  2 --
+ target-arm/cpu.h        |  2 --
+ target-cris/cpu.h       |  2 --
+ target-i386/cpu.h       |  2 --
+ target-lm32/cpu.h       |  2 --
+ target-m68k/cpu.h       |  2 --
+ target-microblaze/cpu.h |  2 --
+ target-mips/cpu.h       |  2 --
+ target-moxie/cpu.h      |  2 --
+ target-openrisc/cpu.h   |  2 --
+ target-ppc/cpu.h        |  2 --
+ target-s390x/cpu.h      |  2 --
+ target-sh4/cpu.h        |  2 --
+ target-sparc/cpu.h      |  2 --
+ target-tilegx/cpu.h     |  2 --
+ target-tricore/cpu.h    |  2 --
+ target-unicore32/cpu.h  |  3 ---
+ target-xtensa/cpu.h     |  2 --
+ 20 files changed, 18 insertions(+), 53 deletions(-)
+
+diff --git a/include/exec/cpu-all.h b/include/exec/cpu-all.h
+index 08e5093..ccb423c 100644
+--- a/include/exec/cpu-all.h
++++ b/include/exec/cpu-all.h
+@@ -284,4 +284,6 @@ void dump_opcount_info(FILE *f, fprintf_function cpu_fprintf);
+ int cpu_memory_rw_debug(CPUState *cpu, target_ulong addr,
+                         uint8_t *buf, int len, int is_write);
+ 
++int cpu_exec(CPUState *cpu);
++
+ #endif /* CPU_ALL_H */
+diff --git a/linux-user/main.c b/linux-user/main.c
+index 5f3ec97..8e26e37 100644
+--- a/linux-user/main.c
++++ b/linux-user/main.c
+@@ -155,7 +155,7 @@ static inline void exclusive_idle(void)
+ }
+ 
+ /* Start an exclusive operation.
+-   Must only be called from outside cpu_arm_exec.   */
++   Must only be called from outside cpu_exec.   */
+ static inline void start_exclusive(void)
+ {
+     CPUState *other_cpu;
+@@ -288,7 +288,7 @@ void cpu_loop(CPUX86State *env)
+ 
+     for(;;) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_x86_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+         switch(trapnr) {
+         case 0x80:
+@@ -718,7 +718,7 @@ void cpu_loop(CPUARMState *env)
+ 
+     for(;;) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_arm_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+         switch(trapnr) {
+         case EXCP_UDEF:
+@@ -1048,7 +1048,7 @@ void cpu_loop(CPUARMState *env)
+ 
+     for (;;) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_arm_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+ 
+         switch (trapnr) {
+@@ -1131,7 +1131,7 @@ void cpu_loop(CPUUniCore32State *env)
+ 
+     for (;;) {
+         cpu_exec_start(cs);
+-        trapnr = uc32_cpu_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+         switch (trapnr) {
+         case UC32_EXCP_PRIV:
+@@ -1331,7 +1331,7 @@ void cpu_loop (CPUSPARCState *env)
+ 
+     while (1) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_sparc_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+ 
+         /* Compute PSR before exposing state.  */
+@@ -1600,7 +1600,7 @@ void cpu_loop(CPUPPCState *env)
+ 
+     for(;;) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_ppc_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+         switch(trapnr) {
+         case POWERPC_EXCP_NONE:
+@@ -2452,7 +2452,7 @@ void cpu_loop(CPUMIPSState *env)
+ 
+     for(;;) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_mips_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+         switch(trapnr) {
+         case EXCP_SYSCALL:
+@@ -2687,7 +2687,7 @@ void cpu_loop(CPUOpenRISCState *env)
+ 
+     for (;;) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_openrisc_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+         gdbsig = 0;
+ 
+@@ -2776,7 +2776,7 @@ void cpu_loop(CPUSH4State *env)
+ 
+     while (1) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_sh4_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+ 
+         switch (trapnr) {
+@@ -2838,7 +2838,7 @@ void cpu_loop(CPUCRISState *env)
+     
+     while (1) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_cris_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+         switch (trapnr) {
+         case 0xaa:
+@@ -2899,7 +2899,7 @@ void cpu_loop(CPUMBState *env)
+     
+     while (1) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_mb_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+         switch (trapnr) {
+         case 0xaa:
+@@ -3004,7 +3004,7 @@ void cpu_loop(CPUM68KState *env)
+ 
+     for(;;) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_m68k_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+         switch(trapnr) {
+         case EXCP_ILLEGAL:
+@@ -3141,7 +3141,7 @@ void cpu_loop(CPUAlphaState *env)
+ 
+     while (1) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_alpha_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+ 
+         /* All of the traps imply a transition through PALcode, which
+@@ -3329,7 +3329,7 @@ void cpu_loop(CPUS390XState *env)
+ 
+     while (1) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_s390x_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+         switch (trapnr) {
+         case EXCP_INTERRUPT:
+@@ -3633,7 +3633,7 @@ void cpu_loop(CPUTLGState *env)
+ 
+     while (1) {
+         cpu_exec_start(cs);
+-        trapnr = cpu_tilegx_exec(cs);
++        trapnr = cpu_exec(cs);
+         cpu_exec_end(cs);
+         switch (trapnr) {
+         case TILEGX_EXCP_SYSCALL:
+diff --git a/target-alpha/cpu.h b/target-alpha/cpu.h
+index 420f2a5..7ddf17c 100644
+--- a/target-alpha/cpu.h
++++ b/target-alpha/cpu.h
+@@ -285,7 +285,6 @@ struct CPUAlphaState {
+ };
+ 
+ #define cpu_list alpha_cpu_list
+-#define cpu_exec cpu_alpha_exec
+ #define cpu_signal_handler cpu_alpha_signal_handler
+ 
+ #include "exec/cpu-all.h"
+@@ -427,7 +426,6 @@ AlphaCPU *cpu_alpha_init(const char *cpu_model);
+ #define cpu_init(cpu_model) CPU(cpu_alpha_init(cpu_model))
+ 
+ void alpha_cpu_list(FILE *f, fprintf_function cpu_fprintf);
+-int cpu_alpha_exec(CPUState *cpu);
+ /* you can call this signal handler from your SIGBUS and SIGSEGV
+    signal handlers to inform the virtual CPU of exceptions. non zero
+    is returned if the signal was handled by the virtual CPU.  */
+diff --git a/target-arm/cpu.h b/target-arm/cpu.h
+index 066ff67..492978e 100644
+--- a/target-arm/cpu.h
++++ b/target-arm/cpu.h
+@@ -507,7 +507,6 @@ typedef struct CPUARMState {
+ #include "cpu-qom.h"
+ 
+ ARMCPU *cpu_arm_init(const char *cpu_model);
+-int cpu_arm_exec(CPUState *cpu);
+ target_ulong do_arm_semihosting(CPUARMState *env);
+ void aarch64_sync_32_to_64(CPUARMState *env);
+ void aarch64_sync_64_to_32(CPUARMState *env);
+@@ -1686,7 +1685,6 @@ static inline bool arm_excp_unmasked(CPUState *cs, unsigned int excp_idx,
+ 
+ #define cpu_init(cpu_model) CPU(cpu_arm_init(cpu_model))
+ 
+-#define cpu_exec cpu_arm_exec
+ #define cpu_signal_handler cpu_arm_signal_handler
+ #define cpu_list arm_cpu_list
+ 
+diff --git a/target-cris/cpu.h b/target-cris/cpu.h
+index 415cf91..d5f18a7 100644
+--- a/target-cris/cpu.h
++++ b/target-cris/cpu.h
+@@ -174,7 +174,6 @@ typedef struct CPUCRISState {
+ #include "cpu-qom.h"
+ 
+ CRISCPU *cpu_cris_init(const char *cpu_model);
+-int cpu_cris_exec(CPUState *cpu);
+ /* you can call this signal handler from your SIGBUS and SIGSEGV
+    signal handlers to inform the virtual CPU of exceptions. non zero
+    is returned if the signal was handled by the virtual CPU.  */
+@@ -221,7 +220,6 @@ enum {
+ 
+ #define cpu_init(cpu_model) CPU(cpu_cris_init(cpu_model))
+ 
+-#define cpu_exec cpu_cris_exec
+ #define cpu_signal_handler cpu_cris_signal_handler
+ 
+ /* MMU modes definitions */
+diff --git a/target-i386/cpu.h b/target-i386/cpu.h
+index a80eb95..b2a1429 100644
+--- a/target-i386/cpu.h
++++ b/target-i386/cpu.h
+@@ -1136,7 +1136,6 @@ void x86_cpu_exec_exit(CPUState *cpu);
+ 
+ X86CPU *cpu_x86_init(const char *cpu_model);
+ X86CPU *cpu_x86_create(const char *cpu_model, Error **errp);
+-int cpu_x86_exec(CPUState *cpu);
+ void x86_cpu_list(FILE *f, fprintf_function cpu_fprintf);
+ void x86_cpudef_setup(void);
+ int cpu_x86_support_mca_broadcast(CPUX86State *env);
+@@ -1315,7 +1314,6 @@ uint64_t cpu_get_tsc(CPUX86State *env);
+ 
+ #define cpu_init(cpu_model) CPU(cpu_x86_init(cpu_model))
+ 
+-#define cpu_exec cpu_x86_exec
+ #define cpu_signal_handler cpu_x86_signal_handler
+ #define cpu_list x86_cpu_list
+ #define cpudef_setup x86_cpudef_setup
+diff --git a/target-lm32/cpu.h b/target-lm32/cpu.h
+index f220fc0..7810b23 100644
+--- a/target-lm32/cpu.h
++++ b/target-lm32/cpu.h
+@@ -196,7 +196,6 @@ static inline lm32_wp_t lm32_wp_type(uint32_t dc, int idx)
+ #include "cpu-qom.h"
+ 
+ LM32CPU *cpu_lm32_init(const char *cpu_model);
+-int cpu_lm32_exec(CPUState *cpu);
+ /* you can call this signal handler from your SIGBUS and SIGSEGV
+    signal handlers to inform the virtual CPU of exceptions. non zero
+    is returned if the signal was handled by the virtual CPU.  */
+@@ -217,7 +216,6 @@ bool lm32_cpu_do_semihosting(CPUState *cs);
+ #define cpu_init(cpu_model) CPU(cpu_lm32_init(cpu_model))
+ 
+ #define cpu_list lm32_cpu_list
+-#define cpu_exec cpu_lm32_exec
+ #define cpu_signal_handler cpu_lm32_signal_handler
+ 
+ int lm32_cpu_handle_mmu_fault(CPUState *cpu, vaddr address, int rw,
+diff --git a/target-m68k/cpu.h b/target-m68k/cpu.h
+index 48b4c87..7c375f7 100644
+--- a/target-m68k/cpu.h
++++ b/target-m68k/cpu.h
+@@ -114,7 +114,6 @@ typedef struct CPUM68KState {
+ void m68k_tcg_init(void);
+ void m68k_cpu_init_gdb(M68kCPU *cpu);
+ M68kCPU *cpu_m68k_init(const char *cpu_model);
+-int cpu_m68k_exec(CPUState *cpu);
+ /* you can call this signal handler from your SIGBUS and SIGSEGV
+    signal handlers to inform the virtual CPU of exceptions. non zero
+    is returned if the signal was handled by the virtual CPU.  */
+@@ -211,7 +210,6 @@ void register_m68k_insns (CPUM68KState *env);
+ 
+ #define cpu_init(cpu_model) CPU(cpu_m68k_init(cpu_model))
+ 
+-#define cpu_exec cpu_m68k_exec
+ #define cpu_signal_handler cpu_m68k_signal_handler
+ #define cpu_list m68k_cpu_list
+ 
+diff --git a/target-microblaze/cpu.h b/target-microblaze/cpu.h
+index 2f7335e..f3e93dd 100644
+--- a/target-microblaze/cpu.h
++++ b/target-microblaze/cpu.h
+@@ -278,7 +278,6 @@ struct CPUMBState {
+ 
+ void mb_tcg_init(void);
+ MicroBlazeCPU *cpu_mb_init(const char *cpu_model);
+-int cpu_mb_exec(CPUState *cpu);
+ /* you can call this signal handler from your SIGBUS and SIGSEGV
+    signal handlers to inform the virtual CPU of exceptions. non zero
+    is returned if the signal was handled by the virtual CPU.  */
+@@ -293,7 +292,6 @@ int cpu_mb_signal_handler(int host_signum, void *pinfo,
+ 
+ #define cpu_init(cpu_model) CPU(cpu_mb_init(cpu_model))
+ 
+-#define cpu_exec cpu_mb_exec
+ #define cpu_signal_handler cpu_mb_signal_handler
+ 
+ /* MMU modes definitions */
+diff --git a/target-mips/cpu.h b/target-mips/cpu.h
+index 866924d..ab46d83 100644
+--- a/target-mips/cpu.h
++++ b/target-mips/cpu.h
+@@ -638,7 +638,6 @@ void mips_cpu_unassigned_access(CPUState *cpu, hwaddr addr,
+ 
+ void mips_cpu_list (FILE *f, fprintf_function cpu_fprintf);
+ 
+-#define cpu_exec cpu_mips_exec
+ #define cpu_signal_handler cpu_mips_signal_handler
+ #define cpu_list mips_cpu_list
+ 
+@@ -764,7 +763,6 @@ enum {
+  */
+ #define CPU_INTERRUPT_WAKE CPU_INTERRUPT_TGT_INT_0
+ 
+-int cpu_mips_exec(CPUState *cpu);
+ void mips_tcg_init(void);
+ MIPSCPU *cpu_mips_init(const char *cpu_model);
+ int cpu_mips_signal_handler(int host_signum, void *pinfo, void *puc);
+diff --git a/target-moxie/cpu.h b/target-moxie/cpu.h
+index 4ee2077..0d6d8b2 100644
+--- a/target-moxie/cpu.h
++++ b/target-moxie/cpu.h
+@@ -109,7 +109,6 @@ static inline MoxieCPU *moxie_env_get_cpu(CPUMoxieState *env)
+ #define ENV_OFFSET offsetof(MoxieCPU, env)
+ 
+ MoxieCPU *cpu_moxie_init(const char *cpu_model);
+-int cpu_moxie_exec(CPUState *cpu);
+ void moxie_cpu_do_interrupt(CPUState *cs);
+ void moxie_cpu_dump_state(CPUState *cpu, FILE *f,
+                           fprintf_function cpu_fprintf, int flags);
+@@ -120,7 +119,6 @@ int cpu_moxie_signal_handler(int host_signum, void *pinfo,
+ 
+ #define cpu_init(cpu_model) CPU(cpu_moxie_init(cpu_model))
+ 
+-#define cpu_exec cpu_moxie_exec
+ #define cpu_signal_handler cpu_moxie_signal_handler
+ 
+ static inline int cpu_mmu_index(CPUMoxieState *env, bool ifetch)
+diff --git a/target-openrisc/cpu.h b/target-openrisc/cpu.h
+index 4b63f25..7fed75e 100644
+--- a/target-openrisc/cpu.h
++++ b/target-openrisc/cpu.h
+@@ -344,7 +344,6 @@ static inline OpenRISCCPU *openrisc_env_get_cpu(CPUOpenRISCState *env)
+ OpenRISCCPU *cpu_openrisc_init(const char *cpu_model);
+ 
+ void cpu_openrisc_list(FILE *f, fprintf_function cpu_fprintf);
+-int cpu_openrisc_exec(CPUState *cpu);
+ void openrisc_cpu_do_interrupt(CPUState *cpu);
+ bool openrisc_cpu_exec_interrupt(CPUState *cpu, int int_req);
+ void openrisc_cpu_dump_state(CPUState *cpu, FILE *f,
+@@ -358,7 +357,6 @@ int openrisc_cpu_handle_mmu_fault(CPUState *cpu, vaddr address,
+ int cpu_openrisc_signal_handler(int host_signum, void *pinfo, void *puc);
+ 
+ #define cpu_list cpu_openrisc_list
+-#define cpu_exec cpu_openrisc_exec
+ #define cpu_signal_handler cpu_openrisc_signal_handler
+ 
+ #ifndef CONFIG_USER_ONLY
+diff --git a/target-ppc/cpu.h b/target-ppc/cpu.h
+index 8bf9af3..9442081 100644
+--- a/target-ppc/cpu.h
++++ b/target-ppc/cpu.h
+@@ -1221,7 +1221,6 @@ do {                                            \
+ PowerPCCPU *cpu_ppc_init(const char *cpu_model);
+ void ppc_translate_init(void);
+ void gen_update_current_nip(void *opaque);
+-int cpu_ppc_exec (CPUState *s);
+ /* you can call this signal handler from your SIGBUS and SIGSEGV
+    signal handlers to inform the virtual CPU of exceptions. non zero
+    is returned if the signal was handled by the virtual CPU.  */
+@@ -1300,7 +1299,6 @@ int ppc_dcr_write (ppc_dcr_t *dcr_env, int dcrn, uint32_t val);
+ 
+ #define cpu_init(cpu_model) CPU(cpu_ppc_init(cpu_model))
+ 
+-#define cpu_exec cpu_ppc_exec
+ #define cpu_signal_handler cpu_ppc_signal_handler
+ #define cpu_list ppc_cpu_list
+ 
+diff --git a/target-s390x/cpu.h b/target-s390x/cpu.h
+index 6d97c08..0a7d5fa 100644
+--- a/target-s390x/cpu.h
++++ b/target-s390x/cpu.h
+@@ -416,7 +416,6 @@ S390CPU *cpu_s390x_init(const char *cpu_model);
+ S390CPU *s390x_new_cpu(const char *cpu_model, int64_t id, Error **errp);
+ S390CPU *cpu_s390x_create(const char *cpu_model, Error **errp);
+ void s390x_translate_init(void);
+-int cpu_s390x_exec(CPUState *cpu);
+ 
+ /* you can call this signal handler from your SIGBUS and SIGSEGV
+    signal handlers to inform the virtual CPU of exceptions. non zero
+@@ -590,7 +589,6 @@ bool css_present(uint8_t cssid);
+ #endif
+ 
+ #define cpu_init(model) CPU(cpu_s390x_init(model))
+-#define cpu_exec cpu_s390x_exec
+ #define cpu_signal_handler cpu_s390x_signal_handler
+ 
+ void s390_cpu_list(FILE *f, fprintf_function cpu_fprintf);
+diff --git a/target-sh4/cpu.h b/target-sh4/cpu.h
+index 3b23e96..6143b9a 100644
+--- a/target-sh4/cpu.h
++++ b/target-sh4/cpu.h
+@@ -191,7 +191,6 @@ typedef struct CPUSH4State {
+ 
+ void sh4_translate_init(void);
+ SuperHCPU *cpu_sh4_init(const char *cpu_model);
+-int cpu_sh4_exec(CPUState *s);
+ int cpu_sh4_signal_handler(int host_signum, void *pinfo,
+                            void *puc);
+ int superh_cpu_handle_mmu_fault(CPUState *cpu, vaddr address, int rw,
+@@ -224,7 +223,6 @@ void cpu_load_tlb(CPUSH4State * env);
+ 
+ #define cpu_init(cpu_model) CPU(cpu_sh4_init(cpu_model))
+ 
+-#define cpu_exec cpu_sh4_exec
+ #define cpu_signal_handler cpu_sh4_signal_handler
+ #define cpu_list sh4_cpu_list
+ 
+diff --git a/target-sparc/cpu.h b/target-sparc/cpu.h
+index dc46122..9a9d422 100644
+--- a/target-sparc/cpu.h
++++ b/target-sparc/cpu.h
+@@ -529,7 +529,6 @@ int sparc_cpu_memory_rw_debug(CPUState *cpu, vaddr addr,
+ void gen_intermediate_code_init(CPUSPARCState *env);
+ 
+ /* cpu-exec.c */
+-int cpu_sparc_exec(CPUState *cpu);
+ 
+ /* win_helper.c */
+ target_ulong cpu_get_psr(CPUSPARCState *env1);
+@@ -590,7 +589,6 @@ int cpu_sparc_signal_handler(int host_signum, void *pinfo, void *puc);
+ #define cpu_init(cpu_model) CPU(cpu_sparc_init(cpu_model))
+ #endif
+ 
+-#define cpu_exec cpu_sparc_exec
+ #define cpu_signal_handler cpu_sparc_signal_handler
+ #define cpu_list sparc_cpu_list
+ 
+diff --git a/target-tilegx/cpu.h b/target-tilegx/cpu.h
+index 022cad1..e149140 100644
+--- a/target-tilegx/cpu.h
++++ b/target-tilegx/cpu.h
+@@ -158,14 +158,12 @@ static inline TileGXCPU *tilegx_env_get_cpu(CPUTLGState *env)
+ #include "exec/cpu-all.h"
+ 
+ void tilegx_tcg_init(void);
+-int cpu_tilegx_exec(CPUState *s);
+ int cpu_tilegx_signal_handler(int host_signum, void *pinfo, void *puc);
+ 
+ TileGXCPU *cpu_tilegx_init(const char *cpu_model);
+ 
+ #define cpu_init(cpu_model) CPU(cpu_tilegx_init(cpu_model))
+ 
+-#define cpu_exec cpu_tilegx_exec
+ #define cpu_signal_handler cpu_tilegx_signal_handler
+ 
+ static inline void cpu_get_tb_cpu_state(CPUTLGState *env, target_ulong *pc,
+diff --git a/target-tricore/cpu.h b/target-tricore/cpu.h
+index 90045a9..0a9cc8c 100644
+--- a/target-tricore/cpu.h
++++ b/target-tricore/cpu.h
+@@ -346,7 +346,6 @@ void fpu_set_state(CPUTriCoreState *env);
+ 
+ void tricore_cpu_list(FILE *f, fprintf_function cpu_fprintf);
+ 
+-#define cpu_exec cpu_tricore_exec
+ #define cpu_signal_handler cpu_tricore_signal_handler
+ #define cpu_list tricore_cpu_list
+ 
+@@ -372,7 +371,6 @@ enum {
+ };
+ 
+ void cpu_state_reset(CPUTriCoreState *s);
+-int cpu_tricore_exec(CPUState *cpu);
+ void tricore_tcg_init(void);
+ int cpu_tricore_signal_handler(int host_signum, void *pinfo, void *puc);
+ 
+diff --git a/target-unicore32/cpu.h b/target-unicore32/cpu.h
+index 9c1fbf9..e97e66d 100644
+--- a/target-unicore32/cpu.h
++++ b/target-unicore32/cpu.h
+@@ -119,7 +119,6 @@ void cpu_asr_write(CPUUniCore32State *env1, target_ulong val, target_ulong mask)
+ #define UC32_HWCAP_CMOV                 4 /* 1 << 2 */
+ #define UC32_HWCAP_UCF64                8 /* 1 << 3 */
+ 
+-#define cpu_exec                        uc32_cpu_exec
+ #define cpu_signal_handler              uc32_cpu_signal_handler
+ 
+ int uc32_cpu_signal_handler(int host_signum, void *pinfo, void *puc);
+@@ -137,8 +136,6 @@ static inline int cpu_mmu_index(CPUUniCore32State *env, bool ifetch)
+ #include "cpu-qom.h"
+ #include "exec/exec-all.h"
+ 
+-int uc32_cpu_exec(CPUState *s);
+-
+ UniCore32CPU *uc32_cpu_init(const char *cpu_model);
+ 
+ #define cpu_init(cpu_model) CPU(uc32_cpu_init(cpu_model))
+diff --git a/target-xtensa/cpu.h b/target-xtensa/cpu.h
+index d0bd9da..6e0f4e6 100644
+--- a/target-xtensa/cpu.h
++++ b/target-xtensa/cpu.h
+@@ -381,7 +381,6 @@ typedef struct CPUXtensaState {
+ 
+ #include "cpu-qom.h"
+ 
+-#define cpu_exec cpu_xtensa_exec
+ #define cpu_signal_handler cpu_xtensa_signal_handler
+ #define cpu_list xtensa_cpu_list
+ 
+@@ -397,7 +396,6 @@ XtensaCPU *cpu_xtensa_init(const char *cpu_model);
+ 
+ void xtensa_translate_init(void);
+ void xtensa_breakpoint_handler(CPUState *cs);
+-int cpu_xtensa_exec(CPUState *cpu);
+ void xtensa_finalize_config(XtensaConfig *config);
+ void xtensa_register_core(XtensaConfigList *node);
+ void check_interrupts(CPUXtensaState *s);
+-- 
+1.8.3.1
+

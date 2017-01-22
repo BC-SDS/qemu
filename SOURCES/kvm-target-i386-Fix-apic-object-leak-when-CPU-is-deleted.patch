@@ -1,0 +1,38 @@
+From 17f5cac7d6534f50856ad93860b2615ab0164b61 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:01 +0200
+Subject: [PATCH 61/99] target-i386: Fix apic object leak when CPU is deleted
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-57-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71672
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 56/78] target-i386: Fix apic object leak when CPU is deleted
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 67e55caa6dcb91c80428cee6fe463f8dd8a755ab)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/cpu.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 9896bb8..ccafbf3 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -2778,6 +2778,7 @@ static void x86_cpu_apic_create(X86CPU *cpu, Error **errp)
+ 
+     object_property_add_child(OBJECT(cpu), "lapic",
+                               OBJECT(cpu->apic_state), &error_abort);
++    object_unref(OBJECT(cpu->apic_state));
+ 
+     qdev_prop_set_uint8(cpu->apic_state, "id", cpu->apic_id);
+     /* TODO: convert to link<> */
+-- 
+1.8.3.1
+

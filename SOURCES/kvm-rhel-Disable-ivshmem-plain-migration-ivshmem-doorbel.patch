@@ -1,0 +1,145 @@
+From ce1419cb54352b171fbe48ab3d45135e56ef3bdd Mon Sep 17 00:00:00 2001
+From: Markus Armbruster <armbru@redhat.com>
+Date: Thu, 28 Jul 2016 06:30:10 +0200
+Subject: [PATCH 25/35] rhel: Disable ivshmem-plain migration,
+ ivshmem-doorbell, ivshmem
+
+RH-Author: Markus Armbruster <armbru@redhat.com>
+Message-id: <1469687410-14432-3-git-send-email-armbru@redhat.com>
+Patchwork-id: 71503
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 2/2] rhel: Disable ivshmem-plain migration, ivshmem-doorbell, ivshmem
+Bugzilla: 1333318
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Auger Eric <eric.auger@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+We shipped 7.0 without ivshmem.  We added *limited* ivshmem support to
+7.1 for the memnic use case (BZ 1104063).  Our downstream patches
+disable ivshmem features to reduce it to something we can actually
+support.  In particular, we disabled migration and the
+interrupt-capable device variant.
+
+Since then, upstream added new devices ivshmem-plain and
+ivshmem-doorbell, and deprecated the old ivshmem device.  We got this
+work via rebase.
+
+ivshmem-doorbell is the interrupt-capable variant we disabled in RHEL
+ivshmem.  Disable it.
+
+ivshmem-plain is much closer to what we have in RHEL than legacy
+ivshmem.  Instead of forward-porting our patches for legacy ivshmem,
+disable legacy ivshmem and keep ivshmem-plain with migration disabled.
+Impact:
+
+* Configuration interface on the host changes, but libvirt will shield
+  users from it.
+
+* Guest interface changes compatibly:
+
+  - PCI revision is 1 instead of 0.  The new revision is fully
+    backwards compatible for guests.  Guests may elect to require at
+    least revision 1 to make sure they're not exposed to upstream's
+    funny "no shared memory, yet" state.  This funny state has never
+    been possible with our downstream ivshmem.
+
+  - The new devices always have 64 bit BARs.
+
+  - The Interrupt Pin register in PCI config space is zero (does not
+    use an interrupt pin) instead of one (uses INTA).  Zero is
+    correct.
+
+Signed-off-by: Markus Armbruster <armbru@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/misc/ivshmem.c    | 11 +++++++++++
+ tests/ivshmem-test.c |  8 ++++++++
+ 2 files changed, 19 insertions(+)
+
+diff --git a/hw/misc/ivshmem.c b/hw/misc/ivshmem.c
+index e40f23b..f52d64e 100644
+--- a/hw/misc/ivshmem.c
++++ b/hw/misc/ivshmem.c
+@@ -852,6 +852,13 @@ static void ivshmem_common_realize(PCIDevice *dev, Error **errp)
+         return;
+     }
+ 
++    /* Migration disabled for Red Hat Enterprise Linux: */
++    if (s->master == ON_OFF_AUTO_ON) {
++        error_setg(errp, "master=on is not supported");
++        return;
++    }
++    s->master = ON_OFF_AUTO_OFF;
++
+     pci_conf = dev->config;
+     pci_conf[PCI_COMMAND] = PCI_COMMAND_IO | PCI_COMMAND_MEMORY;
+ 
+@@ -1135,6 +1142,8 @@ static void ivshmem_doorbell_class_init(ObjectClass *klass, void *data)
+     k->realize = ivshmem_doorbell_realize;
+     dc->props = ivshmem_doorbell_properties;
+     dc->vmsd = &ivshmem_doorbell_vmsd;
++    /* Disabled for Red Hat Enterprise Linux: */
++    dc->cannot_instantiate_with_device_add_yet = true;
+ }
+ 
+ static const TypeInfo ivshmem_doorbell_info = {
+@@ -1303,6 +1312,8 @@ static void ivshmem_class_init(ObjectClass *klass, void *data)
+     dc->desc = "Inter-VM shared memory (legacy)";
+     dc->props = ivshmem_properties;
+     dc->vmsd = &ivshmem_vmsd;
++    /* Disabled for Red Hat Enterprise Linux: */
++    dc->cannot_instantiate_with_device_add_yet = true;
+ }
+ 
+ static const TypeInfo ivshmem_info = {
+diff --git a/tests/ivshmem-test.c b/tests/ivshmem-test.c
+index c027ff1..3314684 100644
+--- a/tests/ivshmem-test.c
++++ b/tests/ivshmem-test.c
+@@ -235,6 +235,7 @@ static void test_ivshmem_pair(void)
+     g_free(data);
+ }
+ 
++#if 0 /* Disabled for Red Hat Enterprise Linux: */
+ typedef struct ServerThread {
+     GThread *thread;
+     IvshmemServer *server;
+@@ -392,9 +393,11 @@ static void test_ivshmem_server_irq(void)
+ {
+     test_ivshmem_server(false);
+ }
++#endif
+ 
+ #define PCI_SLOT_HP             0x06
+ 
++#if 0 /* Test uses legacy ivshmem, which is disabled for Red Hat Enterprise Linux: */
+ static void test_ivshmem_hotplug(void)
+ {
+     gchar *opts;
+@@ -409,6 +412,7 @@ static void test_ivshmem_hotplug(void)
+     qtest_end();
+     g_free(opts);
+ }
++#endif
+ 
+ static void test_ivshmem_memdev(void)
+ {
+@@ -502,12 +506,16 @@ int main(int argc, char **argv)
+     tmpserver = g_strconcat(tmpdir, "/server", NULL);
+ 
+     qtest_add_func("/ivshmem/single", test_ivshmem_single);
++#if 0 /* Test uses legacy ivshmem, which is disabled for Red Hat Enterprise Linux: */
+     qtest_add_func("/ivshmem/hotplug", test_ivshmem_hotplug);
++#endif
+     qtest_add_func("/ivshmem/memdev", test_ivshmem_memdev);
+     if (g_test_slow()) {
+         qtest_add_func("/ivshmem/pair", test_ivshmem_pair);
++#if 0 /* Disabled for Red Hat Enterprise Linux: */
+         qtest_add_func("/ivshmem/server-msi", test_ivshmem_server_msi);
+         qtest_add_func("/ivshmem/server-irq", test_ivshmem_server_irq);
++#endif
+     }
+ 
+     ret = g_test_run();
+-- 
+1.8.3.1
+

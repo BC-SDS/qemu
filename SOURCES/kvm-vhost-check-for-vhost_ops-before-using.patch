@@ -1,0 +1,55 @@
+From cae5fbfc774ba49495e8cbf5846ebf5dea1ae389 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:47 +0200
+Subject: [PATCH 27/30] vhost: check for vhost_ops before using.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-28-marcandre.lureau@redhat.com>
+Patchwork-id: 71943
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 27/28] vhost: check for vhost_ops before using.
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+From: Ilya Maximets <i.maximets@samsung.com>
+
+'vhost_set_vring_enable()' tries to call function using pointer to
+'vhost_ops' which can be already zeroized in 'vhost_dev_cleanup()'
+while vhost disconnection.
+
+Fix that by checking 'vhost_ops' before using. This fixes QEMU crash
+on calling 'ethtool -L eth0 combined 2' if vhost disconnected.
+
+Signed-off-by: Ilya Maximets <i.maximets@samsung.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit ca10203cde7cf37623e0e77da1696ba1fbce5d84)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/vhost_net.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hw/net/vhost_net.c b/hw/net/vhost_net.c
+index 74c89b0..519f8b8 100644
+--- a/hw/net/vhost_net.c
++++ b/hw/net/vhost_net.c
+@@ -428,7 +428,7 @@ int vhost_set_vring_enable(NetClientState *nc, int enable)
+ 
+     nc->vring_enable = enable;
+ 
+-    if (vhost_ops->vhost_set_vring_enable) {
++    if (vhost_ops && vhost_ops->vhost_set_vring_enable) {
+         return vhost_ops->vhost_set_vring_enable(&net->dev, enable);
+     }
+ 
+-- 
+1.8.3.1
+

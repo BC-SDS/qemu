@@ -1,0 +1,46 @@
+From d82c2c3d2e179bf8f80027943269dcd4bec68d04 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Fri, 17 Jun 2016 14:39:26 +0200
+Subject: [PATCH 05/33] tests: fix libqtest socket timeouts
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1466174367-11047-6-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70663
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 5/6] tests: fix libqtest socket timeouts
+Bugzilla: 1347256
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+RH-Acked-by: John Snow <jsnow@redhat.com>
+RH-Acked-by: Amit Shah <amit.shah@redhat.com>
+
+From: Andrea Arcangeli <aarcange@redhat.com>
+
+I kept getting timeouts and unix socket accept failures under high
+load, the patch fixes it.
+
+Signed-off-by: Andrea Arcangeli <aarcange@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+Message-id: 1465816605-29488-6-git-send-email-dgilbert@redhat.com
+Message-Id: <1465816605-29488-6-git-send-email-dgilbert@redhat.com>
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+(cherry picked from commit f5d457917817d7bfd2424bb88314eaf16b5ec9d6)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ tests/libqtest.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/tests/libqtest.c b/tests/libqtest.c
+index b12a9e4..57ce292 100644
+--- a/tests/libqtest.c
++++ b/tests/libqtest.c
+@@ -27,7 +27,7 @@
+ #include "qapi/qmp/qjson.h"
+ 
+ #define MAX_IRQ 256
+-#define SOCKET_TIMEOUT 5
++#define SOCKET_TIMEOUT 50
+ 
+ QTestState *global_qtest;
+ 
+-- 
+1.8.3.1
+

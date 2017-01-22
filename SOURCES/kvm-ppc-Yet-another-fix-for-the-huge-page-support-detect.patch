@@ -1,0 +1,70 @@
+From fc500f121bbdd7c9cc5699b207259f5d2065c807 Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Mon, 25 Jul 2016 12:16:36 +0200
+Subject: [PATCH 32/34] ppc: Yet another fix for the huge page support
+ detection mechanism
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1469448997-26004-2-git-send-email-thuth@redhat.com>
+Patchwork-id: 71392
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/2] ppc: Yet another fix for the huge page support detection mechanism
+Bugzilla: 1347498
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+
+Commit 86b50f2e1bef ("Disable huge page support if it is not available
+for main RAM") already made sure that huge page support is not announced
+to the guest if the normal RAM of non-NUMA configurations is not backed
+by a huge page filesystem. However, there is one more case that can go
+wrong: NUMA is enabled, but the RAM of the NUMA nodes are not configured
+with huge page support (and only the memory of a DIMM is configured with
+it). When QEMU is started with the following command line for example,
+the Linux guest currently crashes because it is trying to use huge pages
+on a memory region that does not support huge pages:
+
+ qemu-system-ppc64 -enable-kvm ... -m 1G,slots=4,maxmem=32G -object \
+   memory-backend-file,policy=default,mem-path=/hugepages,size=1G,id=mem-mem1 \
+   -device pc-dimm,id=dimm-mem1,memdev=mem-mem1 -smp 2 \
+   -numa node,nodeid=0 -numa node,nodeid=1
+
+To fix this issue, we've got to make sure to disable huge page support,
+too, when there is a NUMA node that is not using a memory backend with
+huge page support.
+
+Fixes: 86b50f2e1befc33407bdfeb6f45f7b0d2439a740
+Signed-off-by: Thomas Huth <thuth@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 159d2e39a8602c369542a92573a52acb5f5f58f2)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-ppc/kvm.c | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/target-ppc/kvm.c b/target-ppc/kvm.c
+index aca06cd..ca393f9 100644
+--- a/target-ppc/kvm.c
++++ b/target-ppc/kvm.c
+@@ -390,12 +390,16 @@ static long getrampagesize(void)
+ 
+     object_child_foreach(memdev_root, find_max_supported_pagesize, &hpsize);
+ 
+-    if (hpsize == LONG_MAX) {
++    if (hpsize == LONG_MAX || hpsize == getpagesize()) {
+         return getpagesize();
+     }
+ 
+-    if (nb_numa_nodes == 0 && hpsize > getpagesize()) {
+-        /* No NUMA nodes and normal RAM without -mem-path ==> no huge pages! */
++    /* If NUMA is disabled or the NUMA nodes are not backed with a
++     * memory-backend, then there is at least one node using "normal"
++     * RAM. And since normal RAM has not been configured with "-mem-path"
++     * (what we've checked earlier here already), we can not use huge pages!
++     */
++    if (nb_numa_nodes == 0 || numa_info[0].node_memdev == NULL) {
+         static bool warned;
+         if (!warned) {
+             error_report("Huge page support disabled (n/a for main memory).");
+-- 
+1.8.3.1
+

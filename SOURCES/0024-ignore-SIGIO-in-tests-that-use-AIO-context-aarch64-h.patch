@@ -1,0 +1,74 @@
+From d76a599935110ad90b2fcf41950e457b48329de3 Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Tue, 13 Oct 2015 08:54:15 +0200
+Subject: ignore SIGIO in tests that use AIO context (aarch64 host only)
+
+Patchwork-id: 63730
+O-Subject: [RHELSA qemu-kvm-rhev PATCH 2/2] ignore SIGIO in tests that use AIO context (aarch64 host only)
+Bugzilla: 1184405
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Richard Jones <rjones@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+There are three tests (grep for aio_context_new()) that call aio_notify().
+According to the previous patch, aio_notify() now generates a SIGIO for
+the entire process. The default action for SIGIO is to terminate the
+process.
+
+These tests are single-threaded, and don't expect aio_notify() to raise
+SIGIO. Set the disposition to SIG_IGN so that SIGIO not terminate the test
+processes.
+
+Downstream only.
+
+Signed-off-by: Laszlo Ersek <lersek@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Rebase notes (2.4):
+- Not fixing tests/test-throttle.c that uses new aio handling
+---
+ tests/test-aio.c         | 5 +++++
+ tests/test-thread-pool.c | 4 ++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/tests/test-aio.c b/tests/test-aio.c
+index 687dfa0..a54f1fa 100644
+--- a/tests/test-aio.c
++++ b/tests/test-aio.c
+@@ -12,6 +12,7 @@
+ 
+ #include "qemu/osdep.h"
+ #include <glib.h>
++#include "qemu-common.h"
+ #include "block/aio.h"
+ #include "qapi/error.h"
+ #include "qemu/timer.h"
+@@ -832,6 +833,10 @@ int main(int argc, char **argv)
+ 
+     init_clocks();
+ 
++#ifdef HOST_AARCH64
++    sigaction(SIGIO, &(struct sigaction){ .sa_handler = SIG_IGN }, NULL);
++#endif
++
+     ctx = aio_context_new(&local_error);
+     if (!ctx) {
+         error_reportf_err(local_error, "Failed to create AIO Context: ");
+diff --git a/tests/test-thread-pool.c b/tests/test-thread-pool.c
+index 88dc731..ac1cbdd 100644
+--- a/tests/test-thread-pool.c
++++ b/tests/test-thread-pool.c
+@@ -229,6 +229,10 @@ int main(int argc, char **argv)
+ 
+     init_clocks();
+ 
++#ifdef HOST_AARCH64
++    sigaction(SIGIO, &(struct sigaction){ .sa_handler = SIG_IGN }, NULL);
++#endif
++
+     ctx = aio_context_new(&local_error);
+     if (!ctx) {
+         error_reportf_err(local_error, "Failed to create AIO Context: ");
+-- 
+2.5.5
+

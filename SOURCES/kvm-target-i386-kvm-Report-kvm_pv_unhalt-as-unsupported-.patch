@@ -1,0 +1,49 @@
+From c1477fbc7243380fa4e6ff9a2cf48c78719226fd Mon Sep 17 00:00:00 2001
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Tue, 16 Aug 2016 20:48:32 +0200
+Subject: [PATCH 01/37] target-i386: kvm: Report kvm_pv_unhalt as unsupported
+ w/o kernel_irqchip
+
+RH-Author: Eduardo Habkost <ehabkost@redhat.com>
+Message-id: <1471380512-4178-1-git-send-email-ehabkost@redhat.com>
+Patchwork-id: 71974
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH] target-i386: kvm: Report kvm_pv_unhalt as unsupported w/o kernel_irqchip
+Bugzilla: 1363679
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Peter Xu <peterx@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+
+The kvm_pv_unhalt feature doesn't work if kernel_irqchip is
+disabled, so we need to report it as unsupported.
+
+Tested-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Andrew Jones <drjones@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 648774779aa6cdf755a296d1a15849ced51072f1)
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/kvm.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/target-i386/kvm.c b/target-i386/kvm.c
+index b93fc92..37ed236 100644
+--- a/target-i386/kvm.c
++++ b/target-i386/kvm.c
+@@ -314,6 +314,13 @@ uint32_t kvm_arch_get_supported_cpuid(KVMState *s, uint32_t function,
+          */
+         cpuid_1_edx = kvm_arch_get_supported_cpuid(s, 1, 0, R_EDX);
+         ret |= cpuid_1_edx & CPUID_EXT2_AMD_ALIASES;
++    } else if (function == KVM_CPUID_FEATURES && reg == R_EAX) {
++        /* kvm_pv_unhalt is reported by GET_SUPPORTED_CPUID, but it can't
++         * be enabled without the in-kernel irqchip
++         */
++        if (!kvm_irqchip_in_kernel()) {
++            ret &= ~(1U << KVM_FEATURE_PV_UNHALT);
++        }
+     }
+ 
+     g_free(cpuid);
+-- 
+1.8.3.1
+

@@ -1,0 +1,102 @@
+From 7bce281bff249691fc7835a80b22917400c3f0d4 Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Mon, 25 Jul 2016 12:16:37 +0200
+Subject: [PATCH 33/34] ppc: Huge page detection mechanism fixes - Episode III
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1469448997-26004-3-git-send-email-thuth@redhat.com>
+Patchwork-id: 71393
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/2] ppc: Huge page detection mechanism fixes - Episode III
+Bugzilla: 1347498
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+After already fixing two issues with the huge page detection mechanism
+(see commit 159d2e39a860 and 86b50f2e1bef), Greg Kurz noticed another
+case that caused the guest to crash where QEMU announces huge pages
+though they should not be available for the guest:
+
+qemu-system-ppc64 -enable-kvm ... -mem-path /dev/hugepages \
+ -m 1G,slots=4,maxmem=32G \
+ -object memory-backend-ram,policy=default,size=1G,id=mem-mem1 \
+ -device pc-dimm,id=dimm-mem1,memdev=mem-mem1 -smp 2 \
+ -numa node,nodeid=0 -numa node,nodeid=1
+
+That means if there is a global mem-path option, we still have
+to look at the memory-backend objects that have been specified
+additionally and return their minimum page size if that value
+is smaller than the page size of the main memory.
+
+Reported-by: Greg Kurz <groug@kaod.org>
+Signed-off-by: Thomas Huth <thuth@redhat.com>
+Reviewed-by: Greg Kurz <groug@kaod.org>
+Tested-by: Greg Kurz <groug@kaod.org>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 3d4f2534834cd9f9bbb3dd145fa61fd2ac0dd535)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-ppc/kvm.c | 27 ++++++++++++++-------------
+ 1 file changed, 14 insertions(+), 13 deletions(-)
+
+diff --git a/target-ppc/kvm.c b/target-ppc/kvm.c
+index ca393f9..60ab724 100644
+--- a/target-ppc/kvm.c
++++ b/target-ppc/kvm.c
+@@ -367,10 +367,13 @@ static int find_max_supported_pagesize(Object *obj, void *opaque)
+ static long getrampagesize(void)
+ {
+     long hpsize = LONG_MAX;
++    long mainrampagesize;
+     Object *memdev_root;
+ 
+     if (mem_path) {
+-        return gethugepagesize(mem_path);
++        mainrampagesize = gethugepagesize(mem_path);
++    } else {
++        mainrampagesize = getpagesize();
+     }
+ 
+     /* it's possible we have memory-backend objects with
+@@ -384,28 +387,26 @@ static long getrampagesize(void)
+      * backend isn't backed by hugepages.
+      */
+     memdev_root = object_resolve_path("/objects", NULL);
+-    if (!memdev_root) {
+-        return getpagesize();
++    if (memdev_root) {
++        object_child_foreach(memdev_root, find_max_supported_pagesize, &hpsize);
+     }
+-
+-    object_child_foreach(memdev_root, find_max_supported_pagesize, &hpsize);
+-
+-    if (hpsize == LONG_MAX || hpsize == getpagesize()) {
+-        return getpagesize();
++    if (hpsize == LONG_MAX) {
++        /* No additional memory regions found ==> Report main RAM page size */
++        return mainrampagesize;
+     }
+ 
+     /* If NUMA is disabled or the NUMA nodes are not backed with a
+-     * memory-backend, then there is at least one node using "normal"
+-     * RAM. And since normal RAM has not been configured with "-mem-path"
+-     * (what we've checked earlier here already), we can not use huge pages!
++     * memory-backend, then there is at least one node using "normal" RAM,
++     * so if its page size is smaller we have got to report that size instead.
+      */
+-    if (nb_numa_nodes == 0 || numa_info[0].node_memdev == NULL) {
++    if (hpsize > mainrampagesize &&
++        (nb_numa_nodes == 0 || numa_info[0].node_memdev == NULL)) {
+         static bool warned;
+         if (!warned) {
+             error_report("Huge page support disabled (n/a for main memory).");
+             warned = true;
+         }
+-        return getpagesize();
++        return mainrampagesize;
+     }
+ 
+     return hpsize;
+-- 
+1.8.3.1
+

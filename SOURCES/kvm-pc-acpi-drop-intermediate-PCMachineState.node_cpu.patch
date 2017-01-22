@@ -1,0 +1,140 @@
+From ffa6678ed77f2215c2b733a64259390c63b298b4 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:36 +0200
+Subject: [PATCH 36/99] pc: acpi: drop intermediate PCMachineState.node_cpu
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-32-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71647
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 31/78] pc: acpi: drop intermediate PCMachineState.node_cpu
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+PCMachineState.node_cpu was used for mapping APIC ID
+to numa node id as CPU entries in SRAT used to be
+built on sparse APIC ID bitmap (up to apic_id_limit).
+However since commit
+  5803fce pc: acpi: SRAT: create only valid processor lapic entries
+CPU entries in SRAT aren't build using apic bitmap
+but using 0..maxcpus index instead which is also used
+for creating numa_info[x].node_cpu map.
+So instead of doing useless intermediate conversion from
+  1. node by cpu index -> node by apic id
+       i.e. numa_info[x].node_cpu -> PCMachineState.node_cpu
+  2. apic id -> srat entry PMX
+       PCMachineState.node_cpu[apic id] -> PMX value
+use numa_info[x].node_cpu map directly like ARM does and do
+  1. numa_info[x].node_cpu -> PMX value using index
+     in range 0..maxcpus
+and drop not necessary PCMachineState.node_cpu and related
+code.
+
+That also removes the last (not counting legacy hotplug)
+dependency of ACPI code on apic_id_limit and need to allocate
+huge sparse PCMachineState.node_cpu array in case of 32-bit
+APIC IDs.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 1f3aba377d2a531453f018c70de2580a142c74c9)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/acpi-build.c | 11 ++++++++---
+ hw/i386/pc.c         | 16 +---------------
+ include/hw/i386/pc.h |  1 -
+ 3 files changed, 9 insertions(+), 19 deletions(-)
+
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index f2dc493..da6b9fa 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -45,6 +45,7 @@
+ #include "hw/acpi/tpm.h"
+ #include "sysemu/tpm_backend.h"
+ #include "hw/timer/mc146818rtc_regs.h"
++#include "sysemu/numa.h"
+ 
+ /* Supported chipsets: */
+ #include "hw/acpi/piix4.h"
+@@ -2396,7 +2397,6 @@ build_srat(GArray *table_data, BIOSLinker *linker, MachineState *machine)
+     AcpiSratMemoryAffinity *numamem;
+ 
+     int i;
+-    uint64_t curnode;
+     int srat_start, numa_start, slots;
+     uint64_t mem_len, mem_base, next_base;
+     MachineClass *mc = MACHINE_GET_CLASS(machine);
+@@ -2412,14 +2412,19 @@ build_srat(GArray *table_data, BIOSLinker *linker, MachineState *machine)
+     srat->reserved1 = cpu_to_le32(1);
+ 
+     for (i = 0; i < apic_ids->len; i++) {
++        int j;
+         int apic_id = apic_ids->cpus[i].arch_id;
+ 
+         core = acpi_data_push(table_data, sizeof *core);
+         core->type = ACPI_SRAT_PROCESSOR;
+         core->length = sizeof(*core);
+         core->local_apic_id = apic_id;
+-        curnode = pcms->node_cpu[apic_id];
+-        core->proximity_lo = curnode;
++        for (j = 0; j < nb_numa_nodes; j++) {
++            if (test_bit(i, numa_info[j].node_cpu)) {
++                core->proximity_lo = j;
++                break;
++            }
++        }
+         memset(core->proximity_hi, 0, 3);
+         core->local_sapic_eid = 0;
+         core->flags = cpu_to_le32(1);
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 44e2637..6cf147b 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1187,7 +1187,7 @@ void pc_machine_done(Notifier *notifier, void *data)
+ 
+ void pc_guest_info_init(PCMachineState *pcms)
+ {
+-    int i, j;
++    int i;
+ 
+     pcms->apic_xrupt_override = kvm_allows_irq0_override();
+     pcms->numa_nodes = nb_numa_nodes;
+@@ -1197,20 +1197,6 @@ void pc_guest_info_init(PCMachineState *pcms)
+         pcms->node_mem[i] = numa_info[i].node_mem;
+     }
+ 
+-    pcms->node_cpu = g_malloc0(pcms->apic_id_limit *
+-                                     sizeof *pcms->node_cpu);
+-
+-    for (i = 0; i < max_cpus; i++) {
+-        unsigned int apic_id = x86_cpu_apic_id_from_index(i);
+-        assert(apic_id < pcms->apic_id_limit);
+-        for (j = 0; j < nb_numa_nodes; j++) {
+-            if (test_bit(i, numa_info[j].node_cpu)) {
+-                pcms->node_cpu[apic_id] = j;
+-                break;
+-            }
+-        }
+-    }
+-
+     pcms->machine_done.notify = pc_machine_done;
+     qemu_add_machine_init_done_notifier(&pcms->machine_done);
+ }
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index d779ca9..51f41a0 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -72,7 +72,6 @@ struct PCMachineState {
+     /* NUMA information: */
+     uint64_t numa_nodes;
+     uint64_t *node_mem;
+-    uint64_t *node_cpu;
+ };
+ 
+ #define PC_MACHINE_ACPI_DEVICE_PROP "acpi-device"
+-- 
+1.8.3.1
+

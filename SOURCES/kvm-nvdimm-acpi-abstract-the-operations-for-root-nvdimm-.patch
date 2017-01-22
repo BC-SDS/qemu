@@ -1,0 +1,128 @@
+From 26e55c428d43b95dfc90275182f282c7e01e2bca Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 24 Jun 2016 18:55:54 +0200
+Subject: [PATCH 25/33] nvdimm acpi: abstract the operations for root & nvdimm
+ devices
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466794559-27963-18-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70784
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 17/22] nvdimm acpi: abstract the operations for root & nvdimm devices
+Bugzilla: 1270345
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+
+It separates the operations between root device and nvdimm devices
+in order to introducing label functions support for nvdimm device
+
+Signed-off-by: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+Reviewed-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 189f4d56356f0301c9e61c7d35ec8c03c69e7133)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/nvdimm.c | 74 ++++++++++++++++++++++++++++++++++++++++++--------------
+ 1 file changed, 56 insertions(+), 18 deletions(-)
+
+diff --git a/hw/acpi/nvdimm.c b/hw/acpi/nvdimm.c
+index b01f2c6..07c95c1 100644
+--- a/hw/acpi/nvdimm.c
++++ b/hw/acpi/nvdimm.c
+@@ -406,6 +406,55 @@ struct NvdimmDsmFuncNoPayloadOut {
+ } QEMU_PACKED;
+ typedef struct NvdimmDsmFuncNoPayloadOut NvdimmDsmFuncNoPayloadOut;
+ 
++static void
++nvdimm_dsm_function0(uint32_t supported_func, hwaddr dsm_mem_addr)
++{
++    NvdimmDsmFunc0Out func0 = {
++        .len = cpu_to_le32(sizeof(func0)),
++        .supported_func = cpu_to_le32(supported_func),
++    };
++    cpu_physical_memory_write(dsm_mem_addr, &func0, sizeof(func0));
++}
++
++static void
++nvdimm_dsm_no_payload(uint32_t func_ret_status, hwaddr dsm_mem_addr)
++{
++    NvdimmDsmFuncNoPayloadOut out = {
++        .len = cpu_to_le32(sizeof(out)),
++        .func_ret_status = cpu_to_le32(func_ret_status),
++    };
++    cpu_physical_memory_write(dsm_mem_addr, &out, sizeof(out));
++}
++
++static void nvdimm_dsm_root(NvdimmDsmIn *in, hwaddr dsm_mem_addr)
++{
++    /*
++     * function 0 is called to inquire which functions are supported by
++     * OSPM
++     */
++    if (!in->function) {
++        nvdimm_dsm_function0(0 /* No function supported other than
++                                  function 0 */, dsm_mem_addr);
++        return;
++    }
++
++    /* No function except function 0 is supported yet. */
++    nvdimm_dsm_no_payload(1 /* Not Supported */, dsm_mem_addr);
++}
++
++static void nvdimm_dsm_device(NvdimmDsmIn *in, hwaddr dsm_mem_addr)
++{
++    /* See the comments in nvdimm_dsm_root(). */
++    if (!in->function) {
++        nvdimm_dsm_function0(0 /* No function supported other than
++                                  function 0 */, dsm_mem_addr);
++        return;
++    }
++
++    /* No function except function 0 is supported yet. */
++    nvdimm_dsm_no_payload(1 /* Not Supported */, dsm_mem_addr);
++}
++
+ static uint64_t
+ nvdimm_dsm_read(void *opaque, hwaddr addr, unsigned size)
+ {
+@@ -436,26 +485,15 @@ nvdimm_dsm_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+     nvdimm_debug("Revision %#x Handler %#x Function %#x.\n", in->revision,
+                  in->handle, in->function);
+ 
+-    /*
+-     * function 0 is called to inquire which functions are supported by
+-     * OSPM
+-     */
+-    if (in->function == 0) {
+-        NvdimmDsmFunc0Out func0 = {
+-            .len = cpu_to_le32(sizeof(func0)),
+-             /* No function supported other than function 0 */
+-            .supported_func = cpu_to_le32(0),
+-        };
+-        cpu_physical_memory_write(dsm_mem_addr, &func0, sizeof func0);
+-    } else {
+-        /* No function except function 0 is supported yet. */
+-        NvdimmDsmFuncNoPayloadOut out = {
+-            .len = cpu_to_le32(sizeof(out)),
+-            .func_ret_status = cpu_to_le32(1)  /* Not Supported */,
+-        };
+-        cpu_physical_memory_write(dsm_mem_addr, &out, sizeof(out));
++     /* Handle 0 is reserved for NVDIMM Root Device. */
++    if (!in->handle) {
++        nvdimm_dsm_root(in, dsm_mem_addr);
++        goto exit;
+     }
+ 
++    nvdimm_dsm_device(in, dsm_mem_addr);
++
++exit:
+     g_free(in);
+ }
+ 
+-- 
+1.8.3.1
+

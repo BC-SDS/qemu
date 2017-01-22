@@ -1,0 +1,52 @@
+From 33af0838c013fc29461ef600a47f453f39016480 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:00 +0200
+Subject: [PATCH 60/99] target-i386: cpu: Do not ignore error and fix apic
+ parent
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-56-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71671
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 55/78] target-i386: cpu: Do not ignore error and fix apic parent
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+object_property_add_child() silently fails with error that it can't
+create duplicate propery 'apic' as we already have 'apic' property
+registered for 'apic' feature. As result generic device_realize puts
+apic into unattached container.
+
+As it's programming error, abort if name collision happens in future
+and fix property name for apic_state to 'lapic', this way apic is
+a child of cpu instance.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 6816b1b3811e839540df22855d975b6d76ae438b)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/cpu.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index d419d60..9896bb8 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -2776,8 +2776,9 @@ static void x86_cpu_apic_create(X86CPU *cpu, Error **errp)
+ 
+     cpu->apic_state = DEVICE(object_new(apic_type));
+ 
+-    object_property_add_child(OBJECT(cpu), "apic",
+-                              OBJECT(cpu->apic_state), NULL);
++    object_property_add_child(OBJECT(cpu), "lapic",
++                              OBJECT(cpu->apic_state), &error_abort);
++
+     qdev_prop_set_uint8(cpu->apic_state, "id", cpu->apic_id);
+     /* TODO: convert to link<> */
+     apic = APIC_COMMON(cpu->apic_state);
+-- 
+1.8.3.1
+

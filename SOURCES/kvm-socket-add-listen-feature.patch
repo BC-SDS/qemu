@@ -1,0 +1,76 @@
+From f465e1028b948c9c271a73593e087d87afb5ca60 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Mon, 4 Jul 2016 20:57:30 +0200
+Subject: [PATCH 10/16] socket: add listen feature
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160704205732.27022-4-marcandre.lureau@redhat.com>
+Patchwork-id: 70940
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 3/5] socket: add listen feature
+Bugzilla: 1347077
+RH-Acked-by: Xiao Wang <jasowang@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: Marc-André Lureau <marcandre.lureau@redhat.com>
+
+Add a flag to tell whether the channel socket is listening.
+
+Signed-off-by: Marc-AndrÃ© Lureau <marcandre.lureau@redhat.com>
+Message-Id: <1466105332-10285-3-git-send-email-marcandre.lureau@redhat.com>
+Acked-by: Daniel P. Berrange <berrange@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+
+(cherry picked from commit 3fa27a9a1e20e8fb2bf4358d6873177d5d5c049a)
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/io/channel.h | 1 +
+ io/channel-socket.c  | 7 +++++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/include/io/channel.h b/include/io/channel.h
+index d37acd2..e52f059 100644
+--- a/include/io/channel.h
++++ b/include/io/channel.h
+@@ -42,6 +42,7 @@ typedef enum QIOChannelFeature QIOChannelFeature;
+ enum QIOChannelFeature {
+     QIO_CHANNEL_FEATURE_FD_PASS  = (1 << 0),
+     QIO_CHANNEL_FEATURE_SHUTDOWN = (1 << 1),
++    QIO_CHANNEL_FEATURE_LISTEN   = (1 << 2),
+ };
+ 
+ 
+diff --git a/io/channel-socket.c b/io/channel-socket.c
+index ca8bc20..1cd5848 100644
+--- a/io/channel-socket.c
++++ b/io/channel-socket.c
+@@ -71,6 +71,9 @@ qio_channel_socket_set_fd(QIOChannelSocket *sioc,
+                           int fd,
+                           Error **errp)
+ {
++    int val;
++    socklen_t len = sizeof(val);
++
+     if (sioc->fd != -1) {
+         error_setg(errp, "Socket is already open");
+         return -1;
+@@ -106,6 +109,10 @@ qio_channel_socket_set_fd(QIOChannelSocket *sioc,
+         ioc->features |= (1 << QIO_CHANNEL_FEATURE_FD_PASS);
+     }
+ #endif /* WIN32 */
++    if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &val, &len) == 0 && val) {
++        QIOChannel *ioc = QIO_CHANNEL(sioc);
++        ioc->features |= (1 << QIO_CHANNEL_FEATURE_LISTEN);
++    }
+ 
+     return 0;
+ 
+-- 
+1.8.3.1
+

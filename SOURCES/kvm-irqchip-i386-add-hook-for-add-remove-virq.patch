@@ -1,0 +1,255 @@
+From cc13b6ce989f1cbea6671b52286866de9714d697 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:44 +0200
+Subject: [PATCH 26/37] kvm-irqchip: i386: add hook for add/remove virq
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-26-git-send-email-peterx@redhat.com>
+Patchwork-id: 72010
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 25/34] kvm-irqchip: i386: add hook for add/remove virq
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Adding two hooks to be notified when adding/removing msi routes. There
+are two kinds of MSI routes:
+
+- in kvm_irqchip_add_irq_route(): before assigning IRQFD. Used by
+  vhost, vfio, etc.
+
+- in kvm_irqchip_send_msi(): when sending direct MSI message, if
+  direct MSI not allowed, we will first create one MSI route entry
+  in the kernel, then trigger it.
+
+This patch only hooks the first one (irqfd case). We do not need to
+take care for the 2nd one, since it's only used by QEMU userspace
+(kvm-apic) and the messages will always do in-time translation when
+triggered. While we need to note them down for the 1st one, so that we
+can notify the kernel when cache invalidation happens.
+
+Also, we do not hook IOAPIC msi routes (we have explicit notifier for
+IOAPIC to keep its cache updated). We only need to care about irqfd
+users.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 38d87493f37e5dc442c7419c5843fcf60bb39d63)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+
+Moving splitted trace-events into big trace-event file.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/sysemu/kvm.h |  6 ++++++
+ kvm-all.c            |  2 ++
+ target-arm/kvm.c     | 11 +++++++++++
+ target-i386/kvm.c    | 48 ++++++++++++++++++++++++++++++++++++++++++++++++
+ target-mips/kvm.c    | 11 +++++++++++
+ target-ppc/kvm.c     | 11 +++++++++++
+ target-s390x/kvm.c   | 11 +++++++++++
+ trace-events         |  2 ++
+ 8 files changed, 102 insertions(+)
+
+diff --git a/include/sysemu/kvm.h b/include/sysemu/kvm.h
+index f693c1e..74acff8 100644
+--- a/include/sysemu/kvm.h
++++ b/include/sysemu/kvm.h
+@@ -356,6 +356,12 @@ void kvm_arch_init_irq_routing(KVMState *s);
+ int kvm_arch_fixup_msi_route(struct kvm_irq_routing_entry *route,
+                              uint64_t address, uint32_t data, PCIDevice *dev);
+ 
++/* Notify arch about newly added MSI routes */
++int kvm_arch_add_msi_route_post(struct kvm_irq_routing_entry *route,
++                                int vector, PCIDevice *dev);
++/* Notify arch about released MSI routes */
++int kvm_arch_release_virq_post(int virq);
++
+ int kvm_arch_msi_data_to_gsi(uint32_t data);
+ 
+ int kvm_set_irq(KVMState *s, int irq, int level);
+diff --git a/kvm-all.c b/kvm-all.c
+index b550143..f4a5873 100644
+--- a/kvm-all.c
++++ b/kvm-all.c
+@@ -1127,6 +1127,7 @@ void kvm_irqchip_release_virq(KVMState *s, int virq)
+         }
+     }
+     clear_gsi(s, virq);
++    kvm_arch_release_virq_post(virq);
+ }
+ 
+ static unsigned int kvm_hash_msi(uint32_t data)
+@@ -1275,6 +1276,7 @@ int kvm_irqchip_add_msi_route(KVMState *s, int vector, PCIDevice *dev)
+     }
+ 
+     kvm_add_routing_entry(s, &kroute);
++    kvm_arch_add_msi_route_post(&kroute, vector, dev);
+     kvm_irqchip_commit_routes(s);
+ 
+     return virq;
+diff --git a/target-arm/kvm.c b/target-arm/kvm.c
+index 3671032..90c293e 100644
+--- a/target-arm/kvm.c
++++ b/target-arm/kvm.c
+@@ -622,6 +622,17 @@ int kvm_arch_fixup_msi_route(struct kvm_irq_routing_entry *route,
+     return 0;
+ }
+ 
++int kvm_arch_add_msi_route_post(struct kvm_irq_routing_entry *route,
++                                int vector, PCIDevice *dev)
++{
++    return 0;
++}
++
++int kvm_arch_release_virq_post(int virq)
++{
++    return 0;
++}
++
+ int kvm_arch_msi_data_to_gsi(uint32_t data)
+ {
+     return (data - 32) & 0xffff;
+diff --git a/target-i386/kvm.c b/target-i386/kvm.c
+index 99beb11..915229d 100644
+--- a/target-i386/kvm.c
++++ b/target-i386/kvm.c
+@@ -3399,6 +3399,54 @@ int kvm_arch_fixup_msi_route(struct kvm_irq_routing_entry *route,
+     return 0;
+ }
+ 
++typedef struct MSIRouteEntry MSIRouteEntry;
++
++struct MSIRouteEntry {
++    PCIDevice *dev;             /* Device pointer */
++    int vector;                 /* MSI/MSIX vector index */
++    int virq;                   /* Virtual IRQ index */
++    QLIST_ENTRY(MSIRouteEntry) list;
++};
++
++/* List of used GSI routes */
++static QLIST_HEAD(, MSIRouteEntry) msi_route_list = \
++    QLIST_HEAD_INITIALIZER(msi_route_list);
++
++int kvm_arch_add_msi_route_post(struct kvm_irq_routing_entry *route,
++                                int vector, PCIDevice *dev)
++{
++    MSIRouteEntry *entry;
++
++    if (!dev) {
++        /* These are (possibly) IOAPIC routes only used for split
++         * kernel irqchip mode, while what we are housekeeping are
++         * PCI devices only. */
++        return 0;
++    }
++
++    entry = g_new0(MSIRouteEntry, 1);
++    entry->dev = dev;
++    entry->vector = vector;
++    entry->virq = route->gsi;
++    QLIST_INSERT_HEAD(&msi_route_list, entry, list);
++
++    trace_kvm_x86_add_msi_route(route->gsi);
++    return 0;
++}
++
++int kvm_arch_release_virq_post(int virq)
++{
++    MSIRouteEntry *entry, *next;
++    QLIST_FOREACH_SAFE(entry, &msi_route_list, list, next) {
++        if (entry->virq == virq) {
++            trace_kvm_x86_remove_msi_route(virq);
++            QLIST_REMOVE(entry, list);
++            break;
++        }
++    }
++    return 0;
++}
++
+ int kvm_arch_msi_data_to_gsi(uint32_t data)
+ {
+     abort();
+diff --git a/target-mips/kvm.c b/target-mips/kvm.c
+index 950bc05..1dd7904 100644
+--- a/target-mips/kvm.c
++++ b/target-mips/kvm.c
+@@ -1044,6 +1044,17 @@ int kvm_arch_fixup_msi_route(struct kvm_irq_routing_entry *route,
+     return 0;
+ }
+ 
++int kvm_arch_add_msi_route_post(struct kvm_irq_routing_entry *route,
++                                int vector, PCIDevice *dev)
++{
++    return 0;
++}
++
++int kvm_arch_release_virq_post(int virq)
++{
++    return 0;
++}
++
+ int kvm_arch_msi_data_to_gsi(uint32_t data)
+ {
+     abort();
+diff --git a/target-ppc/kvm.c b/target-ppc/kvm.c
+index 032faa2..e799d22 100644
+--- a/target-ppc/kvm.c
++++ b/target-ppc/kvm.c
+@@ -2626,6 +2626,17 @@ int kvm_arch_fixup_msi_route(struct kvm_irq_routing_entry *route,
+     return 0;
+ }
+ 
++int kvm_arch_add_msi_route_post(struct kvm_irq_routing_entry *route,
++                                int vector, PCIDevice *dev)
++{
++    return 0;
++}
++
++int kvm_arch_release_virq_post(int virq)
++{
++    return 0;
++}
++
+ int kvm_arch_msi_data_to_gsi(uint32_t data)
+ {
+     return data & 0xffff;
+diff --git a/target-s390x/kvm.c b/target-s390x/kvm.c
+index e1859ca..22d2ed4 100644
+--- a/target-s390x/kvm.c
++++ b/target-s390x/kvm.c
+@@ -2246,6 +2246,17 @@ int kvm_arch_fixup_msi_route(struct kvm_irq_routing_entry *route,
+     return 0;
+ }
+ 
++int kvm_arch_add_msi_route_post(struct kvm_irq_routing_entry *route,
++                                int vector, PCIDevice *dev)
++{
++    return 0;
++}
++
++int kvm_arch_release_virq_post(int virq)
++{
++    return 0;
++}
++
+ int kvm_arch_msi_data_to_gsi(uint32_t data)
+ {
+     abort();
+diff --git a/trace-events b/trace-events
+index 68977b4..3dee5e1 100644
+--- a/trace-events
++++ b/trace-events
+@@ -2159,6 +2159,8 @@ virtio_input_queue_full(void) "queue full"
+ 
+ # target-i386/kvm.c
+ kvm_x86_fixup_msi_error(uint32_t gsi) "VT-d failed to remap interrupt for GSI %" PRIu32
++kvm_x86_add_msi_route(int virq) "Adding route entry for virq %d"
++kvm_x86_remove_msi_route(int virq) "Removing route entry for virq %d"
+ 
+ # hw/i386/x86-iommu.c
+ x86_iommu_iec_notify(bool global, uint32_t index, uint32_t mask) "Notify IEC invalidation: global=%d index=%" PRIu32 " mask=%" PRIu32
+-- 
+1.8.3.1
+

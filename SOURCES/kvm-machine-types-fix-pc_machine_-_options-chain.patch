@@ -1,0 +1,113 @@
+From bb7fc9525f9778c08051ca890d0c96b5d0707f5e Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Thu, 16 Jun 2016 09:44:31 +0200
+Subject: [PATCH 07/13] machine types: fix pc_machine_*_options chain
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1466070273-5859-2-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70632
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH v2 1/3] machine types: fix pc_machine_*_options chain
+Bugzilla: 1344320
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+The pc_machine_*_options functions should be chained together, they
+aren't.
+
+ Symptom: error while loading state for instance 0x0 of device 'cpu'
+          on reverse migration from 7.3->7.2 using pc-i440fx-7.0
+          machine type
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+---
+ hw/i386/pc_piix.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc_piix.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/hw/i386/pc_piix.c b/hw/i386/pc_piix.c
+index db3fd53..ae70af2 100644
+--- a/hw/i386/pc_piix.c
++++ b/hw/i386/pc_piix.c
+@@ -1165,6 +1165,7 @@ static void pc_init_rhel710(MachineState *machine)
+ 
+ static void pc_machine_rhel710_options(MachineClass *m)
+ {
++    pc_machine_rhel720_options(m);
+     m->family = "pc_piix_Y";
+     m->desc = "RHEL 7.1.0 PC (i440FX + PIIX, 1996)";
+     m->default_machine_opts = "firmware=bios-256k.bin";
+@@ -1199,6 +1200,7 @@ static void pc_init_rhel700(MachineState *machine)
+ 
+ static void pc_machine_rhel700_options(MachineClass *m)
+ {
++    pc_machine_rhel710_options(m);
+     m->family = "pc_piix_Y";
+     m->desc = "RHEL 7.0.0 PC (i440FX + PIIX, 1996)";
+     m->default_machine_opts = "firmware=bios-256k.bin";
+@@ -1511,6 +1513,7 @@ static void pc_init_rhel660(MachineState *machine)
+ 
+ static void pc_machine_rhel660_options(MachineClass *m)
+ {
++    pc_machine_rhel700_options(m);
+     m->family = "pc_piix_Z";
+     m->desc = "RHEL 6.6.0 PC";
+     m->rom_file_has_mr = false;
+@@ -1541,6 +1544,7 @@ static void pc_init_rhel650(MachineState *machine)
+ 
+ static void pc_machine_rhel650_options(MachineClass *m)
+ {
++    pc_machine_rhel660_options(m);
+     m->family = "pc_piix_Z";
+     m->desc = "RHEL 6.5.0 PC";
+     SET_MACHINE_COMPAT(m, PC_RHEL6_5_COMPAT);
+@@ -1591,6 +1595,7 @@ static void pc_init_rhel640(MachineState *machine)
+ 
+ static void pc_machine_rhel640_options(MachineClass *m)
+ {
++    pc_machine_rhel650_options(m);
+     m->family = "pc_piix_Z";
+     m->desc = "RHEL 6.4.0 PC";
+     SET_MACHINE_COMPAT(m, PC_RHEL6_4_COMPAT);
+@@ -1667,6 +1672,7 @@ static void pc_init_rhel630(MachineState *machine)
+ 
+ static void pc_machine_rhel630_options(MachineClass *m)
+ {
++    pc_machine_rhel640_options(m);
+     m->family = "pc_piix_Z";
+     m->desc = "RHEL 6.3.0 PC";
+     SET_MACHINE_COMPAT(m, PC_RHEL6_6_COMPAT);
+@@ -1697,6 +1703,7 @@ static void pc_init_rhel620(MachineState *machine)
+ 
+ static void pc_machine_rhel620_options(MachineClass *m)
+ {
++    pc_machine_rhel630_options(m);
+     m->family = "pc_piix_Z";
+     m->desc = "RHEL 6.2.0 PC";
+     SET_MACHINE_COMPAT(m, PC_RHEL6_2_COMPAT);
+@@ -1767,6 +1774,7 @@ static void pc_init_rhel610(MachineState *machine)
+ 
+ static void pc_machine_rhel610_options(MachineClass *m)
+ {
++    pc_machine_rhel620_options(m);
+     m->family = "pc_piix_Z";
+     m->desc = "RHEL 6.1.0 PC";
+     SET_MACHINE_COMPAT(m, PC_RHEL6_1_COMPAT);
+@@ -1804,6 +1812,7 @@ static void pc_init_rhel600(MachineState *machine)
+ 
+ static void pc_machine_rhel600_options(MachineClass *m)
+ {
++    pc_machine_rhel610_options(m);
+     m->family = "pc_piix_Z";
+     m->desc = "RHEL 6.0.0 PC";
+     SET_MACHINE_COMPAT(m, PC_RHEL6_0_COMPAT);
+-- 
+1.8.3.1
+

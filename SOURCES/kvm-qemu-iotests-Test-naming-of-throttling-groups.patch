@@ -1,0 +1,158 @@
+From dd9f7cd37fac70bde5e994ba04103b07a0920b95 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 15 Jul 2016 14:00:36 +0200
+Subject: [PATCH 5/6] qemu-iotests: Test naming of throttling groups
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1468591236-1698-3-git-send-email-stefanha@redhat.com>
+Patchwork-id: 71197
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 2/2] qemu-iotests: Test naming of throttling groups
+Bugzilla: 1353801
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Max Reitz <mreitz@redhat.com>
+
+From: Alberto Garcia <berto@igalia.com>
+
+Throttling groups are named using the 'group' parameter of the
+block_set_io_throttle command and the throttling.group command-line
+option. If that parameter is unspecified the groups get the name of
+the block device.
+
+This patch adds a new test to check the naming of throttling groups.
+
+Signed-off-by: Alberto Garcia <berto@igalia.com>
+Message-id: d87d02823a6b91609509d8bb18e2f5dbd9a6102c.1467986342.git.berto@igalia.com
+Reviewed-by: Max Reitz <mreitz@redhat.com>
+Signed-off-by: Max Reitz <mreitz@redhat.com>
+(cherry picked from commit 435d5ee6cd3fd7aa0f16748c03648ed97b493c2b)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ tests/qemu-iotests/093     | 98 ++++++++++++++++++++++++++++++++++++++++++++++
+ tests/qemu-iotests/093.out |  4 +-
+ 2 files changed, 100 insertions(+), 2 deletions(-)
+
+diff --git a/tests/qemu-iotests/093 b/tests/qemu-iotests/093
+index ce8e13c..ffcb271 100755
+--- a/tests/qemu-iotests/093
++++ b/tests/qemu-iotests/093
+@@ -184,5 +184,103 @@ class ThrottleTestCase(iotests.QMPTestCase):
+ class ThrottleTestCoroutine(ThrottleTestCase):
+     test_img = "null-co://"
+ 
++class ThrottleTestGroupNames(iotests.QMPTestCase):
++    test_img = "null-aio://"
++    max_drives = 3
++
++    def setUp(self):
++        self.vm = iotests.VM()
++        for i in range(0, self.max_drives):
++            self.vm.add_drive(self.test_img, "throttling.iops-total=100")
++        self.vm.launch()
++
++    def tearDown(self):
++        self.vm.shutdown()
++
++    def set_io_throttle(self, device, params):
++        params["device"] = device
++        result = self.vm.qmp("block_set_io_throttle", conv_keys=False, **params)
++        self.assert_qmp(result, 'return', {})
++
++    def verify_name(self, device, name):
++        result = self.vm.qmp("query-block")
++        for r in result["return"]:
++            if r["device"] == device:
++                info = r["inserted"]
++                if name:
++                    self.assertEqual(info["group"], name)
++                else:
++                    self.assertFalse(info.has_key('group'))
++                return
++
++        raise Exception("No group information found for '%s'" % device)
++
++    def test_group_naming(self):
++        params = {"bps": 0,
++                  "bps_rd": 0,
++                  "bps_wr": 0,
++                  "iops": 0,
++                  "iops_rd": 0,
++                  "iops_wr": 0}
++
++        # Check the drives added using the command line.
++        # The default throttling group name is the device name.
++        for i in range(self.max_drives):
++            devname = "drive%d" % i
++            self.verify_name(devname, devname)
++
++        # Clear throttling settings => the group name is gone.
++        for i in range(self.max_drives):
++            devname = "drive%d" % i
++            self.set_io_throttle(devname, params)
++            self.verify_name(devname, None)
++
++        # Set throttling settings using block_set_io_throttle and
++        # check the default group names.
++        params["iops"] = 10
++        for i in range(self.max_drives):
++            devname = "drive%d" % i
++            self.set_io_throttle(devname, params)
++            self.verify_name(devname, devname)
++
++        # Set a custom group name for each device
++        for i in range(3):
++            devname = "drive%d" % i
++            groupname = "group%d" % i
++            params['group'] = groupname
++            self.set_io_throttle(devname, params)
++            self.verify_name(devname, groupname)
++
++        # Put drive0 in group1 and check that all other devices remain
++        # unchanged
++        params['group'] = 'group1'
++        self.set_io_throttle('drive0', params)
++        self.verify_name('drive0', 'group1')
++        for i in range(1, self.max_drives):
++            devname = "drive%d" % i
++            groupname = "group%d" % i
++            self.verify_name(devname, groupname)
++
++        # Put drive0 in group2 and check that all other devices remain
++        # unchanged
++        params['group'] = 'group2'
++        self.set_io_throttle('drive0', params)
++        self.verify_name('drive0', 'group2')
++        for i in range(1, self.max_drives):
++            devname = "drive%d" % i
++            groupname = "group%d" % i
++            self.verify_name(devname, groupname)
++
++        # Clear throttling settings from drive0 check that all other
++        # devices remain unchanged
++        params["iops"] = 0
++        self.set_io_throttle('drive0', params)
++        self.verify_name('drive0', None)
++        for i in range(1, self.max_drives):
++            devname = "drive%d" % i
++            groupname = "group%d" % i
++            self.verify_name(devname, groupname)
++
++
+ if __name__ == '__main__':
+     iotests.main(supported_fmts=["raw"])
+diff --git a/tests/qemu-iotests/093.out b/tests/qemu-iotests/093.out
+index 89968f3..914e373 100644
+--- a/tests/qemu-iotests/093.out
++++ b/tests/qemu-iotests/093.out
+@@ -1,5 +1,5 @@
+-....
++.....
+ ----------------------------------------------------------------------
+-Ran 4 tests
++Ran 5 tests
+ 
+ OK
+-- 
+1.8.3.1
+

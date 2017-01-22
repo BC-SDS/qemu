@@ -1,0 +1,98 @@
+From 78c96ff2c88b89ae2bf1bb37b30aa1fe0fabc4b5 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Tue, 21 Jun 2016 13:34:22 +0200
+Subject: [PATCH 20/25] backup: follow AioContext change gracefully
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466516062-20048-10-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70726
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 9/9] backup: follow AioContext change gracefully
+Bugzilla: 1265179
+RH-Acked-by: Jeffrey Cody <jcody@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+Move s->target to the new AioContext when there is an AioContext change.
+
+The backup_run() coroutine does not use asynchronous I/O so there is no
+need to wait for in-flight requests in a BlockJobDriver->pause()
+callback.
+
+Guest writes are intercepted by the backup job.  Treat them as guest
+activity and do it even while the job is paused.  This is necessary
+since the only alternative would be to fail a job that experienced guest
+writes during pause once the job is resumed.  In practice the guest
+writes don't interfere with AioContext switching since bdrv_drain() is
+used by bdrv_set_aio_context().
+
+Loops already contain pause points because of block_job_sleep_ns() calls
+in the yield_and_check() helper function.  It is necessary to convert a
+raw qemu_coroutine_yield() to block_job_yield() so the
+MIRROR_SYNC_MODE_NONE case can pause.
+
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Message-id: 1466096189-6477-9-git-send-email-stefanha@redhat.com
+(cherry picked from commit 5ab4b69ce29908b327a91966dc78ea0fd7424075)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+  block/backup.c
+
+  Context conflict because downstream has .iostatus_reset() callbacks in
+  backup job driver.
+
+  s/blk_set_aio_context/bdrv_set_aio_context/
+
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+---
+ block/backup.c | 24 +++++++++++++++---------
+ 1 file changed, 15 insertions(+), 9 deletions(-)
+
+diff --git a/block/backup.c b/block/backup.c
+index 491fd14..c1112d3 100644
+--- a/block/backup.c
++++ b/block/backup.c
+@@ -259,13 +259,21 @@ static void backup_abort(BlockJob *job)
+     }
+ }
+ 
++static void backup_attached_aio_context(BlockJob *job, AioContext *aio_context)
++{
++    BackupBlockJob *s = container_of(job, BackupBlockJob, common);
++
++    bdrv_set_aio_context(s->target, aio_context);
++}
++
+ static const BlockJobDriver backup_job_driver = {
+-    .instance_size  = sizeof(BackupBlockJob),
+-    .job_type       = BLOCK_JOB_TYPE_BACKUP,
+-    .set_speed      = backup_set_speed,
+-    .iostatus_reset = backup_iostatus_reset,
+-    .commit         = backup_commit,
+-    .abort          = backup_abort,
++    .instance_size          = sizeof(BackupBlockJob),
++    .job_type               = BLOCK_JOB_TYPE_BACKUP,
++    .set_speed              = backup_set_speed,
++    .iostatus_reset         = backup_iostatus_reset,
++    .commit                 = backup_commit,
++    .abort                  = backup_abort,
++    .attached_aio_context   = backup_attached_aio_context,
+ };
+ 
+ static BlockErrorAction backup_error_action(BackupBlockJob *job,
+@@ -415,9 +423,7 @@ static void coroutine_fn backup_run(void *opaque)
+         while (!block_job_is_cancelled(&job->common)) {
+             /* Yield until the job is cancelled.  We just let our before_write
+              * notify callback service CoW requests. */
+-            job->common.busy = false;
+-            qemu_coroutine_yield();
+-            job->common.busy = true;
++            block_job_yield(&job->common);
+         }
+     } else if (job->sync_mode == MIRROR_SYNC_MODE_INCREMENTAL) {
+         ret = backup_run_incremental(job);
+-- 
+1.8.3.1
+

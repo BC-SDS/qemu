@@ -1,0 +1,74 @@
+From 9c41375f56d85fdc40dfb611ded04670c27ac087 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:40 +0200
+Subject: [PATCH 20/30] vhost: add assert() to check runtime behaviour
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-21-marcandre.lureau@redhat.com>
+Patchwork-id: 71936
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 20/28] vhost: add assert() to check runtime behaviour
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+All these functions must be called only after the backend is connected.
+They are called from virtio-net.c, after either virtio or link status
+change.
+
+The check for nc->peer->link_down should ensure vhost_net_{start,stop}()
+are always called between vhost_user_{start,stop}().
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 8695de0fcf739b2071018d933b407ed8c16f40e8)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/vhost.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/hw/virtio/vhost.c b/hw/virtio/vhost.c
+index 6b6cd7b..2e7cdd2 100644
+--- a/hw/virtio/vhost.c
++++ b/hw/virtio/vhost.c
+@@ -1245,6 +1245,9 @@ void vhost_virtqueue_mask(struct vhost_dev *hdev, VirtIODevice *vdev, int n,
+     int r, index = n - hdev->vq_index;
+     struct vhost_vring_file file;
+ 
++    /* should only be called after backend is connected */
++    assert(hdev->vhost_ops);
++
+     if (mask) {
+         assert(vdev->use_guest_notifier_mask);
+         file.fd = event_notifier_get_fd(&hdev->vqs[index].masked_notifier);
+@@ -1291,6 +1294,9 @@ int vhost_dev_start(struct vhost_dev *hdev, VirtIODevice *vdev)
+ {
+     int i, r;
+ 
++    /* should only be called after backend is connected */
++    assert(hdev->vhost_ops);
++
+     hdev->started = true;
+ 
+     r = vhost_dev_set_features(hdev, hdev->log_enabled);
+@@ -1353,6 +1359,9 @@ void vhost_dev_stop(struct vhost_dev *hdev, VirtIODevice *vdev)
+ {
+     int i;
+ 
++    /* should only be called after backend is connected */
++    assert(hdev->vhost_ops);
++
+     for (i = 0; i < hdev->nvqs; ++i) {
+         vhost_virtqueue_stop(hdev,
+                              vdev,
+-- 
+1.8.3.1
+

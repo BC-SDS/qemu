@@ -1,0 +1,346 @@
+From 06bb16a4b03c92ad0927f6ec84d4bdef04a7a7e6 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:20 +0200
+Subject: [PATCH 13/27] vfio: spapr: Add DMA memory preregistering (SPAPR IOMMU
+ v2)
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-14-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71100
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 13/16] vfio: spapr: Add DMA memory preregistering (SPAPR IOMMU v2)
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Alex Williamson <alex.williamson@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Alexey Kardashevskiy <aik@ozlabs.ru>
+
+This makes use of the new "memory registering" feature. The idea is
+to provide the userspace ability to notify the host kernel about pages
+which are going to be used for DMA. Having this information, the host
+kernel can pin them all once per user process, do locked pages
+accounting (once) and not spent time on doing that in real time with
+possible failures which cannot be handled nicely in some cases.
+
+This adds a prereg memory listener which listens on address_space_memory
+and notifies a VFIO container about memory which needs to be
+pinned/unpinned. VFIO MMIO regions (i.e. "skip dump" regions) are skipped.
+
+The feature is only enabled for SPAPR IOMMU v2. The host kernel changes
+are required. Since v2 does not need/support VFIO_IOMMU_ENABLE, this does
+not call it when v2 is detected and enabled.
+
+This enforces guest RAM blocks to be host page size aligned; however
+this is not new as KVM already requires memory slots to be host page
+size aligned.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+[dwg: Fix compile error on 32-bit host]
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+
+(cherry picked from commit 318f67ce13710a09c6dcf34da7b6b0ebc845c5c9)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	hw/vfio/Makefile.objs
+	hw/vfio/trace-events
+
+Corrected for context conflict in Makefile.objs.
+
+trace-events conflict is because downstream still has all the trace
+events in one big file, not distributed.  Fixed that by applying
+equivalent diff to the master trace-events file.
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+---
+ hw/vfio/Makefile.objs         |   1 +
+ hw/vfio/common.c              |  40 +++++++++---
+ hw/vfio/spapr.c               | 139 ++++++++++++++++++++++++++++++++++++++++++
+ include/hw/vfio/vfio-common.h |   4 ++
+ trace-events                  |   5 ++
+ 5 files changed, 180 insertions(+), 9 deletions(-)
+ create mode 100644 hw/vfio/spapr.c
+
+diff --git a/hw/vfio/Makefile.objs b/hw/vfio/Makefile.objs
+index 233506f..47b1144 100644
+--- a/hw/vfio/Makefile.objs
++++ b/hw/vfio/Makefile.objs
+@@ -2,4 +2,5 @@ ifeq ($(CONFIG_LINUX), y)
+ obj-$(CONFIG_SOFTMMU) += common.o
+ obj-$(CONFIG_PCI) += pci.o pci-quirks.o
+ obj-$(CONFIG_SOFTMMU) += platform.o
++obj-$(CONFIG_SOFTMMU) += spapr.o
+ endif
+diff --git a/hw/vfio/common.c b/hw/vfio/common.c
+index f6a49eb..17c9c33 100644
+--- a/hw/vfio/common.c
++++ b/hw/vfio/common.c
+@@ -488,6 +488,9 @@ static const MemoryListener vfio_memory_listener = {
+ static void vfio_listener_release(VFIOContainer *container)
+ {
+     memory_listener_unregister(&container->listener);
++    if (container->iommu_type == VFIO_SPAPR_TCE_v2_IOMMU) {
++        memory_listener_unregister(&container->prereg_listener);
++    }
+ }
+ 
+ int vfio_region_setup(Object *obj, VFIODevice *vbasedev, VFIORegion *region,
+@@ -803,8 +806,8 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as)
+             goto free_container_exit;
+         }
+ 
+-        ret = ioctl(fd, VFIO_SET_IOMMU,
+-                    v2 ? VFIO_TYPE1v2_IOMMU : VFIO_TYPE1_IOMMU);
++        container->iommu_type = v2 ? VFIO_TYPE1v2_IOMMU : VFIO_TYPE1_IOMMU;
++        ret = ioctl(fd, VFIO_SET_IOMMU, container->iommu_type);
+         if (ret) {
+             error_report("vfio: failed to set iommu for container: %m");
+             ret = -errno;
+@@ -829,8 +832,10 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as)
+         if ((ret == 0) && (info.flags & VFIO_IOMMU_INFO_PGSIZES)) {
+             container->iova_pgsizes = info.iova_pgsizes;
+         }
+-    } else if (ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_SPAPR_TCE_IOMMU)) {
++    } else if (ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_SPAPR_TCE_IOMMU) ||
++               ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_SPAPR_TCE_v2_IOMMU)) {
+         struct vfio_iommu_spapr_tce_info info;
++        bool v2 = !!ioctl(fd, VFIO_CHECK_EXTENSION, VFIO_SPAPR_TCE_v2_IOMMU);
+ 
+         ret = ioctl(group->fd, VFIO_GROUP_SET_CONTAINER, &fd);
+         if (ret) {
+@@ -838,7 +843,9 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as)
+             ret = -errno;
+             goto free_container_exit;
+         }
+-        ret = ioctl(fd, VFIO_SET_IOMMU, VFIO_SPAPR_TCE_IOMMU);
++        container->iommu_type =
++            v2 ? VFIO_SPAPR_TCE_v2_IOMMU : VFIO_SPAPR_TCE_IOMMU;
++        ret = ioctl(fd, VFIO_SET_IOMMU, container->iommu_type);
+         if (ret) {
+             error_report("vfio: failed to set iommu for container: %m");
+             ret = -errno;
+@@ -850,11 +857,23 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as)
+          * when container fd is closed so we do not call it explicitly
+          * in this file.
+          */
+-        ret = ioctl(fd, VFIO_IOMMU_ENABLE);
+-        if (ret) {
+-            error_report("vfio: failed to enable container: %m");
+-            ret = -errno;
+-            goto free_container_exit;
++        if (!v2) {
++            ret = ioctl(fd, VFIO_IOMMU_ENABLE);
++            if (ret) {
++                error_report("vfio: failed to enable container: %m");
++                ret = -errno;
++                goto free_container_exit;
++            }
++        } else {
++            container->prereg_listener = vfio_prereg_listener;
++
++            memory_listener_register(&container->prereg_listener,
++                                     &address_space_memory);
++            if (container->error) {
++                memory_listener_unregister(&container->prereg_listener);
++                error_report("vfio: RAM memory listener initialization failed for container");
++                goto free_container_exit;
++            }
+         }
+ 
+         /*
+@@ -867,6 +886,9 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as)
+         if (ret) {
+             error_report("vfio: VFIO_IOMMU_SPAPR_TCE_GET_INFO failed: %m");
+             ret = -errno;
++            if (v2) {
++                memory_listener_unregister(&container->prereg_listener);
++            }
+             goto free_container_exit;
+         }
+         container->min_iova = info.dma32_window_start;
+diff --git a/hw/vfio/spapr.c b/hw/vfio/spapr.c
+new file mode 100644
+index 0000000..7d64443
+--- /dev/null
++++ b/hw/vfio/spapr.c
+@@ -0,0 +1,139 @@
++/*
++ * DMA memory preregistration
++ *
++ * Authors:
++ *  Alexey Kardashevskiy <aik@ozlabs.ru>
++ *
++ * This work is licensed under the terms of the GNU GPL, version 2.  See
++ * the COPYING file in the top-level directory.
++ */
++
++#include "qemu/osdep.h"
++#include "cpu.h"
++#include <sys/ioctl.h>
++#include <linux/vfio.h>
++
++#include "hw/vfio/vfio-common.h"
++#include "hw/hw.h"
++#include "qemu/error-report.h"
++#include "trace.h"
++
++static bool vfio_prereg_listener_skipped_section(MemoryRegionSection *section)
++{
++    if (memory_region_is_iommu(section->mr)) {
++        hw_error("Cannot possibly preregister IOMMU memory");
++    }
++
++    return !memory_region_is_ram(section->mr) ||
++            memory_region_is_skip_dump(section->mr);
++}
++
++static void *vfio_prereg_gpa_to_vaddr(MemoryRegionSection *section, hwaddr gpa)
++{
++    return memory_region_get_ram_ptr(section->mr) +
++        section->offset_within_region +
++        (gpa - section->offset_within_address_space);
++}
++
++static void vfio_prereg_listener_region_add(MemoryListener *listener,
++                                            MemoryRegionSection *section)
++{
++    VFIOContainer *container = container_of(listener, VFIOContainer,
++                                            prereg_listener);
++    const hwaddr gpa = section->offset_within_address_space;
++    hwaddr end;
++    int ret;
++    hwaddr page_mask = qemu_real_host_page_mask;
++    struct vfio_iommu_spapr_register_memory reg = {
++        .argsz = sizeof(reg),
++        .flags = 0,
++    };
++
++    if (vfio_prereg_listener_skipped_section(section)) {
++        trace_vfio_prereg_listener_region_add_skip(
++                section->offset_within_address_space,
++                section->offset_within_address_space +
++                int128_get64(int128_sub(section->size, int128_one())));
++        return;
++    }
++
++    if (unlikely((section->offset_within_address_space & ~page_mask) ||
++                 (section->offset_within_region & ~page_mask) ||
++                 (int128_get64(section->size) & ~page_mask))) {
++        error_report("%s received unaligned region", __func__);
++        return;
++    }
++
++    end = section->offset_within_address_space + int128_get64(section->size);
++    if (gpa >= end) {
++        return;
++    }
++
++    memory_region_ref(section->mr);
++
++    reg.vaddr = (uintptr_t) vfio_prereg_gpa_to_vaddr(section, gpa);
++    reg.size = end - gpa;
++
++    ret = ioctl(container->fd, VFIO_IOMMU_SPAPR_REGISTER_MEMORY, &reg);
++    trace_vfio_prereg_register(reg.vaddr, reg.size, ret ? -errno : 0);
++    if (ret) {
++        /*
++         * On the initfn path, store the first error in the container so we
++         * can gracefully fail.  Runtime, there's not much we can do other
++         * than throw a hardware error.
++         */
++        if (!container->initialized) {
++            if (!container->error) {
++                container->error = ret;
++            }
++        } else {
++            hw_error("vfio: Memory registering failed, unable to continue");
++        }
++    }
++}
++
++static void vfio_prereg_listener_region_del(MemoryListener *listener,
++                                            MemoryRegionSection *section)
++{
++    VFIOContainer *container = container_of(listener, VFIOContainer,
++                                            prereg_listener);
++    const hwaddr gpa = section->offset_within_address_space;
++    hwaddr end;
++    int ret;
++    hwaddr page_mask = qemu_real_host_page_mask;
++    struct vfio_iommu_spapr_register_memory reg = {
++        .argsz = sizeof(reg),
++        .flags = 0,
++    };
++
++    if (vfio_prereg_listener_skipped_section(section)) {
++        trace_vfio_prereg_listener_region_del_skip(
++                section->offset_within_address_space,
++                section->offset_within_address_space +
++                int128_get64(int128_sub(section->size, int128_one())));
++        return;
++    }
++
++    if (unlikely((section->offset_within_address_space & ~page_mask) ||
++                 (section->offset_within_region & ~page_mask) ||
++                 (int128_get64(section->size) & ~page_mask))) {
++        error_report("%s received unaligned region", __func__);
++        return;
++    }
++
++    end = section->offset_within_address_space + int128_get64(section->size);
++    if (gpa >= end) {
++        return;
++    }
++
++    reg.vaddr = (uintptr_t) vfio_prereg_gpa_to_vaddr(section, gpa);
++    reg.size = end - gpa;
++
++    ret = ioctl(container->fd, VFIO_IOMMU_SPAPR_UNREGISTER_MEMORY, &reg);
++    trace_vfio_prereg_unregister(reg.vaddr, reg.size, ret ? -errno : 0);
++}
++
++const MemoryListener vfio_prereg_listener = {
++    .region_add = vfio_prereg_listener_region_add,
++    .region_del = vfio_prereg_listener_region_del,
++};
+diff --git a/include/hw/vfio/vfio-common.h b/include/hw/vfio/vfio-common.h
+index eb0e1b0..6562b7e 100644
+--- a/include/hw/vfio/vfio-common.h
++++ b/include/hw/vfio/vfio-common.h
+@@ -73,6 +73,8 @@ typedef struct VFIOContainer {
+     VFIOAddressSpace *space;
+     int fd; /* /dev/vfio/vfio, empowered by the attached groups */
+     MemoryListener listener;
++    MemoryListener prereg_listener;
++    unsigned iommu_type;
+     int error;
+     bool initialized;
+     /*
+@@ -155,4 +157,6 @@ extern QLIST_HEAD(vfio_as_head, VFIOAddressSpace) vfio_address_spaces;
+ int vfio_get_region_info(VFIODevice *vbasedev, int index,
+                          struct vfio_region_info **info);
+ #endif
++extern const MemoryListener vfio_prereg_listener;
++
+ #endif /* !HW_VFIO_VFIO_COMMON_H */
+diff --git a/trace-events b/trace-events
+index ab7f1bf..60e438b 100644
+--- a/trace-events
++++ b/trace-events
+@@ -1751,6 +1751,11 @@ vfio_intp_interrupt_set_pending(int index) "irq %d is set PENDING"
+ vfio_platform_start_level_irqfd_injection(int index, int fd, int resamplefd) "IRQ index=%d, fd = %d, resamplefd = %d"
+ vfio_platform_start_edge_irqfd_injection(int index, int fd) "IRQ index=%d, fd = %d"
+ 
++# hw/vfio/spapr.c
++vfio_prereg_listener_region_add_skip(uint64_t start, uint64_t end) "%"PRIx64" - %"PRIx64
++vfio_prereg_listener_region_del_skip(uint64_t start, uint64_t end) "%"PRIx64" - %"PRIx64
++vfio_prereg_register(uint64_t va, uint64_t size, int ret) "va=%"PRIx64" size=%"PRIx64" ret=%d"
++vfio_prereg_unregister(uint64_t va, uint64_t size, int ret) "va=%"PRIx64" size=%"PRIx64" ret=%d"
+ 
+ #hw/acpi/memory_hotplug.c
+ mhp_acpi_invalid_slot_selected(uint32_t slot) "0x%"PRIx32
+-- 
+1.8.3.1
+

@@ -1,0 +1,218 @@
+From 1be99b5b343ab34c26eb397424933f694a05cd3c Mon Sep 17 00:00:00 2001
+From: Andrew Jones <drjones@redhat.com>
+Date: Fri, 15 Jul 2016 07:52:06 +0200
+Subject: [PATCH 21/27] virtio-mmio: format transport base address in
+ BusClass.get_dev_path
+
+RH-Author: Andrew Jones <drjones@redhat.com>
+Message-id: <1468569126-8732-1-git-send-email-drjones@redhat.com>
+Patchwork-id: 71194
+O-Subject: [AArch64 RHEL-7.3 qemu-kvm-rhev PATCH] virtio-mmio: format transport base address in BusClass.get_dev_path
+Bugzilla: 1356815
+RH-Acked-by: Wei Huang <wei@redhat.com>
+RH-Acked-by: Auger Eric <eric.auger@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1356815
+Brew: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11356585
+Upstream: f58b39d2d5b6dea1a757e1dc7d67a44eac1c4f9c
+
+Tested by me using the reproducer below.
+
+ Author: Laszlo Ersek <lersek@redhat.com>
+ Date:   Thu Jul 14 16:51:36 2016 +0100
+
+ At the moment the following QEMU command line triggers an assertion
+ failure (minimal reproducer by Cole):
+
+   qemu-system-aarch64 \
+     -machine virt-2.6,accel=tcg \
+     -nodefaults \
+     -no-user-config \
+     -nographic -monitor stdio \
+     -device virtio-scsi-device,id=scsi0 \
+     -device virtio-scsi-device,id=scsi1 \
+     -drive file=foo.img,format=raw,if=none,id=d0 \
+     -device scsi-hd,bus=scsi0.0,drive=d0 \
+     -drive file=foo.img,format=raw,if=none,id=d1 \
+     -device scsi-hd,bus=scsi1.0,drive=d1
+
+  qemu-system-aarch64: migration/savevm.c:615:
+  vmstate_register_with_alias_id:
+  Assertion `!se->compat || se->instance_id == 0' failed.
+
+ The reason is that the vmstate sections for the two scsi-hd devices are
+ not uniquely identifiable by name.
+
+ The direct parent buses of the scsi-hd devices -- scsi0.0 and scsi1.0 --
+ support the BusClass.get_dev_path member function. scsibus_get_dev_path()
+ formats a device path prefix with the help of its topologically parent
+ bus, and then appends the chan:id:lun triplet to it. For both scsi-hd
+ devices, this triplet is 0:0:0.
+
+ (Here we use "device path" in the QEMU migration sense, for vmstate
+ section identification, not in the OFW or UEFI device path senses.)
+
+ The virtio-scsi HBA is plugged into the virtio-mmio bus (implemented by
+ the internal VirtIOMMIOProxy device). This bus class
+ (TYPE_VIRTIO_MMIO_BUS) inherits, as its get_dev_path() member function,
+ the virtio_bus_get_dev_path() method from its parent class
+ (TYPE_VIRTIO_BUS).
+
+ virtio_bus_get_dev_path() does not format any kind of device address on
+ its own; "virtio addresses" are transport-specific. Therefore
+ virtio_bus_get_dev_path() asks the topologically parent bus of the proxy
+ object (implementing the specific virtio transport) to format the address
+ of the proxy object.
+
+ (For virtio-pci devices (where the proxy is an instance of VirtIOPCIProxy,
+ plugged into a PCI bus), this ends up in pcibus_get_dev_path().)
+
+ However, VirtIOMMIOProxy is usually (in practice: always) plugged into
+ "main-system-bus", the singleton TYPE_SYSTEM_BUS object. This BusClass
+ does not support formatting QEMU vmstate device paths at all (as
+ SysBusDevice objects can have zero or more IO ports and zero or more MMIO
+ regions). Hence the formatting request delegated from
+ virtio_bus_get_dev_path() gets answered with NULL.
+
+ The end result is that the two scsi-hd devices end up with the same device
+ path "0:0:0", which triggers the assert.
+
+ We can solve this by recognizing that virtio-mmio transports are
+ distinguished from each other by their base addresses in MMIO address
+ space. Implement virtio_mmio_bus_get_dev_path() as follows:
+
+ (1) The virtio device whose devpath is to be formatted resides on a
+     virtio-mmio bus that is implemented by a VirtIOMMIOProxy object. Ask
+     the parent bus of VirtIOMMIOProxy to format the device path of
+     VirtIOMMIOProxy, as a path prefix. (This is identical to what
+     virtio_bus_get_dev_path() does.)
+
+ (2) Append the base address of VirtIOMMIOProxy to the device path, such
+     as:
+     - virtio-mmio@000000000a003e00,
+     - virtio-mmio@000000000a003c00.
+
+ Given that these device paths are placed in the migration stream, step (2)
+ above, if done unconditionally, would break migration. So make that step
+ conditional on a new VirtIOMMIOProxy property, which is enabled for 2.7
+ machine types and later.
+
+ Cc: "Michael S. Tsirkin" <mst@redhat.com>
+ Cc: Cole Robinson <crobinso@redhat.com>
+ Cc: Dr. David Alan Gilbert <dgilbert@redhat.com>
+ Cc: Kevin Zhao <kevin.zhao@linaro.org>
+ Cc: Peter Maydell <peter.maydell@linaro.org>
+ Cc: Tom Hanson <thomas.hanson@linaro.org>
+ Reported-by: Kevin Zhao <kevin.zhao@linaro.org>
+ Reviewed-by: Andrew Jones <drjones@redhat.com>
+ Signed-off-by: Laszlo Ersek <lersek@redhat.com>
+ Message-id: 1467739394-28357-1-git-send-email-lersek@redhat.com
+ Fixes: https://bugs.launchpad.net/qemu/+bug/1594239
+ Signed-off-by: Laszlo Ersek <lersek@redhat.com>
+ Signed-off-by: Peter Maydell <peter.maydell@linaro.org>
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	include/hw/compat.h
+
+Conflict resolved by completely removing the include/hw/compat.h hunk,
+as HW_COMPAT_2_6 doesn't apply to any machine types released with
+RHEL/RHEV 7.3
+---
+ hw/virtio/virtio-mmio.c | 49 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 49 insertions(+)
+
+diff --git a/hw/virtio/virtio-mmio.c b/hw/virtio/virtio-mmio.c
+index d634044..5d364cb 100644
+--- a/hw/virtio/virtio-mmio.c
++++ b/hw/virtio/virtio-mmio.c
+@@ -91,6 +91,7 @@ typedef struct {
+     VirtioBusState bus;
+     bool ioeventfd_disabled;
+     bool ioeventfd_started;
++    bool format_transport_address;
+ } VirtIOMMIOProxy;
+ 
+ static int virtio_mmio_set_host_notifier_internal(VirtIOMMIOProxy *proxy,
+@@ -519,6 +520,12 @@ static int virtio_mmio_set_host_notifier(DeviceState *opaque, int n,
+ 
+ /* virtio-mmio device */
+ 
++static Property virtio_mmio_properties[] = {
++    DEFINE_PROP_BOOL("format_transport_address", VirtIOMMIOProxy,
++                     format_transport_address, true),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
+ static void virtio_mmio_realizefn(DeviceState *d, Error **errp)
+ {
+     VirtIOMMIOProxy *proxy = VIRTIO_MMIO(d);
+@@ -540,6 +547,7 @@ static void virtio_mmio_class_init(ObjectClass *klass, void *data)
+     dc->reset = virtio_mmio_reset;
+     dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+     set_bit(DEVICE_CATEGORY_MISC, dc->categories);
++    dc->props = virtio_mmio_properties;
+ }
+ 
+ static const TypeInfo virtio_mmio_info = {
+@@ -551,6 +559,46 @@ static const TypeInfo virtio_mmio_info = {
+ 
+ /* virtio-mmio-bus. */
+ 
++static char *virtio_mmio_bus_get_dev_path(DeviceState *dev)
++{
++    BusState *virtio_mmio_bus;
++    VirtIOMMIOProxy *virtio_mmio_proxy;
++    char *proxy_path;
++    SysBusDevice *proxy_sbd;
++    char *path;
++
++    virtio_mmio_bus = qdev_get_parent_bus(dev);
++    virtio_mmio_proxy = VIRTIO_MMIO(virtio_mmio_bus->parent);
++    proxy_path = qdev_get_dev_path(DEVICE(virtio_mmio_proxy));
++
++    /*
++     * If @format_transport_address is false, then we just perform the same as
++     * virtio_bus_get_dev_path(): we delegate the address formatting for the
++     * device on the virtio-mmio bus to the bus that the virtio-mmio proxy
++     * (i.e., the device that implements the virtio-mmio bus) resides on. In
++     * this case the base address of the virtio-mmio transport will be
++     * invisible.
++     */
++    if (!virtio_mmio_proxy->format_transport_address) {
++        return proxy_path;
++    }
++
++    /* Otherwise, we append the base address of the transport. */
++    proxy_sbd = SYS_BUS_DEVICE(virtio_mmio_proxy);
++    assert(proxy_sbd->num_mmio == 1);
++    assert(proxy_sbd->mmio[0].memory == &virtio_mmio_proxy->iomem);
++
++    if (proxy_path) {
++        path = g_strdup_printf("%s/virtio-mmio@" TARGET_FMT_plx, proxy_path,
++                               proxy_sbd->mmio[0].addr);
++    } else {
++        path = g_strdup_printf("virtio-mmio@" TARGET_FMT_plx,
++                               proxy_sbd->mmio[0].addr);
++    }
++    g_free(proxy_path);
++    return path;
++}
++
+ static void virtio_mmio_bus_class_init(ObjectClass *klass, void *data)
+ {
+     BusClass *bus_class = BUS_CLASS(klass);
+@@ -563,6 +611,7 @@ static void virtio_mmio_bus_class_init(ObjectClass *klass, void *data)
+     k->set_guest_notifiers = virtio_mmio_set_guest_notifiers;
+     k->has_variable_vring_alignment = true;
+     bus_class->max_dev = 1;
++    bus_class->get_dev_path = virtio_mmio_bus_get_dev_path;
+ }
+ 
+ static const TypeInfo virtio_mmio_bus_info = {
+-- 
+1.8.3.1
+

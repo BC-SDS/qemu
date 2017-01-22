@@ -1,0 +1,59 @@
+From 417af065a686487958ec8b8f9338064b9beb8f66 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:24 +0200
+Subject: [PATCH 24/99] target-i386: Remove assert(kvm_enabled()) from
+ host_x86_cpu_initfn()
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-20-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71635
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 19/78] target-i386: Remove assert(kvm_enabled()) from host_x86_cpu_initfn()
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Eduardo Habkost <ehabkost@redhat.com>
+
+The code will be changed to allow creation of the CPU object and
+report kvm_required errors only at realizefn, so we need to make
+the instance_init function more flexible.
+
+Reviewed-by: Igor Mammedov <imammedo@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit e435601058e656e6d24e3e87b187e5518f7bf16a)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/cpu.c | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 782bb55..97d5b6b 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -1568,16 +1568,17 @@ static void host_x86_cpu_initfn(Object *obj)
+     CPUX86State *env = &cpu->env;
+     KVMState *s = kvm_state;
+ 
+-    assert(kvm_enabled());
+-
+     /* We can't fill the features array here because we don't know yet if
+      * "migratable" is true or false.
+      */
+     cpu->host_features = true;
+ 
+-    env->cpuid_level = kvm_arch_get_supported_cpuid(s, 0x0, 0, R_EAX);
+-    env->cpuid_xlevel = kvm_arch_get_supported_cpuid(s, 0x80000000, 0, R_EAX);
+-    env->cpuid_xlevel2 = kvm_arch_get_supported_cpuid(s, 0xC0000000, 0, R_EAX);
++    /* If KVM is disabled, cpu_x86_create() will already report an error */
++    if (kvm_enabled()) {
++        env->cpuid_level = kvm_arch_get_supported_cpuid(s, 0x0, 0, R_EAX);
++        env->cpuid_xlevel = kvm_arch_get_supported_cpuid(s, 0x80000000, 0, R_EAX);
++        env->cpuid_xlevel2 = kvm_arch_get_supported_cpuid(s, 0xC0000000, 0, R_EAX);
++    }
+ 
+     object_property_set_bool(OBJECT(cpu), true, "pmu", &error_abort);
+ }
+-- 
+1.8.3.1
+

@@ -1,0 +1,160 @@
+From e4907e5846a363b8df17853ab4fd36dacf377b0a Mon Sep 17 00:00:00 2001
+From: "Michael S. Tsirkin" <mst@redhat.com>
+Date: Thu, 4 Aug 2016 21:53:26 +0200
+Subject: [PATCH 96/99] pcie: fix link active status bit migration
+
+RH-Author: Michael S. Tsirkin <mst@redhat.com>
+Message-id: <1470347597-26428-2-git-send-email-mst@redhat.com>
+Patchwork-id: 71863
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH v3 1/2] pcie: fix link active status bit migration
+Bugzilla: 1352860
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+
+We changed link status register in pci express endpoint capability
+over time. Specifically,
+
+commit b2101eae63ea57b571cee4a9075a4287d24ba4a4 ("pcie: Set the "link
+active" in the link status register") set data link layer link active
+bit in this register without adding compatibility to old machine types.
+
+When migrating from qemu 2.3 and older this affects xhci devices which
+under machine type 2.0 and older have a pci express endpoint capability
+even if they are on a pci bus.
+
+Add compatibility flags to make this bit value match what it was under
+2.3.
+
+Additionally, to avoid breaking migration from qemu 2.3 and up,
+suppress checking link status during migration: this seems sane
+since hardware can change link status at any time.
+
+https://bugzilla.redhat.com/show_bug.cgi?id=1352860
+
+Reported-by: Gerd Hoffmann <kraxel@redhat.com>
+Fixes: b2101eae63ea57b571cee4a9075a4287d24ba4a4
+    ("pcie: Set the "link active" in the link status register")
+Cc: qemu-stable@nongnu.org
+Cc: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry-picked from commit 6b4495401bdf442457b713b7e3994b465c55af35)
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/pci/pci.c         |  2 ++
+ hw/pci/pcie.c        | 24 ++++++++++++++++++------
+ include/hw/compat.h  |  4 ++++
+ include/hw/pci/pci.h |  3 +++
+ 4 files changed, 27 insertions(+), 6 deletions(-)
+
+diff --git a/hw/pci/pci.c b/hw/pci/pci.c
+index b06e26f..117825e 100644
+--- a/hw/pci/pci.c
++++ b/hw/pci/pci.c
+@@ -62,6 +62,8 @@ static Property pci_props[] = {
+                     QEMU_PCI_CAP_MULTIFUNCTION_BITNR, false),
+     DEFINE_PROP_BIT("command_serr_enable", PCIDevice, cap_present,
+                     QEMU_PCI_CAP_SERR_BITNR, true),
++    DEFINE_PROP_BIT("x-pcie-lnksta-dllla", PCIDevice, cap_present,
++                    QEMU_PCIE_LNKSTA_DLLLA_BITNR, true),
+     DEFINE_PROP_END_OF_LIST()
+ };
+ 
+diff --git a/hw/pci/pcie.c b/hw/pci/pcie.c
+index 9599fde..99cfb45 100644
+--- a/hw/pci/pcie.c
++++ b/hw/pci/pcie.c
+@@ -45,8 +45,11 @@
+  */
+ 
+ static void
+-pcie_cap_v1_fill(uint8_t *exp_cap, uint8_t port, uint8_t type, uint8_t version)
++pcie_cap_v1_fill(PCIDevice *dev, uint8_t port, uint8_t type, uint8_t version)
+ {
++    uint8_t *exp_cap = dev->config + dev->exp.exp_cap;
++    uint8_t *cmask = dev->cmask + dev->exp.exp_cap;
++
+     /* capability register
+     interrupt message number defaults to 0 */
+     pci_set_word(exp_cap + PCI_EXP_FLAGS,
+@@ -69,7 +72,18 @@ pcie_cap_v1_fill(uint8_t *exp_cap, uint8_t port, uint8_t type, uint8_t version)
+                  PCI_EXP_LNK_LS_25);
+ 
+     pci_set_word(exp_cap + PCI_EXP_LNKSTA,
+-                 PCI_EXP_LNK_MLW_1 | PCI_EXP_LNK_LS_25 |PCI_EXP_LNKSTA_DLLLA);
++                 PCI_EXP_LNK_MLW_1 | PCI_EXP_LNK_LS_25);
++
++    if (dev->cap_present & QEMU_PCIE_LNKSTA_DLLLA) {
++        pci_word_test_and_set_mask(exp_cap + PCI_EXP_LNKSTA,
++                                   PCI_EXP_LNKSTA_DLLLA);
++    }
++
++    /* We changed link status bits over time, and changing them across
++     * migrations is generally fine as hardware changes them too.
++     * Let's not bother checking.
++     */
++    pci_set_word(cmask + PCI_EXP_LNKSTA, 0);
+ }
+ 
+ int pcie_cap_init(PCIDevice *dev, uint8_t offset, uint8_t type, uint8_t port)
+@@ -88,7 +102,7 @@ int pcie_cap_init(PCIDevice *dev, uint8_t offset, uint8_t type, uint8_t port)
+     exp_cap = dev->config + pos;
+ 
+     /* Filling values common with v1 */
+-    pcie_cap_v1_fill(exp_cap, port, type, PCI_EXP_FLAGS_VER2);
++    pcie_cap_v1_fill(dev, port, type, PCI_EXP_FLAGS_VER2);
+ 
+     /* Filling v2 specific values */
+     pci_set_long(exp_cap + PCI_EXP_DEVCAP2,
+@@ -103,7 +117,6 @@ int pcie_cap_v1_init(PCIDevice *dev, uint8_t offset, uint8_t type,
+ {
+     /* PCIe cap v1 init */
+     int pos;
+-    uint8_t *exp_cap;
+ 
+     assert(pci_is_express(dev));
+ 
+@@ -112,9 +125,8 @@ int pcie_cap_v1_init(PCIDevice *dev, uint8_t offset, uint8_t type,
+         return pos;
+     }
+     dev->exp.exp_cap = pos;
+-    exp_cap = dev->config + pos;
+ 
+-    pcie_cap_v1_fill(exp_cap, port, type, PCI_EXP_FLAGS_VER1);
++    pcie_cap_v1_fill(dev, port, type, PCI_EXP_FLAGS_VER1);
+ 
+     return pos;
+ }
+diff --git a/include/hw/compat.h b/include/hw/compat.h
+index c2089e4..d4be072 100644
+--- a/include/hw/compat.h
++++ b/include/hw/compat.h
+@@ -73,6 +73,10 @@
+         .driver   = "virtio-rng-pci",\
+         .property = "any_layout",\
+         .value    = "off",\
++    },{\
++        .driver   = TYPE_PCI_DEVICE,\
++        .property = "x-pcie-lnksta-dllla",\
++        .value    = "off",\
+     },
+ 
+ #define HW_COMPAT_2_2 \
+diff --git a/include/hw/pci/pci.h b/include/hw/pci/pci.h
+index 9ed1624..3254749 100644
+--- a/include/hw/pci/pci.h
++++ b/include/hw/pci/pci.h
+@@ -174,6 +174,9 @@ enum {
+     /* PCI Express capability - Power Controller Present */
+ #define QEMU_PCIE_SLTCAP_PCP_BITNR 7
+     QEMU_PCIE_SLTCAP_PCP = (1 << QEMU_PCIE_SLTCAP_PCP_BITNR),
++    /* Link active status in endpoint capability is always set */
++#define QEMU_PCIE_LNKSTA_DLLLA_BITNR 8
++    QEMU_PCIE_LNKSTA_DLLLA = (1 << QEMU_PCIE_LNKSTA_DLLLA_BITNR),
+ };
+ 
+ #define TYPE_PCI_DEVICE "pci-device"
+-- 
+1.8.3.1
+

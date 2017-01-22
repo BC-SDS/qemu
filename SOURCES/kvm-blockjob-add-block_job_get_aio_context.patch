@@ -1,0 +1,69 @@
+From 500bb4cb56f69de8677ce660ac456f65c9e0d1a7 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Tue, 21 Jun 2016 13:34:18 +0200
+Subject: [PATCH 16/25] blockjob: add block_job_get_aio_context()
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466516062-20048-6-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70722
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 5/9] blockjob: add block_job_get_aio_context()
+Bugzilla: 1265179
+RH-Acked-by: Jeffrey Cody <jcody@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+Add a helper function to document why block jobs sometimes run in the
+QEMU main loop and to avoid code duplication in a following patch.
+
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Message-id: 1466096189-6477-5-git-send-email-stefanha@redhat.com
+(cherry picked from commit 9f6bc648c40da61a50ea1f51048368faeea5d9a1)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+  blockjob.c
+
+  Upstream uses BlockBackend, downstream uses BlockDriverState.
+---
+ blockjob.c | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/blockjob.c b/blockjob.c
+index 64e6431..e2579e3 100644
+--- a/blockjob.c
++++ b/blockjob.c
+@@ -50,6 +50,17 @@ struct BlockJobTxn {
+     int refcnt;
+ };
+ 
++/* Normally the job runs in its drive's AioContext.  The exception is
++ * block_job_defer_to_main_loop() where it runs in the QEMU main loop.  Code
++ * that supports both cases uses this helper function.
++ */
++static AioContext *block_job_get_aio_context(BlockJob *job)
++{
++    return job->deferred_to_main_loop ?
++           qemu_get_aio_context() :
++           bdrv_get_aio_context(job->bs);
++}
++
+ void *block_job_create(const BlockJobDriver *driver, BlockDriverState *bs,
+                        int64_t speed, BlockCompletionFunc *cb,
+                        void *opaque, Error **errp)
+@@ -322,9 +333,7 @@ static int block_job_finish_sync(BlockJob *job,
+         return -EBUSY;
+     }
+     while (!job->completed) {
+-        aio_poll(job->deferred_to_main_loop ? qemu_get_aio_context() :
+-                                              bdrv_get_aio_context(bs),
+-                 true);
++        aio_poll(block_job_get_aio_context(job), true);
+     }
+     ret = (job->cancelled && job->ret == 0) ? -ECANCELED : job->ret;
+     block_job_unref(job);
+-- 
+1.8.3.1
+

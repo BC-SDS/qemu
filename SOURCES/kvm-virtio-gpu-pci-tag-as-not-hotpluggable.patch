@@ -1,0 +1,41 @@
+From 01448be557dcf2715cdab2d1b71b20abf1631345 Mon Sep 17 00:00:00 2001
+From: Gerd Hoffmann <kraxel@redhat.com>
+Date: Wed, 14 Sep 2016 09:27:43 +0200
+Subject: [PATCH 07/18] virtio-gpu-pci: tag as not hotpluggable
+
+RH-Author: Gerd Hoffmann <kraxel@redhat.com>
+Message-id: <1473845263-16465-2-git-send-email-kraxel@redhat.com>
+Patchwork-id: 72309
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/1] virtio-gpu-pci: tag as not hotpluggable
+Bugzilla: 1368032
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+We can't hotplug display adapters in qemu, tag virtio-gpu-pci
+accordingly (virtio-vga already has this).
+
+Signed-off-by: Gerd Hoffmann <kraxel@redhat.com>
+Acked-by: Michael S. Tsirkin <mst@redhat.com>
+Message-id: 1473319037-27645-1-git-send-email-kraxel@redhat.com
+(cherry picked from commit 597966d1100ab507382da75d50a798bbb5f79977)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/display/virtio-gpu-pci.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/display/virtio-gpu-pci.c b/hw/display/virtio-gpu-pci.c
+index 34a724c..ef92c4a 100644
+--- a/hw/display/virtio-gpu-pci.c
++++ b/hw/display/virtio-gpu-pci.c
+@@ -48,6 +48,7 @@ static void virtio_gpu_pci_class_init(ObjectClass *klass, void *data)
+ 
+     set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
+     dc->props = virtio_gpu_pci_properties;
++    dc->hotpluggable = false;
+     k->realize = virtio_gpu_pci_realize;
+     pcidev_k->class_id = PCI_CLASS_DISPLAY_OTHER;
+ }
+-- 
+1.8.3.1
+

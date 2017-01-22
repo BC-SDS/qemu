@@ -1,0 +1,132 @@
+From 181ba5793a0af4ed392bbebd0584002ed57376e5 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:14 +0200
+Subject: [PATCH 07/27] spapr_iommu: Add root memory region
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-8-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71094
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 07/16] spapr_iommu: Add root memory region
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Alexey Kardashevskiy <aik@ozlabs.ru>
+
+We are going to have multiple DMA windows at different offsets on
+a PCI bus. For the sake of migration, we will have as many TCE table
+objects pre-created as many windows supported.
+So we need a way to map windows dynamically onto a PCI bus
+when migration of a table is completed but at this stage a TCE table
+object does not have access to a PHB to ask it to map a DMA window
+backed by just migrated TCE table.
+
+This adds a "root" memory region (UINT64_MAX long) to the TCE object.
+This new region is mapped on a PCI bus with enabled overlapping as
+there will be one root MR per TCE table, each of them mapped at 0.
+The actual IOMMU memory region is a subregion of the root region and
+a TCE table enables/disables this subregion and maps it at
+the specific offset inside the root MR which is 1:1 mapping of
+a PCI address space.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Reviewed-by: Thomas Huth <thuth@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit b4b6eb771a5c2eec47fd87ea28c499a5aa4b6db2)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_iommu.c   | 13 ++++++++++---
+ hw/ppc/spapr_pci.c     |  6 +++---
+ include/hw/ppc/spapr.h |  2 +-
+ 3 files changed, 14 insertions(+), 7 deletions(-)
+
+diff --git a/hw/ppc/spapr_iommu.c b/hw/ppc/spapr_iommu.c
+index ca254b2..53bd3eb 100644
+--- a/hw/ppc/spapr_iommu.c
++++ b/hw/ppc/spapr_iommu.c
+@@ -232,11 +232,16 @@ static MemoryRegionIOMMUOps spapr_iommu_ops = {
+ static int spapr_tce_table_realize(DeviceState *dev)
+ {
+     sPAPRTCETable *tcet = SPAPR_TCE_TABLE(dev);
++    Object *tcetobj = OBJECT(tcet);
++    char tmp[32];
+ 
+     tcet->fd = -1;
+     tcet->need_vfio = false;
+-    memory_region_init_iommu(&tcet->iommu, OBJECT(dev), &spapr_iommu_ops,
+-                             "iommu-spapr", 0);
++    snprintf(tmp, sizeof(tmp), "tce-root-%x", tcet->liobn);
++    memory_region_init(&tcet->root, tcetobj, tmp, UINT64_MAX);
++
++    snprintf(tmp, sizeof(tmp), "tce-iommu-%x", tcet->liobn);
++    memory_region_init_iommu(&tcet->iommu, tcetobj, &spapr_iommu_ops, tmp, 0);
+ 
+     QLIST_INSERT_HEAD(&spapr_tce_tables, tcet, list);
+ 
+@@ -320,6 +325,7 @@ void spapr_tce_table_enable(sPAPRTCETable *tcet,
+ 
+     memory_region_set_size(&tcet->iommu,
+                            (uint64_t)tcet->nb_table << tcet->page_shift);
++    memory_region_add_subregion(&tcet->root, tcet->bus_offset, &tcet->iommu);
+ }
+ 
+ void spapr_tce_table_disable(sPAPRTCETable *tcet)
+@@ -328,6 +334,7 @@ void spapr_tce_table_disable(sPAPRTCETable *tcet)
+         return;
+     }
+ 
++    memory_region_del_subregion(&tcet->root, &tcet->iommu);
+     memory_region_set_size(&tcet->iommu, 0);
+ 
+     spapr_tce_free_table(tcet->table, tcet->fd, tcet->nb_table);
+@@ -349,7 +356,7 @@ static void spapr_tce_table_unrealize(DeviceState *dev, Error **errp)
+ 
+ MemoryRegion *spapr_tce_get_iommu(sPAPRTCETable *tcet)
+ {
+-    return &tcet->iommu;
++    return &tcet->root;
+ }
+ 
+ static void spapr_tce_reset(DeviceState *dev)
+diff --git a/hw/ppc/spapr_pci.c b/hw/ppc/spapr_pci.c
+index beeac06..e1b196d 100644
+--- a/hw/ppc/spapr_pci.c
++++ b/hw/ppc/spapr_pci.c
+@@ -1471,13 +1471,13 @@ static void spapr_phb_realize(DeviceState *dev, Error **errp)
+         return;
+     }
+ 
++    memory_region_add_subregion_overlap(&sphb->iommu_root, 0,
++                                        spapr_tce_get_iommu(tcet), 0);
++
+     /* Register default 32bit DMA window */
+     spapr_tce_table_enable(tcet, SPAPR_TCE_PAGE_SHIFT, sphb->dma_win_addr,
+                            nb_table);
+ 
+-    memory_region_add_subregion(&sphb->iommu_root, tcet->bus_offset,
+-                                spapr_tce_get_iommu(tcet));
+-
+     sphb->msi = g_hash_table_new_full(g_int_hash, g_int_equal, g_free, g_free);
+ }
+ 
+diff --git a/include/hw/ppc/spapr.h b/include/hw/ppc/spapr.h
+index f849714..971df3d 100644
+--- a/include/hw/ppc/spapr.h
++++ b/include/hw/ppc/spapr.h
+@@ -544,7 +544,7 @@ struct sPAPRTCETable {
+     bool bypass;
+     bool need_vfio;
+     int fd;
+-    MemoryRegion iommu;
++    MemoryRegion root, iommu;
+     struct VIOsPAPRDevice *vdev; /* for @bypass migration compatibility only */
+     QLIST_ENTRY(sPAPRTCETable) list;
+ };
+-- 
+1.8.3.1
+

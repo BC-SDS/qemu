@@ -1,0 +1,136 @@
+From 6fb85f22c4be94ad9056c56403b731bd0ab212f6 Mon Sep 17 00:00:00 2001
+From: Alex Williamson <alex.williamson@redhat.com>
+Date: Tue, 5 Jul 2016 20:36:47 +0200
+Subject: [PATCH 14/16] vfio/pci: Hide SR-IOV capability
+
+RH-Author: Alex Williamson <alex.williamson@redhat.com>
+Message-id: <20160705203646.29322.43716.stgit@gimli.home>
+Patchwork-id: 70945
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 2/2] vfio/pci: Hide SR-IOV capability
+Bugzilla: 1346688
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Auger Eric <eric.auger@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+Bugzilla: 1346688
+Upstream: e37dac06dc4e85a2f46c24261c0dfdf2a30b50e3
+
+The kernel currently exposes the SR-IOV capability as read-only
+through vfio-pci.  This is sufficient to protect the host kernel, but
+has the potential to confuse guests without further virtualization.
+In particular, OVMF tries to size the VF BARs and comes up with absurd
+results, ending with an assert.  There's not much point in adding
+virtualization to a read-only capability, so we simply hide it for
+now.  If the kernel ever enables SR-IOV virtualization, we should
+easily be able to test it through VF BAR sizing or explicit flags.
+
+Testing whether we should parse extended capabilities is also pulled
+into the function to keep these assumptions in one place.
+
+Tested-by: Laszlo Ersek <lersek@redhat.com>
+Signed-off-by: Alex Williamson <alex.williamson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/vfio/pci.c | 49 +++++++++++++++++++++++++++++++++++++++----------
+ trace-events  |  1 +
+ 2 files changed, 40 insertions(+), 10 deletions(-)
+
+diff --git a/hw/vfio/pci.c b/hw/vfio/pci.c
+index 1d8a16d..80f991d 100644
+--- a/hw/vfio/pci.c
++++ b/hw/vfio/pci.c
+@@ -1799,6 +1799,12 @@ static int vfio_add_ext_cap(VFIOPCIDevice *vdev)
+     uint8_t cap_ver;
+     uint8_t *config;
+ 
++    /* Only add extended caps if we have them and the guest can see them */
++    if (!pci_is_express(pdev) || !pci_bus_is_express(pdev->bus) ||
++        !pci_get_long(pdev->config + PCI_CONFIG_SPACE_SIZE)) {
++        return 0;
++    }
++
+     /*
+      * pcie_add_capability always inserts the new capability at the tail
+      * of the chain.  Therefore to end up with a chain that matches the
+@@ -1807,6 +1813,25 @@ static int vfio_add_ext_cap(VFIOPCIDevice *vdev)
+      */
+     config = g_memdup(pdev->config, vdev->config_size);
+ 
++    /*
++     * Extended capabilities are chained with each pointing to the next, so we
++     * can drop anything other than the head of the chain simply by modifying
++     * the previous next pointer.  For the head of the chain, we can modify the
++     * capability ID to something that cannot match a valid capability.  ID
++     * 0 is reserved for this since absence of capabilities is indicated by
++     * 0 for the ID, version, AND next pointer.  However, pcie_add_capability()
++     * uses ID 0 as reserved for list management and will incorrectly match and
++     * assert if we attempt to pre-load the head of the chain with with this
++     * ID.  Use ID 0xFFFF temporarily since it is also seems to be reserved in
++     * part for identifying absence of capabilities in a root complex register
++     * block.  If the ID still exists after adding capabilities, switch back to
++     * zero.  We'll mark this entire first dword as emulated for this purpose.
++     */
++    pci_set_long(pdev->config + PCI_CONFIG_SPACE_SIZE,
++                 PCI_EXT_CAP(0xFFFF, 0, 0));
++    pci_set_long(pdev->wmask + PCI_CONFIG_SPACE_SIZE, 0);
++    pci_set_long(vdev->emulated_config_bits + PCI_CONFIG_SPACE_SIZE, ~0);
++
+     for (next = PCI_CONFIG_SPACE_SIZE; next;
+          next = PCI_EXT_CAP_NEXT(pci_get_long(config + next))) {
+         header = pci_get_long(config + next);
+@@ -1821,12 +1846,23 @@ static int vfio_add_ext_cap(VFIOPCIDevice *vdev)
+          */
+         size = vfio_ext_cap_max_size(config, next);
+ 
+-        pcie_add_capability(pdev, cap_id, cap_ver, next, size);
+-        pci_set_long(pdev->config + next, PCI_EXT_CAP(cap_id, cap_ver, 0));
+-
+         /* Use emulated next pointer to allow dropping extended caps */
+         pci_long_test_and_set_mask(vdev->emulated_config_bits + next,
+                                    PCI_EXT_CAP_NEXT_MASK);
++
++        switch (cap_id) {
++        case PCI_EXT_CAP_ID_SRIOV: /* Read-only VF BARs confuse OVMF */
++            trace_vfio_add_ext_cap_dropped(vdev->vbasedev.name, cap_id, next);
++            break;
++        default:
++            pcie_add_capability(pdev, cap_id, cap_ver, next, size);
++        }
++
++    }
++
++    /* Cleanup chain head ID if necessary */
++    if (pci_get_word(pdev->config + PCI_CONFIG_SPACE_SIZE) == 0xFFFF) {
++        pci_set_word(pdev->config + PCI_CONFIG_SPACE_SIZE, 0);
+     }
+ 
+     g_free(config);
+@@ -1848,13 +1884,6 @@ static int vfio_add_capabilities(VFIOPCIDevice *vdev)
+         return ret;
+     }
+ 
+-    /* on PCI bus, it doesn't make sense to expose extended capabilities. */
+-    if (!pci_is_express(pdev) ||
+-        !pci_bus_is_express(pdev->bus) ||
+-        !pci_get_long(pdev->config + PCI_CONFIG_SPACE_SIZE)) {
+-        return 0;
+-    }
+-
+     return vfio_add_ext_cap(vdev);
+ }
+ 
+diff --git a/trace-events b/trace-events
+index 8350743..d15e00b 100644
+--- a/trace-events
++++ b/trace-events
+@@ -1677,6 +1677,7 @@ vfio_pci_hot_reset_result(const char *name, const char *result) "%s hot reset: %
+ vfio_populate_device_config(const char *name, unsigned long size, unsigned long offset, unsigned long flags) "Device %s config:\n  size: 0x%lx, offset: 0x%lx, flags: 0x%lx"
+ vfio_populate_device_get_irq_info_failure(void) "VFIO_DEVICE_GET_IRQ_INFO failure: %m"
+ vfio_initfn(const char *name, int group_id) " (%s) group %d"
++vfio_add_ext_cap_dropped(const char *name, uint16_t cap, uint16_t offset) "%s %x@%x"
+ vfio_pci_reset(const char *name) " (%s)"
+ vfio_pci_reset_flr(const char *name) "%s FLR/VFIO_DEVICE_RESET"
+ vfio_pci_reset_pm(const char *name) "%s PCI PM Reset"
+-- 
+1.8.3.1
+

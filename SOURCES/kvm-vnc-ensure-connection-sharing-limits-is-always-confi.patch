@@ -1,0 +1,56 @@
+From a24face8a53fd8e75dbddca08471094d2b072f03 Mon Sep 17 00:00:00 2001
+From: Gerd Hoffmann <kraxel@redhat.com>
+Date: Thu, 11 Aug 2016 12:53:20 +0200
+Subject: [PATCH 12/17] vnc: ensure connection sharing/limits is always
+ configured
+
+RH-Author: Gerd Hoffmann <kraxel@redhat.com>
+Message-id: <1470920000-23113-4-git-send-email-kraxel@redhat.com>
+Patchwork-id: 71948
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 3/3] vnc: ensure connection sharing/limits is always configured
+Bugzilla: 1359655
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+From: "Daniel P. Berrange" <berrange@redhat.com>
+
+The connection sharing / limits are only set in the
+vnc_display_open() method and so missed when VNC is running
+with '-vnc none'. This in turn prevents clients being added
+to the VNC server with the QMP "add_client" command.
+
+This was introduced in
+
+  commit e5f34cdd2da54f28d90889a3afd15fad2d6105ff
+  Author: Gerd Hoffmann <kraxel@redhat.com>
+  Date:   Thu Oct 2 12:09:34 2014 +0200
+
+      vnc: track & limit connections
+
+Signed-off-by: Daniel P. Berrange <berrange@redhat.com>
+Message-id: 1470134726-15697-4-git-send-email-berrange@redhat.com
+Signed-off-by: Gerd Hoffmann <kraxel@redhat.com>
+(cherry picked from commit 12e29b1682e0a50ed57c324152addb585ae5ce69)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ ui/vnc.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/ui/vnc.c b/ui/vnc.c
+index 52abd2b..90ed2ff 100644
+--- a/ui/vnc.c
++++ b/ui/vnc.c
+@@ -3110,6 +3110,9 @@ void vnc_display_init(const char *id)
+     if (!vs->kbd_layout)
+         exit(1);
+ 
++    vs->share_policy = VNC_SHARE_POLICY_ALLOW_EXCLUSIVE;
++    vs->connections_limit = 32;
++
+     qemu_mutex_init(&vs->mutex);
+     vnc_start_worker_thread();
+ 
+-- 
+1.8.3.1
+

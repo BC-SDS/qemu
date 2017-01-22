@@ -1,0 +1,38 @@
+From 5760290d38996e89e860b76e817b2319cb0ad84c Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Wed, 22 Jun 2016 14:03:14 +0200
+Subject: [PATCH 01/16] Disable mptsas1068 device
+
+RH-Author: Miroslav Rezanina <mrezanin@redhat.com>
+Message-id: <93038b26d3dd592c5519456458da5f8fb6560614.1466603432.git.mrezanin@redhat.com>
+Patchwork-id: 70745
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCHv3 01/10] Disable mptsas1068 device
+Bugzilla: 1333282
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Miroslav Rezanina <mrezanin@redhat.com>
+
+We won't support this device so disable it.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ default-configs/pci.mak | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/default-configs/pci.mak b/default-configs/pci.mak
+index 223059b..177915a 100644
+--- a/default-configs/pci.mak
++++ b/default-configs/pci.mak
+@@ -6,7 +6,6 @@ CONFIG_USB_EHCI=y
+ CONFIG_USB_XHCI=y
+ CONFIG_AC97=y
+ CONFIG_HDA=y
+-CONFIG_MPTSAS_SCSI_PCI=y
+ CONFIG_RTL8139_PCI=y
+ CONFIG_E1000_PCI=y
+ CONFIG_IDE_CORE=y
+-- 
+1.8.3.1
+

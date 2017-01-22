@@ -1,0 +1,53 @@
+From cd316b1f9e2c05385f611bfadd44b7cf2c1b381e Mon Sep 17 00:00:00 2001
+From: Markus Armbruster <armbru@redhat.com>
+Date: Tue, 26 Jul 2016 09:22:23 +0200
+Subject: [PATCH 10/16] vl: change runstate only if new state is different from
+ current state
+
+RH-Author: Markus Armbruster <armbru@redhat.com>
+Message-id: <1469524943-16495-2-git-send-email-armbru@redhat.com>
+Patchwork-id: 71425
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH] vl: change runstate only if new state is different from current state
+Bugzilla: 1355982
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Max Reitz <mreitz@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+From: Li Zhijian <lizhijian@cn.fujitsu.com>
+
+Previously, qemu will abort at following scenario:
+(qemu) stop
+(qemu) system_reset
+(qemu) system_reset
+(qemu) 2016-04-13T20:54:38.979158Z qemu-system-x86_64: invalid runstate transition: 'prelaunch' -> 'prelaunch'
+
+Signed-off-by: Li Zhijian <lizhijian@cn.fujitsu.com>
+Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+Message-Id: <1460604352-18630-1-git-send-email-lizhijian@cn.fujitsu.com>
+Cc: qemu-stable@nongnu.org
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit e92a2d9cb3d8f589c9fe5d2eacc83d8dddea0e16)
+Signed-off-by: Markus Armbruster <armbru@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ vl.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/vl.c b/vl.c
+index 4e70834..4efc01c 100644
+--- a/vl.c
++++ b/vl.c
+@@ -692,6 +692,10 @@ void runstate_set(RunState new_state)
+ {
+     assert(new_state < RUN_STATE__MAX);
+ 
++    if (current_run_state == new_state) {
++        return;
++    }
++
+     if (!runstate_valid_transitions[current_run_state][new_state]) {
+         error_report("invalid runstate transition: '%s' -> '%s'",
+                      RunState_lookup[current_run_state],
+-- 
+1.8.3.1
+

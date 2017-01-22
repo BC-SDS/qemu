@@ -1,0 +1,106 @@
+From 62619c4590bfad43131e5ef4c706118ad19b37b7 Mon Sep 17 00:00:00 2001
+From: Laurent Vivier <lvivier@redhat.com>
+Date: Wed, 7 Sep 2016 07:47:31 +0200
+Subject: [PATCH 8/8] spapr: implement H_CHANGE_LOGICAL_LAN_MAC h_call
+
+RH-Author: Laurent Vivier <lvivier@redhat.com>
+Message-id: <1473234451-5613-1-git-send-email-lvivier@redhat.com>
+Patchwork-id: 72262
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH] spapr: implement H_CHANGE_LOGICAL_LAN_MAC h_call
+Bugzilla: 1371419 1372173 1372534
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Since kernel v4.0, linux uses H_CHANGE_LOGICAL_LAN_MAC to change lively
+the MAC address of an ibmveth interface.
+
+As QEMU doesn't implement this h_call, we can't change anymore the
+MAC address of an spapr-vlan interface.
+
+Signed-off-by: Laurent Vivier <lvivier@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 32f5f50dade3def9e51fdff505f79c67809fe647)
+Signed-off-by: Laurent Vivier <lvivier@redhat.com>
+
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1371419
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1372173
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1372534
+BREW:  https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11711182
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/spapr_llan.c | 30 ++++++++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/hw/net/spapr_llan.c b/hw/net/spapr_llan.c
+index 719ad29..8f7e2bb 100644
+--- a/hw/net/spapr_llan.c
++++ b/hw/net/spapr_llan.c
+@@ -105,6 +105,7 @@ typedef struct VIOsPAPRVLANDevice {
+     VIOsPAPRDevice sdev;
+     NICConf nicconf;
+     NICState *nic;
++    MACAddr perm_mac;
+     bool isopen;
+     target_ulong buf_list;
+     uint32_t add_buf_ptr, use_buf_ptr, rx_bufs;
+@@ -315,6 +316,10 @@ static void spapr_vlan_reset(VIOsPAPRDevice *sdev)
+             spapr_vlan_reset_rx_pool(dev->rx_pool[i]);
+         }
+     }
++
++    memcpy(&dev->nicconf.macaddr.a, &dev->perm_mac.a,
++           sizeof(dev->nicconf.macaddr.a));
++    qemu_format_nic_info_str(qemu_get_queue(dev->nic), dev->nicconf.macaddr.a);
+ }
+ 
+ static void spapr_vlan_realize(VIOsPAPRDevice *sdev, Error **errp)
+@@ -323,6 +328,8 @@ static void spapr_vlan_realize(VIOsPAPRDevice *sdev, Error **errp)
+ 
+     qemu_macaddr_default_if_unset(&dev->nicconf.macaddr);
+ 
++    memcpy(&dev->perm_mac.a, &dev->nicconf.macaddr.a, sizeof(dev->perm_mac.a));
++
+     dev->nic = qemu_new_nic(&net_spapr_vlan_info, &dev->nicconf,
+                             object_get_typename(OBJECT(sdev)), sdev->qdev.id, dev);
+     qemu_format_nic_info_str(qemu_get_queue(dev->nic), dev->nicconf.macaddr.a);
+@@ -755,6 +762,27 @@ static target_ulong h_multicast_ctrl(PowerPCCPU *cpu, sPAPRMachineState *spapr,
+     return H_SUCCESS;
+ }
+ 
++static target_ulong h_change_logical_lan_mac(PowerPCCPU *cpu,
++                                             sPAPRMachineState *spapr,
++                                             target_ulong opcode,
++                                             target_ulong *args)
++{
++    target_ulong reg = args[0];
++    target_ulong macaddr = args[1];
++    VIOsPAPRDevice *sdev = spapr_vio_find_by_reg(spapr->vio_bus, reg);
++    VIOsPAPRVLANDevice *dev = VIO_SPAPR_VLAN_DEVICE(sdev);
++    int i;
++
++    for (i = 0; i < ETH_ALEN; i++) {
++        dev->nicconf.macaddr.a[ETH_ALEN - i - 1] = macaddr & 0xff;
++        macaddr >>= 8;
++    }
++
++    qemu_format_nic_info_str(qemu_get_queue(dev->nic), dev->nicconf.macaddr.a);
++
++    return H_SUCCESS;
++}
++
+ static Property spapr_vlan_properties[] = {
+     DEFINE_SPAPR_PROPERTIES(VIOsPAPRVLANDevice, sdev),
+     DEFINE_NIC_PROPERTIES(VIOsPAPRVLANDevice, nicconf),
+@@ -853,6 +881,8 @@ static void spapr_vlan_register_types(void)
+     spapr_register_hypercall(H_ADD_LOGICAL_LAN_BUFFER,
+                              h_add_logical_lan_buffer);
+     spapr_register_hypercall(H_MULTICAST_CTRL, h_multicast_ctrl);
++    spapr_register_hypercall(H_CHANGE_LOGICAL_LAN_MAC,
++                             h_change_logical_lan_mac);
+     type_register_static(&spapr_vlan_info);
+ }
+ 
+-- 
+1.8.3.1
+

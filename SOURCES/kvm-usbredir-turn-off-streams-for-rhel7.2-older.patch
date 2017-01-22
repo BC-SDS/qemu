@@ -1,0 +1,39 @@
+From 18bbea269e13a436ea56a59565529ba3e6eb3837 Mon Sep 17 00:00:00 2001
+From: Gerd Hoffmann <kraxel@redhat.com>
+Date: Thu, 21 Jul 2016 07:59:37 +0200
+Subject: [PATCH 29/34] usbredir: turn off streams for rhel7.2 & older
+
+RH-Author: Gerd Hoffmann <kraxel@redhat.com>
+Message-id: <1469087977-30108-3-git-send-email-kraxel@redhat.com>
+Patchwork-id: 71268
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/2] usbredir: turn off streams for rhel7.2 & older
+Bugzilla: 1353180
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+
+Signed-off-by: Gerd Hoffmann <kraxel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/i386/pc.h | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index 7f93c9f..d13b7ce 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -938,6 +938,11 @@ extern void igd_passthrough_isa_bridge_create(PCIBus *bus, uint16_t gpu_dev_id);
+             .driver   = TYPE_X86_CPU,\
+             .property = "arat",\
+             .value    = "off",\
++        },\
++        { /* PC_RHEL7_2_COMPAT */ \
++            .driver   = "usb-redir",\
++            .property = "streams",\
++            .value    = "off",\
+         },
+ 
+ 
+-- 
+1.8.3.1
+

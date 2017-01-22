@@ -1,0 +1,53 @@
+From 77d16209e3cc2b65c9e0842e8c4d35083119015c Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:05 +0200
+Subject: [PATCH 65/99] pc: Forbid BSP removal
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-61-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71676
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 60/78] pc: Forbid BSP removal
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Boot CPU is assumed to always present in QEMU code, so
+untile that assumptions are gone, deny removal request,
+In another words QEMU won't support BSP hot-unplug.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 73360e27850b213327011f7e22e03865b8c0dd5b)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 1d6302a..2ea79bf 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1731,10 +1731,18 @@ out:
+ static void pc_cpu_unplug_request_cb(HotplugHandler *hotplug_dev,
+                                      DeviceState *dev, Error **errp)
+ {
++    int idx = -1;
+     HotplugHandlerClass *hhc;
+     Error *local_err = NULL;
+     PCMachineState *pcms = PC_MACHINE(hotplug_dev);
+ 
++    pc_find_cpu_slot(pcms, CPU(dev), &idx);
++    assert(idx != -1);
++    if (idx == 0) {
++        error_setg(&local_err, "Boot CPU is unpluggable");
++        goto out;
++    }
++
+     hhc = HOTPLUG_HANDLER_GET_CLASS(pcms->acpi_dev);
+     hhc->unplug_request(HOTPLUG_HANDLER(pcms->acpi_dev), dev, &local_err);
+ 
+-- 
+1.8.3.1
+

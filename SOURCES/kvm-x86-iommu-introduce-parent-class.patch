@@ -1,0 +1,208 @@
+From 54d41c3de0d7399398c1b7f0c36414b2a6b15ba5 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:22 +0200
+Subject: [PATCH 04/37] x86-iommu: introduce parent class
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-4-git-send-email-peterx@redhat.com>
+Patchwork-id: 71988
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 03/34] x86-iommu: introduce parent class
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Introducing parent class for intel-iommu devices named "x86-iommu". This
+is preparation work to abstract shared functionalities out from Intel
+and AMD IOMMUs. Currently, only the parent class is introduced. It does
+nothing yet.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 1c7955c4503211f45a83e6480bd876f079ba5cd8)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/Makefile.objs         |  2 +-
+ hw/i386/intel_iommu.c         |  5 ++--
+ hw/i386/x86-iommu.c           | 53 +++++++++++++++++++++++++++++++++++++++++++
+ include/hw/i386/intel_iommu.h |  3 ++-
+ include/hw/i386/x86-iommu.h   | 46 +++++++++++++++++++++++++++++++++++++
+ 5 files changed, 105 insertions(+), 4 deletions(-)
+ create mode 100644 hw/i386/x86-iommu.c
+ create mode 100644 include/hw/i386/x86-iommu.h
+
+diff --git a/hw/i386/Makefile.objs b/hw/i386/Makefile.objs
+index b52d5b8..90e94ff 100644
+--- a/hw/i386/Makefile.objs
++++ b/hw/i386/Makefile.objs
+@@ -2,7 +2,7 @@ obj-$(CONFIG_KVM) += kvm/
+ obj-y += multiboot.o
+ obj-y += pc.o pc_piix.o pc_q35.o
+ obj-y += pc_sysfw.o
+-obj-y += intel_iommu.o
++obj-y += x86-iommu.o intel_iommu.o
+ obj-$(CONFIG_XEN) += ../xenpv/ xen/
+ 
+ obj-y += kvmvapic.o
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index 464f2a0..a430d7d 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -2061,17 +2061,18 @@ static void vtd_realize(DeviceState *dev, Error **errp)
+ static void vtd_class_init(ObjectClass *klass, void *data)
+ {
+     DeviceClass *dc = DEVICE_CLASS(klass);
++    X86IOMMUClass *x86_class = X86_IOMMU_CLASS(klass);
+ 
+     dc->reset = vtd_reset;
+-    dc->realize = vtd_realize;
+     dc->vmsd = &vtd_vmstate;
+     dc->props = vtd_properties;
+     dc->hotpluggable = false;
++    x86_class->realize = vtd_realize;
+ }
+ 
+ static const TypeInfo vtd_info = {
+     .name          = TYPE_INTEL_IOMMU_DEVICE,
+-    .parent        = TYPE_SYS_BUS_DEVICE,
++    .parent        = TYPE_X86_IOMMU_DEVICE,
+     .instance_size = sizeof(IntelIOMMUState),
+     .class_init    = vtd_class_init,
+ };
+diff --git a/hw/i386/x86-iommu.c b/hw/i386/x86-iommu.c
+new file mode 100644
+index 0000000..d739afb
+--- /dev/null
++++ b/hw/i386/x86-iommu.c
+@@ -0,0 +1,53 @@
++/*
++ * QEMU emulation of common X86 IOMMU
++ *
++ * Copyright (C) 2016 Peter Xu, Red Hat <peterx@redhat.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++
++ * You should have received a copy of the GNU General Public License along
++ * with this program; if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "qemu/osdep.h"
++#include "hw/sysbus.h"
++#include "hw/boards.h"
++#include "hw/i386/x86-iommu.h"
++
++static void x86_iommu_realize(DeviceState *dev, Error **errp)
++{
++    X86IOMMUClass *x86_class = X86_IOMMU_GET_CLASS(dev);
++    if (x86_class->realize) {
++        x86_class->realize(dev, errp);
++    }
++}
++
++static void x86_iommu_class_init(ObjectClass *klass, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    dc->realize = x86_iommu_realize;
++}
++
++static const TypeInfo x86_iommu_info = {
++    .name          = TYPE_X86_IOMMU_DEVICE,
++    .parent        = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(X86IOMMUState),
++    .class_init    = x86_iommu_class_init,
++    .class_size    = sizeof(X86IOMMUClass),
++    .abstract      = true,
++};
++
++static void x86_iommu_register_types(void)
++{
++    type_register_static(&x86_iommu_info);
++}
++
++type_init(x86_iommu_register_types)
+diff --git a/include/hw/i386/intel_iommu.h b/include/hw/i386/intel_iommu.h
+index b024ffa..680a0c4 100644
+--- a/include/hw/i386/intel_iommu.h
++++ b/include/hw/i386/intel_iommu.h
+@@ -23,6 +23,7 @@
+ #define INTEL_IOMMU_H
+ #include "hw/qdev.h"
+ #include "sysemu/dma.h"
++#include "hw/i386/x86-iommu.h"
+ 
+ #define TYPE_INTEL_IOMMU_DEVICE "intel-iommu"
+ #define INTEL_IOMMU_DEVICE(obj) \
+@@ -90,7 +91,7 @@ struct VTDIOTLBEntry {
+ 
+ /* The iommu (DMAR) device state struct */
+ struct IntelIOMMUState {
+-    SysBusDevice busdev;
++    X86IOMMUState x86_iommu;
+     MemoryRegion csrmem;
+     uint8_t csr[DMAR_REG_SIZE];     /* register values */
+     uint8_t wmask[DMAR_REG_SIZE];   /* R/W bytes */
+diff --git a/include/hw/i386/x86-iommu.h b/include/hw/i386/x86-iommu.h
+new file mode 100644
+index 0000000..924f39a
+--- /dev/null
++++ b/include/hw/i386/x86-iommu.h
+@@ -0,0 +1,46 @@
++/*
++ * Common IOMMU interface for X86 platform
++ *
++ * Copyright (C) 2016 Peter Xu, Red Hat <peterx@redhat.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++
++ * You should have received a copy of the GNU General Public License along
++ * with this program; if not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef IOMMU_COMMON_H
++#define IOMMU_COMMON_H
++
++#include "hw/sysbus.h"
++
++#define  TYPE_X86_IOMMU_DEVICE  ("x86-iommu")
++#define  X86_IOMMU_DEVICE(obj) \
++    OBJECT_CHECK(X86IOMMUState, (obj), TYPE_X86_IOMMU_DEVICE)
++#define  X86_IOMMU_CLASS(klass) \
++    OBJECT_CLASS_CHECK(X86IOMMUClass, (klass), TYPE_X86_IOMMU_DEVICE)
++#define  X86_IOMMU_GET_CLASS(obj) \
++    OBJECT_GET_CLASS(X86IOMMUClass, obj, TYPE_X86_IOMMU_DEVICE)
++
++typedef struct X86IOMMUState X86IOMMUState;
++typedef struct X86IOMMUClass X86IOMMUClass;
++
++struct X86IOMMUClass {
++    SysBusDeviceClass parent;
++    /* Intel/AMD specific realize() hook */
++    DeviceRealize realize;
++};
++
++struct X86IOMMUState {
++    SysBusDevice busdev;
++};
++
++#endif
+-- 
+1.8.3.1
+

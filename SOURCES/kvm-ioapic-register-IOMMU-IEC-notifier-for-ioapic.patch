@@ -1,0 +1,121 @@
+From 07f15d08caa56377261c393551ad05d69625fb7f Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:40 +0200
+Subject: [PATCH 22/37] ioapic: register IOMMU IEC notifier for ioapic
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-22-git-send-email-peterx@redhat.com>
+Patchwork-id: 72006
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 21/34] ioapic: register IOMMU IEC notifier for ioapic
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Let IOAPIC the first consumer of x86 IOMMU IEC invalidation
+notifiers. This is only used for split irqchip case, when vIOMMU
+receives IR invalidation requests, IOAPIC will be notified to update
+kernel irq routes. For simplicity, we just update all IOAPIC routes,
+even if the invalidated entries are not IOAPIC ones.
+
+Since now we are creating IOMMUs using "-device" parameter, IOMMU
+device will be created after IOAPIC.  We need to do the registration
+after machine done by leveraging machine_done notifier.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit e3d9c92507df61608896a579b5b0d7c218d5353e)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/intc/ioapic.c                  | 31 +++++++++++++++++++++++++++++++
+ include/hw/i386/ioapic_internal.h |  2 ++
+ 2 files changed, 33 insertions(+)
+
+diff --git a/hw/intc/ioapic.c b/hw/intc/ioapic.c
+index 2f120d2..79db36a 100644
+--- a/hw/intc/ioapic.c
++++ b/hw/intc/ioapic.c
+@@ -30,6 +30,7 @@
+ #include "sysemu/kvm.h"
+ #include "target-i386/cpu.h"
+ #include "hw/i386/apic-msidef.h"
++#include "hw/i386/x86-iommu.h"
+ 
+ //#define DEBUG_IOAPIC
+ 
+@@ -197,6 +198,16 @@ static void ioapic_update_kvm_routes(IOAPICCommonState *s)
+ #endif
+ }
+ 
++#ifdef CONFIG_KVM
++static void ioapic_iec_notifier(void *private, bool global,
++                                uint32_t index, uint32_t mask)
++{
++    IOAPICCommonState *s = (IOAPICCommonState *)private;
++    /* For simplicity, we just update all the routes */
++    ioapic_update_kvm_routes(s);
++}
++#endif
++
+ void ioapic_eoi_broadcast(int vector)
+ {
+     IOAPICCommonState *s;
+@@ -353,6 +364,24 @@ static const MemoryRegionOps ioapic_io_ops = {
+     .endianness = DEVICE_NATIVE_ENDIAN,
+ };
+ 
++static void ioapic_machine_done_notify(Notifier *notifier, void *data)
++{
++#ifdef CONFIG_KVM
++    IOAPICCommonState *s = container_of(notifier, IOAPICCommonState,
++                                        machine_done);
++
++    if (kvm_irqchip_is_split()) {
++        X86IOMMUState *iommu = x86_iommu_get_default();
++        if (iommu) {
++            /* Register this IOAPIC with IOMMU IEC notifier, so that
++             * when there are IR invalidates, we can be notified to
++             * update kernel IR cache. */
++            x86_iommu_iec_register_notifier(iommu, ioapic_iec_notifier, s);
++        }
++    }
++#endif
++}
++
+ static void ioapic_realize(DeviceState *dev, Error **errp)
+ {
+     IOAPICCommonState *s = IOAPIC_COMMON(dev);
+@@ -363,6 +392,8 @@ static void ioapic_realize(DeviceState *dev, Error **errp)
+     qdev_init_gpio_in(dev, ioapic_set_irq, IOAPIC_NUM_PINS);
+ 
+     ioapics[ioapic_no] = s;
++    s->machine_done.notify = ioapic_machine_done_notify;
++    qemu_add_machine_init_done_notifier(&s->machine_done);
+ }
+ 
+ static void ioapic_class_init(ObjectClass *klass, void *data)
+diff --git a/include/hw/i386/ioapic_internal.h b/include/hw/i386/ioapic_internal.h
+index 31dafb3..84e3deb 100644
+--- a/include/hw/i386/ioapic_internal.h
++++ b/include/hw/i386/ioapic_internal.h
+@@ -25,6 +25,7 @@
+ #include "hw/hw.h"
+ #include "exec/memory.h"
+ #include "hw/sysbus.h"
++#include "qemu/notify.h"
+ 
+ #define MAX_IOAPICS                     1
+ 
+@@ -107,6 +108,7 @@ struct IOAPICCommonState {
+     uint8_t ioregsel;
+     uint32_t irr;
+     uint64_t ioredtbl[IOAPIC_NUM_PINS];
++    Notifier machine_done;
+ };
+ 
+ void ioapic_reset_common(DeviceState *dev);
+-- 
+1.8.3.1
+

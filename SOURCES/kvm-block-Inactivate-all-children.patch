@@ -1,0 +1,118 @@
+From 3cc121efe043067f39e07fb061588ac84d03bf3f Mon Sep 17 00:00:00 2001
+From: John Snow <jsnow@redhat.com>
+Date: Wed, 14 Sep 2016 20:04:37 +0200
+Subject: [PATCH 13/18] block: Inactivate all children
+
+RH-Author: John Snow <jsnow@redhat.com>
+Message-id: <1473883477-31953-4-git-send-email-jsnow@redhat.com>
+Patchwork-id: 72333
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 3/3] block: Inactivate all children
+Bugzilla: 1355927
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Kevin Wolf <kwolf@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+From: Fam Zheng <famz@redhat.com>
+
+Currently we only inactivate the top BDS. Actually bdrv_inactivate
+should be the opposite of bdrv_invalidate_cache.
+
+Recurse into the whole subtree instead.
+
+Because a node may have multiple parents, and because once
+BDRV_O_INACTIVE is set for a node, further writes are not allowed, we
+cannot interleave flag settings and .bdrv_inactivate calls (that may
+submit write to other nodes in a graph) within a single pass. Therefore
+two passes are used here.
+
+Signed-off-by: Fam Zheng <famz@redhat.com>
+Signed-off-by: Kevin Wolf <kwolf@redhat.com>
+(cherry picked from commit aad0b7a0bfbd6d200f617396c0d3b71ac7abfa40)
+Signed-off-by: John Snow <jsnow@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ block.c | 47 ++++++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 36 insertions(+), 11 deletions(-)
+
+diff --git a/block.c b/block.c
+index c5a4391..75afea5 100644
+--- a/block.c
++++ b/block.c
+@@ -3262,38 +3262,63 @@ void bdrv_invalidate_cache_all(Error **errp)
+     }
+ }
+ 
+-static int bdrv_inactivate(BlockDriverState *bs)
++static int bdrv_inactivate_recurse(BlockDriverState *bs,
++                                   bool setting_flag)
+ {
++    BdrvChild *child;
+     int ret;
+ 
+-    if (bs->drv->bdrv_inactivate) {
++    if (!setting_flag && bs->drv->bdrv_inactivate) {
+         ret = bs->drv->bdrv_inactivate(bs);
+         if (ret < 0) {
+             return ret;
+         }
+     }
+ 
+-    bs->open_flags |= BDRV_O_INACTIVE;
++    QLIST_FOREACH(child, &bs->children, next) {
++        ret = bdrv_inactivate_recurse(child->bs, setting_flag);
++        if (ret < 0) {
++            return ret;
++        }
++    }
++
++    if (setting_flag) {
++        bs->open_flags |= BDRV_O_INACTIVE;
++    }
+     return 0;
+ }
+ 
+ int bdrv_inactivate_all(void)
+ {
+     BlockDriverState *bs = NULL;
+-    int ret;
++    int ret = 0;
++    int pass;
+ 
+     while ((bs = bdrv_next(bs)) != NULL) {
+-        AioContext *aio_context = bdrv_get_aio_context(bs);
++        aio_context_acquire(bdrv_get_aio_context(bs));
++    }
+ 
+-        aio_context_acquire(aio_context);
+-        ret = bdrv_inactivate(bs);
+-        aio_context_release(aio_context);
+-        if (ret < 0) {
+-            return ret;
++    /* We do two passes of inactivation. The first pass calls to drivers'
++     * .bdrv_inactivate callbacks recursively so all cache is flushed to disk;
++     * the second pass sets the BDRV_O_INACTIVE flag so that no further write
++     * is allowed. */
++    for (pass = 0; pass < 2; pass++) {
++        bs = NULL;
++        while ((bs = bdrv_next(bs)) != NULL) {
++            ret = bdrv_inactivate_recurse(bs, pass);
++            if (ret < 0) {
++                goto out;
++            }
+         }
+     }
+ 
+-    return 0;
++out:
++    bs = NULL;
++    while ((bs = bdrv_next(bs)) != NULL) {
++        aio_context_release(bdrv_get_aio_context(bs));
++    }
++
++    return ret;
+ }
+ 
+ /**************************************************************/
+-- 
+1.8.3.1
+

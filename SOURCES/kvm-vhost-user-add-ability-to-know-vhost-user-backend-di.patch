@@ -1,0 +1,95 @@
+From afec3d77d3b6504ba37ff512920ba153d0d96c13 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Fri, 17 Jun 2016 13:45:35 +0200
+Subject: [PATCH 02/25] vhost-user: add ability to know vhost-user backend
+ disconnection
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <1466171144-10377-2-git-send-email-marcandre.lureau@redhat.com>
+Patchwork-id: 70647
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 01/10] vhost-user: add ability to know vhost-user backend disconnection
+Bugzilla: 1322087
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Tetsuya Mukawa <mukawa@igel.co.jp>
+
+Current QEMU cannot detect vhost-user backend disconnection. The
+patch adds ability to know it.
+To know disconnection, add watcher to detect G_IO_HUP event. When
+G_IO_HUP event is detected, the disconnected socket will be read
+to cause a CHR_EVENT_CLOSED.
+
+Signed-off-by: Tetsuya Mukawa <mukawa@igel.co.jp>
+Reviewed-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Tested-by: Yuanhan Liu <yuanhan.liu@linux.intel.com>
+Reviewed-by: Yuanhan Liu <yuanhan.liu@linux.intel.com>
+Reviewed-by: Victor Kaplansky <victork@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit a6553598be42e3be899acdb153fd615cd6c3eab8)
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ net/vhost-user.c | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/net/vhost-user.c b/net/vhost-user.c
+index 1b9e73a..4a7fd5f 100644
+--- a/net/vhost-user.c
++++ b/net/vhost-user.c
+@@ -22,6 +22,7 @@ typedef struct VhostUserState {
+     NetClientState nc;
+     CharDriverState *chr;
+     VHostNetState *vhost_net;
++    int watch;
+ } VhostUserState;
+ 
+ typedef struct VhostUserChardevProps {
+@@ -167,6 +168,20 @@ static NetClientInfo net_vhost_user_info = {
+         .has_ufo = vhost_user_has_ufo,
+ };
+ 
++static gboolean net_vhost_user_watch(GIOChannel *chan, GIOCondition cond,
++                                           void *opaque)
++{
++    VhostUserState *s = opaque;
++    uint8_t buf[1];
++
++    /* We don't actually want to read anything, but CHR_EVENT_CLOSED will be
++     * raised as a side-effect of the read.
++     */
++    qemu_chr_fe_read_all(s->chr, buf, sizeof(buf));
++
++    return FALSE;
++}
++
+ static void net_vhost_user_event(void *opaque, int event)
+ {
+     const char *name = opaque;
+@@ -184,6 +199,8 @@ static void net_vhost_user_event(void *opaque, int event)
+     trace_vhost_user_event(s->chr->label, event);
+     switch (event) {
+     case CHR_EVENT_OPENED:
++        s->watch = qemu_chr_fe_add_watch(s->chr, G_IO_HUP,
++                                         net_vhost_user_watch, s);
+         if (vhost_user_start(queues, ncs) < 0) {
+             exit(1);
+         }
+@@ -192,6 +209,8 @@ static void net_vhost_user_event(void *opaque, int event)
+     case CHR_EVENT_CLOSED:
+         qmp_set_link(name, false, &err);
+         vhost_user_stop(queues, ncs);
++        g_source_remove(s->watch);
++        s->watch = 0;
+         break;
+     }
+ 
+-- 
+1.8.3.1
+

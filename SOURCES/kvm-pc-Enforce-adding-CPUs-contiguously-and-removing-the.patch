@@ -1,0 +1,92 @@
+From b62f8e7394b20d38b22708b7bb879e32ba1fcaec Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:06 +0200
+Subject: [PATCH 66/99] pc: Enforce adding CPUs contiguously and removing them
+ in opposite order
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-62-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71677
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 61/78] pc: Enforce adding CPUs contiguously and removing them in opposite order
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+It will still allow us to use cpu_index as migration instance_id
+since when CPUs are added contiguously (from the first to the last)
+and removed in opposite order, cpu_index stays stable and it's
+reproducible on destination side.
+
+While there is work in progress to support migration when there
+are holes in cpu_index range resulting from out-of-order plug or
+unplug, this patch is intended as an interim solution until
+cpu_index usage is cleaned up.
+
+As result of this patch it would be possible to plug/unplug CPUs,
+but in limited order that doesn't break migration.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 4da7faaeb0c7dd3f7f233165d336c878f78fd1eb)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc.c | 34 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 2ea79bf..addd29d 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1743,6 +1743,23 @@ static void pc_cpu_unplug_request_cb(HotplugHandler *hotplug_dev,
+         goto out;
+     }
+ 
++    if (idx < pcms->possible_cpus->len - 1 &&
++        pcms->possible_cpus->cpus[idx + 1].cpu != NULL) {
++        X86CPU *cpu;
++
++        for (idx = pcms->possible_cpus->len - 1;
++             pcms->possible_cpus->cpus[idx].cpu == NULL; idx--) {
++            ;;
++        }
++
++        cpu = X86_CPU(pcms->possible_cpus->cpus[idx].cpu);
++        error_setg(&local_err, "CPU [socket-id: %u, core-id: %u,"
++                   " thread-id: %u] should be removed first",
++                   cpu->socket_id, cpu->core_id, cpu->thread_id);
++        goto out;
++
++    }
++
+     hhc = HOTPLUG_HANDLER_GET_CLASS(pcms->acpi_dev);
+     hhc->unplug_request(HOTPLUG_HANDLER(pcms->acpi_dev), dev, &local_err);
+ 
+@@ -1840,6 +1857,23 @@ static void pc_cpu_pre_plug(HotplugHandler *hotplug_dev,
+         return;
+     }
+ 
++    if (idx != 0 && pcms->possible_cpus->cpus[idx - 1].cpu == NULL) {
++        PCMachineClass *pcmc = PC_MACHINE_GET_CLASS(pcms);
++
++        for (idx = 1; pcms->possible_cpus->cpus[idx].cpu != NULL; idx++) {
++            ;;
++        }
++
++        x86_topo_ids_from_apicid(pcms->possible_cpus->cpus[idx].arch_id,
++                                 smp_cores, smp_threads, &topo);
++
++        if (!pcmc->legacy_cpu_hotplug) {
++            error_setg(errp, "CPU [socket: %u, core: %u, thread: %u] should be"
++                       " added first", topo.pkg_id, topo.core_id, topo.smt_id);
++            return;
++        }
++    }
++
+     /* if 'address' properties socket-id/core-id/thread-id are not set, set them
+      * so that query_hotpluggable_cpus would show correct values
+      */
+-- 
+1.8.3.1
+

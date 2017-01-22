@@ -1,0 +1,60 @@
+From 5cf05a2ae151ab03aaaae80570158f9001a19135 Mon Sep 17 00:00:00 2001
+From: Fam Zheng <famz@redhat.com>
+Date: Wed, 22 Jun 2016 03:07:56 +0200
+Subject: [PATCH 24/25] block: fix race in bdrv_co_discard with drive-mirror
+
+RH-Author: Fam Zheng <famz@redhat.com>
+Message-id: <20160622030757.21852-3-famz@redhat.com>
+Patchwork-id: 70738
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/3] block: fix race in bdrv_co_discard with drive-mirror
+Bugzilla: 1348763
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+
+From: Denis V. Lunev <den@openvz.org>
+
+Actually we must set dirty bitmap dirty after we have written all our
+zeroes for correct processing in drive mirror code. In the other case
+we can face not zeroes in this area in mirror_iteration.
+
+Signed-off-by: Denis V. Lunev <den@openvz.org>
+Reviewed-by: Vladimir Sementsov-Ogievskiy<vsementsov@virtuozzo.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Message-id: 1466093381-6120-3-git-send-email-den@openvz.org
+CC: Stefan Hajnoczi <stefanha@redhat.com>
+CC: Kevin Wolf <kwolf@redhat.com>
+CC: Max Reitz <mreitz@redhat.com>
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+(cherry picked from commit 968d8b0627d3585d6b82da4239b9adf98614ab7c)
+Signed-off-by: Fam Zheng <famz@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ block/io.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/block/io.c b/block/io.c
+index f8a9ac2..fda2e32 100644
+--- a/block/io.c
++++ b/block/io.c
+@@ -2516,7 +2516,6 @@ int coroutine_fn bdrv_co_discard(BlockDriverState *bs, int64_t sector_num,
+ 
+     tracked_request_begin(&req, bs, sector_num << BDRV_SECTOR_BITS,
+                           nb_sectors << BDRV_SECTOR_BITS, BDRV_TRACKED_DISCARD);
+-    bdrv_set_dirty(bs, sector_num, nb_sectors);
+ 
+     max_discard = MIN_NON_ZERO(bs->bl.max_discard, BDRV_REQUEST_MAX_SECTORS);
+     while (nb_sectors > 0) {
+@@ -2565,6 +2564,8 @@ int coroutine_fn bdrv_co_discard(BlockDriverState *bs, int64_t sector_num,
+     }
+     ret = 0;
+ out:
++    bdrv_set_dirty(bs, req.offset >> BDRV_SECTOR_BITS,
++                   req.bytes >> BDRV_SECTOR_BITS);
+     tracked_request_end(&req);
+     return ret;
+ }
+-- 
+1.8.3.1
+

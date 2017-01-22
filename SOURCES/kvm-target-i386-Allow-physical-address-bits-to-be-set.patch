@@ -1,0 +1,159 @@
+From 1b457dbd77c98dd74a038de02a2cf0648a39d90a Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Fri, 29 Jul 2016 12:01:24 +0200
+Subject: [PATCH 30/35] target-i386: Allow physical address bits to be set
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1469793688-10313-4-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 71522
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH v5 3/7] target-i386: Allow physical address bits to be set
+Bugzilla: 1339196
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+RH-Acked-by: Andrea Arcangeli <aarcange@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+Currently QEMU sets the x86 number of physical address bits to the
+magic number 40.  This is only correct on some small AMD systems;
+Intel systems tend to have 36, 39, 46 bits, and large AMD systems
+tend to have 48.
+
+Having the value different from your actual hardware is detectable
+by the guest and in principal can cause problems;
+The current limit of 40 stops TB VMs being created by those lucky
+enough to have that much.
+
+This patch lets you set the physical bits by a cpu property but
+defaults to the same 40bits which matches TCGs setup.
+
+I've removed the ancient warning about the 42 bit limit in exec.c;
+I can't find that limit in there and no one else seems to know where
+it is.
+
+We use a magic value of 0 as the property default so that we can
+later distinguish between the default and a user set value.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit af45907a132857cfd47acc998bf5f7c26cd13071)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	target-i386/cpu.c
+	target-i386/cpu.h
+
+   Left Andrea's hostbits code in for now to make bisecting easier -
+   will come out later
+   Mostly due to the properties being in cpu-qom.h rather than cpu.h
+---
+ target-i386/cpu-qom.h |  3 +++
+ target-i386/cpu.c     | 54 +++++++++++++++++++++++++++++++++++++++++++++------
+ 2 files changed, 51 insertions(+), 6 deletions(-)
+
+diff --git a/target-i386/cpu-qom.h b/target-i386/cpu-qom.h
+index cb75017..ccbf8e7 100644
+--- a/target-i386/cpu-qom.h
++++ b/target-i386/cpu-qom.h
+@@ -108,6 +108,9 @@ typedef struct X86CPU {
+     /* Features that were filtered out because of missing host capabilities */
+     uint32_t filtered_features[FEATURE_WORDS];
+ 
++    /* Number of physical address bits supported */
++    uint32_t phys_bits;
++
+     /* Enable PMU CPUID bits. This can't be enabled by default yet because
+      * it doesn't have ABI stability guarantees, as it passes all PMU CPUID
+      * bits returned by GET_SUPPORTED_CPUID (that depend on host CPU and kernel
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 3c632fa..4da1523 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -2663,7 +2663,8 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
+         break;
+     case 0x80000008:
+         /* virtual & phys address size in low 2 bytes. */
+-/* XXX: This value must match the one used in the MMU code. */
++#if 1
++        /* ! This block gets removed later in the patch series ! */
+         if (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM) {
+             /* 64 bit processor */
+             *eax = 0x00003028; /* 48 bits virtual, 40 bits physical */
+@@ -2673,12 +2674,15 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
+                 if (_eax >= 0x80000008)
+                     host_cpuid(0x80000008, 0, eax, NULL, NULL, NULL);
+             }
++#else
++        if (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM) {
++            /* 64 bit processor, 48 bits virtual, configurable
++             * physical bits.
++             */
++            *eax = 0x00003000 + cpu->phys_bits;
++#endif
+         } else {
+-            if (env->features[FEAT_1_EDX] & CPUID_PSE36) {
+-                *eax = 0x00000024; /* 36 bits physical */
+-            } else {
+-                *eax = 0x00000020; /* 32 bits physical */
+-            }
++            *eax = cpu->phys_bits;
+         }
+         *ebx = 0;
+         *ecx = 0;
+@@ -2997,6 +3001,43 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
+            & CPUID_EXT2_AMD_ALIASES);
+     }
+ 
++    if (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM) {
++        /* 0 means it was not explicitly set by the user (or by machine
++         * compat_props). In this case, the default is the value used by
++         * TCG (40).
++         */
++        if (cpu->phys_bits == 0) {
++            cpu->phys_bits = TCG_PHYS_ADDR_BITS;
++        }
++        if (kvm_enabled()) {
++            if (cpu->phys_bits > TARGET_PHYS_ADDR_SPACE_BITS ||
++                cpu->phys_bits < 32) {
++                error_setg(errp, "phys-bits should be between 32 and %u "
++                                 " (but is %u)",
++                                 TARGET_PHYS_ADDR_SPACE_BITS, cpu->phys_bits);
++                return;
++            }
++        } else {
++            if (cpu->phys_bits != TCG_PHYS_ADDR_BITS) {
++                error_setg(errp, "TCG only supports phys-bits=%u",
++                                  TCG_PHYS_ADDR_BITS);
++                return;
++            }
++        }
++    } else {
++        /* For 32 bit systems don't use the user set value, but keep
++         * phys_bits consistent with what we tell the guest.
++         */
++        if (cpu->phys_bits != 0) {
++            error_setg(errp, "phys-bits is not user-configurable in 32 bit");
++            return;
++        }
++        if (env->features[FEAT_1_EDX] & CPUID_PSE36) {
++            cpu->phys_bits = 36;
++        } else {
++            cpu->phys_bits = 32;
++        }
++    }
+ 
+ #ifndef CONFIG_USER_ONLY
+     qemu_register_reset(x86_cpu_machine_reset_cb, cpu);
+@@ -3302,6 +3343,7 @@ static Property x86_cpu_properties[] = {
+     DEFINE_PROP_BOOL("check", X86CPU, check_cpuid, true),
+     DEFINE_PROP_BOOL("enforce", X86CPU, enforce_cpuid, false),
+     DEFINE_PROP_BOOL("kvm", X86CPU, expose_kvm, true),
++    DEFINE_PROP_UINT32("phys-bits", X86CPU, phys_bits, 0),
+     DEFINE_PROP_UINT32("level", X86CPU, env.cpuid_level, 0),
+     DEFINE_PROP_UINT32("xlevel", X86CPU, env.cpuid_xlevel, 0),
+     DEFINE_PROP_UINT32("xlevel2", X86CPU, env.cpuid_xlevel2, 0),
+-- 
+1.8.3.1
+

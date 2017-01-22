@@ -1,0 +1,125 @@
+From 95a64a477df16c27a643effbe9027269fc6a7b7b Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Wed, 15 Jun 2016 20:35:14 +0200
+Subject: [PATCH 02/13] ppc/spapr: Refactor h_client_architecture_support() CPU
+ parsing code
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1466022918-18958-2-git-send-email-thuth@redhat.com>
+Patchwork-id: 70625
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/5] ppc/spapr: Refactor h_client_architecture_support() CPU parsing code
+Bugzilla: 1341492
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+
+The h_client_architecture_support() function has become quite big
+and nested already. So factor out the code that takes care of the
+sPAPR compatibility PVRs (which will be modified by the following
+patches).
+
+Signed-off-by: Thomas Huth <thuth@redhat.com>
+Reviewed-by: Michael Roth <mdroth@linux.vnet.ibm.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 7386ae6372cc07c77a39cb3aa185848b43f7ae34)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_hcall.c | 61 +++++++++++++++++++++++++++++++---------------------
+ 1 file changed, 36 insertions(+), 25 deletions(-)
+
+diff --git a/hw/ppc/spapr_hcall.c b/hw/ppc/spapr_hcall.c
+index 8f40602..5139af7 100644
+--- a/hw/ppc/spapr_hcall.c
++++ b/hw/ppc/spapr_hcall.c
+@@ -911,6 +911,39 @@ static void do_set_compat(void *arg)
+     ((cpuver) == CPU_POWERPC_LOGICAL_2_06_PLUS) ? 2061 : \
+     ((cpuver) == CPU_POWERPC_LOGICAL_2_07) ? 2070 : 0)
+ 
++static void cas_handle_compat_cpu(PowerPCCPUClass *pcc, uint32_t pvr,
++                                  unsigned max_lvl, unsigned *compat_lvl,
++                                  unsigned *cpu_version)
++{
++    unsigned lvl = get_compat_level(pvr);
++    bool is205, is206;
++
++    if (!lvl) {
++        return;
++    }
++
++    /* If it is a logical PVR, try to determine the highest level */
++    is205 = (pcc->pcr_mask & PCR_COMPAT_2_05) &&
++            (lvl == get_compat_level(CPU_POWERPC_LOGICAL_2_05));
++    is206 = (pcc->pcr_mask & PCR_COMPAT_2_06) &&
++            ((lvl == get_compat_level(CPU_POWERPC_LOGICAL_2_06)) ||
++             (lvl == get_compat_level(CPU_POWERPC_LOGICAL_2_06_PLUS)));
++
++    if (is205 || is206) {
++        if (!max_lvl) {
++            /* User did not set the level, choose the highest */
++            if (*compat_lvl <= lvl) {
++                *compat_lvl = lvl;
++                *cpu_version = pvr;
++            }
++        } else if (max_lvl >= lvl) {
++            /* User chose the level, don't set higher than this */
++            *compat_lvl = lvl;
++            *cpu_version = pvr;
++        }
++    }
++}
++
+ #define OV5_DRCONF_MEMORY 0x20
+ 
+ static target_ulong h_client_architecture_support(PowerPCCPU *cpu_,
+@@ -920,7 +953,7 @@ static target_ulong h_client_architecture_support(PowerPCCPU *cpu_,
+ {
+     target_ulong list = ppc64_phys_to_real(args[0]);
+     target_ulong ov_table, ov5;
+-    PowerPCCPUClass *pcc_ = POWERPC_CPU_GET_CLASS(cpu_);
++    PowerPCCPUClass *pcc = POWERPC_CPU_GET_CLASS(cpu_);
+     CPUState *cs;
+     bool cpu_match = false, cpu_update = true, memory_update = false;
+     unsigned old_cpu_version = cpu_->cpu_version;
+@@ -947,29 +980,7 @@ static target_ulong h_client_architecture_support(PowerPCCPU *cpu_,
+             cpu_match = true;
+             cpu_version = cpu_->cpu_version;
+         } else if (!cpu_match) {
+-            /* If it is a logical PVR, try to determine the highest level */
+-            unsigned lvl = get_compat_level(pvr);
+-            if (lvl) {
+-                bool is205 = (pcc_->pcr_mask & PCR_COMPAT_2_05) &&
+-                     (lvl == get_compat_level(CPU_POWERPC_LOGICAL_2_05));
+-                bool is206 = (pcc_->pcr_mask & PCR_COMPAT_2_06) &&
+-                    ((lvl == get_compat_level(CPU_POWERPC_LOGICAL_2_06)) ||
+-                    (lvl == get_compat_level(CPU_POWERPC_LOGICAL_2_06_PLUS)));
+-
+-                if (is205 || is206) {
+-                    if (!max_lvl) {
+-                        /* User did not set the level, choose the highest */
+-                        if (compat_lvl <= lvl) {
+-                            compat_lvl = lvl;
+-                            cpu_version = pvr;
+-                        }
+-                    } else if (max_lvl >= lvl) {
+-                        /* User chose the level, don't set higher than this */
+-                        compat_lvl = lvl;
+-                        cpu_version = pvr;
+-                    }
+-                }
+-            }
++            cas_handle_compat_cpu(pcc, pvr, max_lvl, &compat_lvl, &cpu_version);
+         }
+         /* Terminator record */
+         if (~pvr_mask & pvr) {
+@@ -979,7 +990,7 @@ static target_ulong h_client_architecture_support(PowerPCCPU *cpu_,
+ 
+     /* Parsing finished */
+     trace_spapr_cas_pvr(cpu_->cpu_version, cpu_match,
+-                        cpu_version, pcc_->pcr_mask);
++                        cpu_version, pcc->pcr_mask);
+ 
+     /* Update CPUs */
+     if (old_cpu_version != cpu_version) {
+-- 
+1.8.3.1
+

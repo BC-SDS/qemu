@@ -1,0 +1,38 @@
+From e305bb4495b953a0994ef9a394d455f6611097a8 Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Fri, 29 Jul 2016 09:59:44 +0200
+Subject: [PATCH 08/16] Disable vfio-platform device
+
+RH-Author: Miroslav Rezanina <mrezanin@redhat.com>
+Message-id: <96ff24af480fd5b5a9c866973cad9db5f9846721.1466603432.git.mrezanin@redhat.com>
+Patchwork-id: 70752
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCHv3 09/10] Disable vfio-platform device
+Bugzilla: 1333282
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Auger Eric <eric.auger@redhat.com>
+
+From: Miroslav Rezanina <mrezanin@redhat.com>
+
+vfio-platform is abstract device used by vfio-amd-xgbe and vfio-calxeda-xgmac
+devices. As we remove these device, remove vfio-platform too.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/vfio/Makefile.objs | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/hw/vfio/Makefile.objs b/hw/vfio/Makefile.objs
+index 47b1144..e78d433 100644
+--- a/hw/vfio/Makefile.objs
++++ b/hw/vfio/Makefile.objs
+@@ -1,6 +1,5 @@
+ ifeq ($(CONFIG_LINUX), y)
+ obj-$(CONFIG_SOFTMMU) += common.o
+ obj-$(CONFIG_PCI) += pci.o pci-quirks.o
+-obj-$(CONFIG_SOFTMMU) += platform.o
+ obj-$(CONFIG_SOFTMMU) += spapr.o
+ endif
+-- 
+1.8.3.1
+

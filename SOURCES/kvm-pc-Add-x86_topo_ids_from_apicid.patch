@@ -1,0 +1,56 @@
+From d8b2a468afb2f160707a3d9a506e047f7750d938 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:55 +0200
+Subject: [PATCH 55/99] pc: Add x86_topo_ids_from_apicid()
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-51-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71666
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 50/78] pc: Add x86_topo_ids_from_apicid()
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+It's reverse of apicid_from_topo_ids() and will be used in follow up
+patches to fill in data structures for query-hotpluggable-cpus and
+for user friendly error reporting.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 9f3aab58539b4cc716e42e772be8116dc2e7d159)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/i386/topology.h | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/include/hw/i386/topology.h b/include/hw/i386/topology.h
+index fc95572..1ebaee0 100644
+--- a/include/hw/i386/topology.h
++++ b/include/hw/i386/topology.h
+@@ -117,6 +117,21 @@ static inline void x86_topo_ids_from_idx(unsigned nr_cores,
+     topo->pkg_id = core_index / nr_cores;
+ }
+ 
++/* Calculate thread/core/package IDs for a specific topology,
++ * based on APIC ID
++ */
++static inline void x86_topo_ids_from_apicid(apic_id_t apicid,
++                                            unsigned nr_cores,
++                                            unsigned nr_threads,
++                                            X86CPUTopoInfo *topo)
++{
++    topo->smt_id = apicid &
++                   ~(0xFFFFFFFFUL << apicid_smt_width(nr_cores, nr_threads));
++    topo->core_id = (apicid >> apicid_core_offset(nr_cores, nr_threads)) &
++                   ~(0xFFFFFFFFUL << apicid_core_width(nr_cores, nr_threads));
++    topo->pkg_id = apicid >> apicid_pkg_offset(nr_cores, nr_threads);
++}
++
+ /* Make APIC ID for the CPU 'cpu_index'
+  *
+  * 'cpu_index' is a sequential, contiguous ID for the CPU.
+-- 
+1.8.3.1
+

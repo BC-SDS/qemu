@@ -1,0 +1,65 @@
+From c53b7a8513d8f18a6c0ca11cdef6a67fe7520fd0 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Thu, 3 Sep 2015 04:09:04 +0200
+Subject: RHEL: Set vcpus hard limit to 240 for Power
+
+Patchwork-id: 67655
+O-Subject: [RHEL7.2 qemu-kvm-rhev PATCH] RHEL: Set vcpus hard limit to 240 for Power
+Bugzilla: 1257781
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+On POWER, the kernel advertises a soft limit based on the number of CPU
+threads on the host.  We want to allow exceeding this for testing purposes,
+so we don't want to set hard limit to soft limit as on x86.
+
+However the POWER hard limit advertised by the kernel is 2048 (== NR_CPUS)
+but we only want to allow up to the number of vCPUs we actually test, so
+we force the hard limit to 240.
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1257781
+Brew: https://bugzilla.redhat.com/show_bug.cgi?id=1257781
+Upstream: Downstream only
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ kvm-all.c | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/kvm-all.c b/kvm-all.c
+index 1cd0b55..db57ebd 100644
+--- a/kvm-all.c
++++ b/kvm-all.c
+@@ -1529,8 +1529,27 @@ static int kvm_init(MachineState *ms)
+     soft_vcpus_limit = kvm_recommended_vcpus(s);
+     hard_vcpus_limit = kvm_max_vcpus(s);
+ 
++#ifdef HOST_PPC64
++    /*
++     * RHEL hack:
++     *
++     * On POWER, the kernel advertises a soft limit based on the
++     * number of CPU threads on the host.  We want to allow exceeding
++     * this for testing purposes, so we don't want to set hard limit
++     * to soft limit as on x86.
++     *
++     * However the POWER hard limit advertised by the kernel is 2048
++     * (== NR_CPUS) but we only want to allow up to the number of
++     * vCPUs we actually test, so we force the hard limit to 240
++     */
++    hard_vcpus_limit = 240;
++    if (soft_vcpus_limit > hard_vcpus_limit) {
++        soft_vcpus_limit = hard_vcpus_limit;
++    }
++#else
+     /* RHEL doesn't support nr_vcpus > soft_vcpus_limit */
+     hard_vcpus_limit = soft_vcpus_limit;
++#endif
+ 
+     while (nc->name) {
+         if (nc->num > soft_vcpus_limit) {
+-- 
+2.5.5
+

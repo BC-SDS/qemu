@@ -1,0 +1,48 @@
+From 02daa7f3cb1ab09f4a7ca00d30549c6dcfce2fa9 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Thu, 16 Jun 2016 18:16:07 +0200
+Subject: [PATCH 10/13] Revert "aio_notify(): force main loop wakeup with SIGIO
+ (aarch64 host only)"
+
+RH-Author: Paolo Bonzini <pbonzini@redhat.com>
+Message-id: <1466100967-3234-1-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 70640
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH] Revert "aio_notify(): force main loop wakeup with SIGIO (aarch64 host only)"
+Bugzilla: 1188656
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+
+Bugzilla: 1188656
+
+Brew build: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11194751
+
+This reverts RHEL-only commit 3e531f1d6e28940329d7e8e9bc018622cca53004.
+The underlying cause of the bug has been fixed by commits 21a03d1
+("AioContext: fix broken placement of event_notifier_test_and_clear",
+2015-07-22) and eabc977 ("AioContext: fix broken ctx->dispatching
+optimization", 2015-07-22)
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ async.c | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/async.c b/async.c
+index d910559..b4bf205 100644
+--- a/async.c
++++ b/async.c
+@@ -291,9 +291,6 @@ void aio_notify(AioContext *ctx)
+     if (ctx->notify_me) {
+         event_notifier_set(&ctx->notifier);
+         atomic_mb_set(&ctx->notified, true);
+-#ifdef HOST_AARCH64
+-        kill(getpid(), SIGIO);
+-#endif
+     }
+ }
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,78 @@
+From 1d95b018808d5c3be34f0a6203cc414e1088bbca Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:54 +0200
+Subject: [PATCH 21/34] spapr: Restore support for older PowerPC CPU cores
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-22-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71141
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 21/27] spapr: Restore support for older PowerPC CPU cores
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+Introduction of core based CPU hotplug for PowerPC sPAPR didn't
+add support for 970 and POWER5+ based core types. Add support for
+the same.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit ff461b8da9d3444bf1c33a9a94edcf88435c4268)
+
+We want this patch downstream purely to avoid conflicts with future
+patches.  We don't support the older CPUs in RHEL, so the added blocks
+are commented out, or they'll cause runtime errors, since they're
+already disabled downstream in the target-ppc code.
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_cpu_core.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index 8b802a6..991a3ee 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -325,7 +325,6 @@ static void spapr_cpu_core_class_init(ObjectClass *oc, void *data)
+ 
+ /*
+  * instance_init routines from different flavours of sPAPR CPU cores.
+- * TODO: Add support for 'host' core type.
+  */
+ #define SPAPR_CPU_CORE_INITFN(_type, _fname) \
+ static void glue(glue(spapr_cpu_core_, _fname), _initfn(Object *obj)) \
+@@ -338,6 +337,10 @@ static void glue(glue(spapr_cpu_core_, _fname), _initfn(Object *obj)) \
+     core->cpu_class = oc; \
+ }
+ 
++#if 0 /* Disabled for Red Hat Enterprise Linux */
++SPAPR_CPU_CORE_INITFN(970_v2.2, 970);
++SPAPR_CPU_CORE_INITFN(POWER5+_v2.1, POWER5plus);
++#endif
+ SPAPR_CPU_CORE_INITFN(POWER7_v2.3, POWER7);
+ SPAPR_CPU_CORE_INITFN(POWER7+_v2.1, POWER7plus);
+ SPAPR_CPU_CORE_INITFN(POWER8_v2.0, POWER8);
+@@ -349,6 +352,14 @@ typedef struct SPAPRCoreInfo {
+ } SPAPRCoreInfo;
+ 
+ static const SPAPRCoreInfo spapr_cores[] = {
++#if 0 /* Disabled for Red Hat Enterprise Linux */
++    /* 970 */
++    { .name = "970", .initfn = spapr_cpu_core_970_initfn },
++
++    /* POWER5 */
++    { .name = "POWER5+", .initfn = spapr_cpu_core_POWER5plus_initfn },
++#endif
++
+     /* POWER7 and aliases */
+     { .name = "POWER7_v2.3", .initfn = spapr_cpu_core_POWER7_initfn },
+     { .name = "POWER7", .initfn = spapr_cpu_core_POWER7_initfn },
+-- 
+1.8.3.1
+

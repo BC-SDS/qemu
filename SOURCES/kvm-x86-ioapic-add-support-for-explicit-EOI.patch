@@ -1,0 +1,154 @@
+From 1ce22926392027a9fc4caa01a4aef86521602b1a Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:53 +0200
+Subject: [PATCH 35/37] x86: ioapic: add support for explicit EOI
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-35-git-send-email-peterx@redhat.com>
+Patchwork-id: 72019
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 34/34] x86: ioapic: add support for explicit EOI
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Some old Linux kernels (upstream before v4.0), or any released RHEL
+kernels has problem in sending APIC EOI when IR is enabled. Meanwhile,
+many of them only support explicit EOI for IOAPIC, which is only
+introduced in IOAPIC version 0x20. This patch provide a way to boost
+QEMU IOAPIC to version 0x20, in order for QEMU to correctly receive EOI
+messages.
+
+Without boosting IOAPIC version to 0x20, kernels before commit d32932d
+("x86/irq: Convert IOAPIC to use hierarchical irqdomain interfaces")
+will have trouble enabling both IR and level-triggered interrupt devices
+(like e1000).
+
+To upgrade IOAPIC to version 0x20, we need to specify:
+
+  -global ioapic.version=0x20
+
+To be compatible with old systems, 0x11 will still be the default IOAPIC
+version. Here 0x11 and 0x20 are the only versions to be supported.
+
+One thing to mention: this patch only applies to emulated IOAPIC. It
+does not affect kernel IOAPIC behavior.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Message-Id: <1470059959-372-1-git-send-email-peterx@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit 20fd4b7b6d9282fe0cb83601f1821f31bd257458)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+  hw/intc/ioapic.c
+
+The conflict exists since in commit ea18abc18 ("Enable/disable devices
+for RHEL 7") we did set "dc->cannot_instantiate_with_device_add_yet =
+true" for IOAPIC, while this does not exist for upstream.
+---
+ hw/intc/ioapic.c                  | 22 +++++++++++++++++++++-
+ include/hw/i386/ioapic_internal.h |  4 ++--
+ 2 files changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/hw/intc/ioapic.c b/hw/intc/ioapic.c
+index 012c583..b9d7420 100644
+--- a/hw/intc/ioapic.c
++++ b/hw/intc/ioapic.c
+@@ -21,6 +21,7 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include "qemu/error-report.h"
+ #include "monitor/monitor.h"
+ #include "hw/hw.h"
+ #include "hw/i386/pc.h"
+@@ -268,7 +269,7 @@ ioapic_mem_read(void *opaque, hwaddr addr, unsigned int size)
+             val = s->id << IOAPIC_ID_SHIFT;
+             break;
+         case IOAPIC_REG_VER:
+-            val = IOAPIC_VERSION |
++            val = s->version |
+                 ((IOAPIC_NUM_PINS - 1) << IOAPIC_VER_ENTRIES_SHIFT);
+             break;
+         default:
+@@ -357,6 +358,13 @@ ioapic_mem_write(void *opaque, hwaddr addr, uint64_t val,
+             }
+         }
+         break;
++    case IOAPIC_EOI:
++        /* Explicit EOI is only supported for IOAPIC version 0x20 */
++        if (size != 4 || s->version != 0x20) {
++            break;
++        }
++        ioapic_eoi_broadcast(val);
++        break;
+     }
+ 
+     ioapic_update_kvm_routes(s);
+@@ -390,6 +398,12 @@ static void ioapic_realize(DeviceState *dev, Error **errp)
+ {
+     IOAPICCommonState *s = IOAPIC_COMMON(dev);
+ 
++    if (s->version != 0x11 && s->version != 0x20) {
++        error_report("IOAPIC only supports version 0x11 or 0x20 "
++                     "(default: 0x11).");
++        exit(1);
++    }
++
+     memory_region_init_io(&s->io_memory, OBJECT(s), &ioapic_io_ops, s,
+                           "ioapic", 0x1000);
+ 
+@@ -400,6 +414,11 @@ static void ioapic_realize(DeviceState *dev, Error **errp)
+     qemu_add_machine_init_done_notifier(&s->machine_done);
+ }
+ 
++static Property ioapic_properties[] = {
++    DEFINE_PROP_UINT8("version", IOAPICCommonState, version, 0x11),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
+ static void ioapic_class_init(ObjectClass *klass, void *data)
+ {
+     IOAPICCommonClass *k = IOAPIC_COMMON_CLASS(klass);
+@@ -408,6 +427,7 @@ static void ioapic_class_init(ObjectClass *klass, void *data)
+     k->realize = ioapic_realize;
+     dc->reset = ioapic_reset_common;
+     dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
++    dc->props = ioapic_properties;
+ }
+ 
+ static const TypeInfo ioapic_info = {
+diff --git a/include/hw/i386/ioapic_internal.h b/include/hw/i386/ioapic_internal.h
+index 84e3deb..4527cdd 100644
+--- a/include/hw/i386/ioapic_internal.h
++++ b/include/hw/i386/ioapic_internal.h
+@@ -29,8 +29,6 @@
+ 
+ #define MAX_IOAPICS                     1
+ 
+-#define IOAPIC_VERSION                  0x11
+-
+ #define IOAPIC_LVT_DEST_SHIFT           56
+ #define IOAPIC_LVT_DEST_IDX_SHIFT       48
+ #define IOAPIC_LVT_MASKED_SHIFT         16
+@@ -71,6 +69,7 @@
+ 
+ #define IOAPIC_IOREGSEL                 0x00
+ #define IOAPIC_IOWIN                    0x10
++#define IOAPIC_EOI                      0x40
+ 
+ #define IOAPIC_REG_ID                   0x00
+ #define IOAPIC_REG_VER                  0x01
+@@ -109,6 +108,7 @@ struct IOAPICCommonState {
+     uint32_t irr;
+     uint64_t ioredtbl[IOAPIC_NUM_PINS];
+     Notifier machine_done;
++    uint8_t version;
+ };
+ 
+ void ioapic_reset_common(DeviceState *dev);
+-- 
+1.8.3.1
+

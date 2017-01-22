@@ -1,0 +1,64 @@
+From bc71ef3c4582e0f9334c88bbfa90798502a54c01 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Fri, 17 Jun 2016 13:45:37 +0200
+Subject: [PATCH 04/25] tests/vhost-user-bridge: workaround stale vring base
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <1466171144-10377-4-git-send-email-marcandre.lureau@redhat.com>
+Patchwork-id: 70649
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 03/10] tests/vhost-user-bridge: workaround stale vring base
+Bugzilla: 1322087
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Marc-André Lureau <marcandre.lureau@redhat.com>
+
+This patch is a similar solution to what Yuanhan Liu/Huawei Xie have
+suggested for DPDK. When vubr quits (killed or crashed), a restart of
+vubr would get stale vring base from QEMU. That would break the kernel
+virtio net completely, making it non-work any more, unless a driver
+reset is done.
+
+So, instead of getting the stale vring base from QEMU, Huawei suggested
+we could get a proper one from used->idx. This works because the queues
+packets are processed in order.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Tested-by: Yuanhan Liu <yuanhan.liu@linux.intel.com>
+Reviewed-by: Yuanhan Liu <yuanhan.liu@linux.intel.com>
+Reviewed-by: Victor Kaplansky <victork@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 523b018dde3b7650fe5401d0499b30cf2f117515)
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ tests/vhost-user-bridge.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/tests/vhost-user-bridge.c b/tests/vhost-user-bridge.c
+index e231ce9..36b3cd8 100644
+--- a/tests/vhost-user-bridge.c
++++ b/tests/vhost-user-bridge.c
+@@ -946,6 +946,13 @@ vubr_set_vring_addr_exec(VubrDev *dev, VhostUserMsg *vmsg)
+     DPRINT("    vring_avail at %p\n", vq->avail);
+ 
+     vq->last_used_index = vq->used->idx;
++
++    if (vq->last_avail_index != vq->used->idx) {
++        DPRINT("Last avail index != used index: %d != %d, resuming",
++               vq->last_avail_index, vq->used->idx);
++        vq->last_avail_index = vq->used->idx;
++    }
++
+     return 0;
+ }
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,116 @@
+From 9e4f3a348127bfd7a7cf633d6eb4b6109a4381f6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Mon, 4 Jul 2016 20:57:32 +0200
+Subject: [PATCH 12/16] char: do not use atexit cleanup handler
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160704205732.27022-6-marcandre.lureau@redhat.com>
+Patchwork-id: 70942
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 5/5] char: do not use atexit cleanup handler
+Bugzilla: 1347077
+RH-Acked-by: Xiao Wang <jasowang@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: Marc-André Lureau <marcandre.lureau@redhat.com>
+
+It turns out qemu is calling exit() in various places from various
+threads without taking much care of resources state. The atexit()
+cleanup handlers cannot easily destroy resources that are in use (by
+the same thread or other).
+
+Since c1111a24a3, TCG arm guests run into the following abort() when
+running tests, the chardev mutex is locked during the write, so
+qemu_mutex_destroy() returns an error:
+
+ #0  0x00007fffdbb806f5 in raise () at /lib64/libc.so.6
+ #1  0x00007fffdbb822fa in abort () at /lib64/libc.so.6
+ #2  0x00005555557616fe in error_exit (err=<optimized out>, msg=msg@entry=0x555555c38c30 <__func__.14622> "qemu_mutex_destroy")
+     at /home/drjones/code/qemu/util/qemu-thread-posix.c:39
+ #3  0x0000555555b0be20 in qemu_mutex_destroy (mutex=mutex@entry=0x5555566aa0e0) at /home/drjones/code/qemu/util/qemu-thread-posix.c:57
+ #4  0x00005555558aab00 in qemu_chr_free_common (chr=0x5555566aa0e0) at /home/drjones/code/qemu/qemu-char.c:4029
+ #5  0x00005555558b05f9 in qemu_chr_delete (chr=<optimized out>) at /home/drjones/code/qemu/qemu-char.c:4038
+ #6  0x00005555558b05f9 in qemu_chr_delete (chr=<optimized out>) at /home/drjones/code/qemu/qemu-char.c:4044
+ #7  0x00005555558b062c in qemu_chr_cleanup () at /home/drjones/code/qemu/qemu-char.c:4557
+ #8  0x00007fffdbb851e8 in __run_exit_handlers () at /lib64/libc.so.6
+ #9  0x00007fffdbb85235 in  () at /lib64/libc.so.6
+ #10 0x00005555558d1b39 in testdev_write (testdev=0x5555566aa0a0) at /home/drjones/code/qemu/backends/testdev.c:71
+ #11 0x00005555558d1b39 in testdev_write (chr=<optimized out>, buf=0x7fffc343fd9a "", len=0) at /home/drjones/code/qemu/backends/testdev.c:95
+ #12 0x00005555558adced in qemu_chr_fe_write (s=0x5555566aa0e0, buf=buf@entry=0x7fffc343fd98 "0q", len=len@entry=2) at /home/drjones/code/qemu/qemu-char.c:282
+
+Instead of using a atexit() handler, only run the chardev cleanup as
+initially proposed at the end of main(), where there are less chances
+(hic) of conflicts or other races.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reported-by: Andrew Jones <drjones@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+
+(cherry picked from commit dd9250d5d99a2671584f65b7d0745355bbbe353f)
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/sysemu/char.h | 7 +++++++
+ qemu-char.c           | 4 +---
+ vl.c                  | 1 +
+ 3 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/include/sysemu/char.h b/include/sysemu/char.h
+index 2c39987..c4692d5 100644
+--- a/include/sysemu/char.h
++++ b/include/sysemu/char.h
+@@ -152,6 +152,13 @@ CharDriverState *qemu_chr_new(const char *label, const char *filename,
+ void qemu_chr_disconnect(CharDriverState *chr);
+ 
+ /**
++ * @qemu_chr_cleanup:
++ *
++ * Delete all chardevs (when leaving qemu)
++ */
++void qemu_chr_cleanup(void);
++
++/**
+  * @qemu_chr_new_noreplay:
+  *
+  * Create a new character backend from a URI.
+diff --git a/qemu-char.c b/qemu-char.c
+index 87212b8..0cbb6a1ea 100644
+--- a/qemu-char.c
++++ b/qemu-char.c
+@@ -4566,7 +4566,7 @@ void qmp_chardev_remove(const char *id, Error **errp)
+     qemu_chr_delete(chr);
+ }
+ 
+-static void qemu_chr_cleanup(void)
++void qemu_chr_cleanup(void)
+ {
+     CharDriverState *chr, *tmp;
+ 
+@@ -4621,8 +4621,6 @@ static void register_types(void)
+      * is specified
+      */
+     qemu_add_machine_init_done_notifier(&muxes_realize_notify);
+-
+-    atexit(qemu_chr_cleanup);
+ }
+ 
+ type_init(register_types);
+diff --git a/vl.c b/vl.c
+index 899dd55..2b4e22e 100644
+--- a/vl.c
++++ b/vl.c
+@@ -4673,6 +4673,7 @@ int main(int argc, char **argv, char **envp)
+ #ifdef CONFIG_TPM
+     tpm_cleanup();
+ #endif
++    qemu_chr_cleanup();
+ 
+     return 0;
+ }
+-- 
+1.8.3.1
+

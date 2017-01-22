@@ -1,0 +1,50 @@
+From e61987aacd89528aca592006127381909f434dbe Mon Sep 17 00:00:00 2001
+From: Marcel Apfelbaum <marcel@redhat.com>
+Date: Wed, 14 Sep 2016 08:01:25 +0200
+Subject: [PATCH 06/18] virtio-vga: adapt to page-per-vq=off
+
+RH-Author: Marcel Apfelbaum <marcel@redhat.com>
+Message-id: <1473840085-24716-3-git-send-email-marcel@redhat.com>
+Patchwork-id: 72308
+O-Subject: [RHEL-7.3 qemu-kvm PATCH V2 2/2] virtio-vga: adapt to page-per-vq=off
+Bugzilla: 1365613
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+
+From: Gerd Hoffmann <kraxel@redhat.com>
+
+Signed-off-by: Gerd Hoffmann <kraxel@redhat.com>
+Message-id: 1473319012-27560-1-git-send-email-kraxel@redhat.com
+(cherry picked from commit c2843e93907a4084e91573994486e810cec248a0)
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/display/virtio-vga.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/hw/display/virtio-vga.c b/hw/display/virtio-vga.c
+index 8b3f46f..340b078 100644
+--- a/hw/display/virtio-vga.c
++++ b/hw/display/virtio-vga.c
+@@ -111,6 +111,17 @@ static void virtio_vga_realize(VirtIOPCIProxy *vpci_dev, Error **errp)
+      */
+     vpci_dev->modern_mem_bar = 2;
+     vpci_dev->msix_bar = 4;
++
++    if (!(vpci_dev->flags & VIRTIO_PCI_FLAG_PAGE_PER_VQ)) {
++        /*
++         * with page-per-vq=off there is no padding space we can use
++         * for the stdvga registers.  Make the common and isr regions
++         * smaller then.
++         */
++        vpci_dev->common.size /= 2;
++        vpci_dev->isr.size /= 2;
++    }
++
+     offset = memory_region_size(&vpci_dev->modern_bar);
+     offset -= vpci_dev->notify.size;
+     vpci_dev->notify.offset = offset;
+-- 
+1.8.3.1
+

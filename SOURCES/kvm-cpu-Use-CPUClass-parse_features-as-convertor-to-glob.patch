@@ -1,0 +1,252 @@
+From d46b4f8991e5d6a139803370bb3a7a4d07114b4e Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:48 +0200
+Subject: [PATCH 48/99] cpu: Use CPUClass->parse_features() as convertor to
+ global properties
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-44-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71659
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 43/78] cpu: Use CPUClass->parse_features() as convertor to global properties
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Currently CPUClass->parse_features() is used to parse -cpu
+features string and set properties on created CPU instances.
+
+But considering that features specified by -cpu apply to every
+created CPU instance, it doesn't make sense to parse the same
+features string for every CPU created. It also makes every target
+that cares about parsing features string explicitly call
+CPUClass->parse_features() parser, which gets in a way if we
+consider using generic device_add for CPU hotplug as device_add
+has not a clue about CPU specific hooks.
+
+Turns out we can use global properties mechanism to set
+properties on every created CPU instance for a given type. That
+way it's possible to convert CPU features into a set of global
+properties for CPU type specified by -cpu cpu_model and common
+Device.device_post_init() will apply them to CPU of given type
+automatically regardless whether it's manually created CPU or CPU
+created with help of device_add.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 62a48a2a5798425997152dea3fc48708f9116c04)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/arm/virt.c     |  7 ++++---
+ include/qom/cpu.h |  2 +-
+ qom/cpu.c         | 41 +++++++++++++++++++++++++++++------------
+ target-i386/cpu.c | 26 ++++++++++++++++++++------
+ 4 files changed, 54 insertions(+), 22 deletions(-)
+
+diff --git a/hw/arm/virt.c b/hw/arm/virt.c
+index d00a7a8..72457d7 100644
+--- a/hw/arm/virt.c
++++ b/hw/arm/virt.c
+@@ -1190,6 +1190,7 @@ static void machvirt_init(MachineState *machine)
+ 
+     for (n = 0; n < smp_cpus; n++) {
+         ObjectClass *oc = cpu_class_by_name(TYPE_ARM_CPU, cpustr[0]);
++        const char *typename = object_class_get_name(oc);
+         CPUClass *cc = CPU_CLASS(oc);
+         Object *cpuobj;
+         Error *err = NULL;
+@@ -1199,10 +1200,10 @@ static void machvirt_init(MachineState *machine)
+             error_report("Unable to find CPU definition");
+             exit(1);
+         }
+-        cpuobj = object_new(object_class_get_name(oc));
++        /* convert -smp CPU options specified by the user into global props */
++        cc->parse_features(typename, cpuopts, &err);
++        cpuobj = object_new(typename);
+ 
+-        /* Handle any CPU options specified by the user */
+-        cc->parse_features(CPU(cpuobj), cpuopts, &err);
+         g_free(cpuopts);
+         if (err) {
+             error_report_err(err);
+diff --git a/include/qom/cpu.h b/include/qom/cpu.h
+index 9c544f6..aa1d19c 100644
+--- a/include/qom/cpu.h
++++ b/include/qom/cpu.h
+@@ -134,7 +134,7 @@ typedef struct CPUClass {
+     /*< public >*/
+ 
+     ObjectClass *(*class_by_name)(const char *cpu_model);
+-    void (*parse_features)(CPUState *cpu, char *str, Error **errp);
++    void (*parse_features)(const char *typename, char *str, Error **errp);
+ 
+     void (*reset)(CPUState *cpu);
+     int reset_dump_flags;
+diff --git a/qom/cpu.c b/qom/cpu.c
+index c9007d3..3adbdd6 100644
+--- a/qom/cpu.c
++++ b/qom/cpu.c
+@@ -28,6 +28,7 @@
+ #include "exec/log.h"
+ #include "qemu/error-report.h"
+ #include "sysemu/sysemu.h"
++#include "hw/qdev-properties.h"
+ 
+ bool cpu_exists(int64_t id)
+ {
+@@ -46,7 +47,7 @@ bool cpu_exists(int64_t id)
+ CPUState *cpu_generic_init(const char *typename, const char *cpu_model)
+ {
+     char *str, *name, *featurestr;
+-    CPUState *cpu;
++    CPUState *cpu = NULL;
+     ObjectClass *oc;
+     CPUClass *cc;
+     Error *err = NULL;
+@@ -60,16 +61,18 @@ CPUState *cpu_generic_init(const char *typename, const char *cpu_model)
+         return NULL;
+     }
+ 
+-    cpu = CPU(object_new(object_class_get_name(oc)));
+-    cc = CPU_GET_CLASS(cpu);
+-
++    cc = CPU_CLASS(oc);
+     featurestr = strtok(NULL, ",");
+-    cc->parse_features(cpu, featurestr, &err);
++    /* TODO: all callers of cpu_generic_init() need to be converted to
++     * call parse_features() only once, before calling cpu_generic_init().
++     */
++    cc->parse_features(object_class_get_name(oc), featurestr, &err);
+     g_free(str);
+     if (err != NULL) {
+         goto out;
+     }
+ 
++    cpu = CPU(object_new(object_class_get_name(oc)));
+     object_property_set_bool(OBJECT(cpu), true, "realized", &err);
+ 
+ out:
+@@ -283,25 +286,39 @@ static ObjectClass *cpu_common_class_by_name(const char *cpu_model)
+     return NULL;
+ }
+ 
+-static void cpu_common_parse_features(CPUState *cpu, char *features,
++static void cpu_common_parse_features(const char *typename, char *features,
+                                       Error **errp)
+ {
+     char *featurestr; /* Single "key=value" string being parsed */
+     char *val;
+-    Error *err = NULL;
++    static bool cpu_globals_initialized;
++
++    /* TODO: all callers of ->parse_features() need to be changed to
++     * call it only once, so we can remove this check (or change it
++     * to assert(!cpu_globals_initialized).
++     * Current callers of ->parse_features() are:
++     * - machvirt_init()
++     * - cpu_generic_init()
++     * - cpu_x86_create()
++     */
++    if (cpu_globals_initialized) {
++        return;
++    }
++    cpu_globals_initialized = true;
+ 
+     featurestr = features ? strtok(features, ",") : NULL;
+ 
+     while (featurestr) {
+         val = strchr(featurestr, '=');
+         if (val) {
++            GlobalProperty *prop = g_new0(typeof(*prop), 1);
+             *val = 0;
+             val++;
+-            object_property_parse(OBJECT(cpu), val, featurestr, &err);
+-            if (err) {
+-                error_propagate(errp, err);
+-                return;
+-            }
++            prop->driver = typename;
++            prop->property = g_strdup(featurestr);
++            prop->value = g_strdup(val);
++            prop->errp = &error_fatal;
++            qdev_prop_register_global(prop);
+         } else {
+             error_setg(errp, "Expected key=value format, found %s.",
+                        featurestr);
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index e6ec9d6..1692964 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -1980,12 +1980,17 @@ static FeatureWordArray minus_features = { 0 };
+ 
+ /* Parse "+feature,-feature,feature=foo" CPU feature string
+  */
+-static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
++static void x86_cpu_parse_featurestr(const char *typename, char *features,
+                                      Error **errp)
+ {
+-    X86CPU *cpu = X86_CPU(cs);
+     char *featurestr; /* Single 'key=value" string being parsed */
+     Error *local_err = NULL;
++    static bool cpu_globals_initialized;
++
++    if (cpu_globals_initialized) {
++        return;
++    }
++    cpu_globals_initialized = true;
+ 
+     if (!features) {
+         return;
+@@ -1998,6 +2003,7 @@ static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
+         const char *val = NULL;
+         char *eq = NULL;
+         char num[32];
++        GlobalProperty *prop;
+ 
+         /* Compatibility syntax: */
+         if (featurestr[0] == '+') {
+@@ -2035,7 +2041,12 @@ static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
+             name = "tsc-frequency";
+         }
+ 
+-        object_property_parse(OBJECT(cpu), val, name, &local_err);
++        prop = g_new0(typeof(*prop), 1);
++        prop->driver = typename;
++        prop->property = g_strdup(name);
++        prop->value = g_strdup(val);
++        prop->errp = &error_fatal;
++        qdev_prop_register_global(prop);
+     }
+ 
+     if (local_err) {
+@@ -2224,9 +2235,11 @@ X86CPU *cpu_x86_create(const char *cpu_model, Error **errp)
+ {
+     X86CPU *cpu = NULL;
+     ObjectClass *oc;
++    CPUClass *cc;
+     gchar **model_pieces;
+     char *name, *features;
+     Error *error = NULL;
++    const char *typename;
+ 
+     model_pieces = g_strsplit(cpu_model, ",", 2);
+     if (!model_pieces[0]) {
+@@ -2241,10 +2254,11 @@ X86CPU *cpu_x86_create(const char *cpu_model, Error **errp)
+         error_setg(&error, "Unable to find CPU definition: %s", name);
+         goto out;
+     }
++    cc = CPU_CLASS(oc);
++    typename = object_class_get_name(oc);
+ 
+-    cpu = X86_CPU(object_new(object_class_get_name(oc)));
+-
+-    x86_cpu_parse_featurestr(CPU(cpu), features, &error);
++    cc->parse_features(typename, features, &error);
++    cpu = X86_CPU(object_new(typename));
+     if (error) {
+         goto out;
+     }
+-- 
+1.8.3.1
+

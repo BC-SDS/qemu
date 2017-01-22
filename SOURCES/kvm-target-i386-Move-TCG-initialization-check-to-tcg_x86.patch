@@ -1,0 +1,72 @@
+From 6eac1dd30b36a109a70d19a90f034438ff861b92 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:06 +0200
+Subject: [PATCH 06/99] target-i386: Move TCG initialization check to
+ tcg_x86_init()
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-2-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71617
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 01/78] target-i386: Move TCG initialization check to tcg_x86_init()
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Eduardo Habkost <ehabkost@redhat.com>
+
+Instead of requiring cpu.c to check if TCG was already initialized,
+simply let the function be called multiple times.
+
+Suggested-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Igor Mammedov <imammedo@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 4fe15cdedf8728e58b8e475f8b1a26fb16aa9caa)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/cpu.c       | 4 +---
+ target-i386/translate.c | 6 ++++++
+ 2 files changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index e1ee1ff..def63ed 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -3263,7 +3263,6 @@ static void x86_cpu_initfn(Object *obj)
+     X86CPUClass *xcc = X86_CPU_GET_CLASS(obj);
+     CPUX86State *env = &cpu->env;
+     FeatureWord w;
+-    static int inited;
+ 
+     cs->env_ptr = env;
+     cpu_exec_init(cs, &error_abort);
+@@ -3314,8 +3313,7 @@ static void x86_cpu_initfn(Object *obj)
+     x86_cpu_load_def(cpu, xcc->cpu_def, &error_abort);
+ 
+     /* init various static tables used in TCG mode */
+-    if (tcg_enabled() && !inited) {
+-        inited = 1;
++    if (tcg_enabled()) {
+         tcg_x86_init();
+     }
+ }
+diff --git a/target-i386/translate.c b/target-i386/translate.c
+index 1a1214d..06a2219 100644
+--- a/target-i386/translate.c
++++ b/target-i386/translate.c
+@@ -8133,6 +8133,12 @@ void tcg_x86_init(void)
+         "bnd0_ub", "bnd1_ub", "bnd2_ub", "bnd3_ub"
+     };
+     int i;
++    static bool initialized;
++
++    if (initialized) {
++        return;
++    }
++    initialized = true;
+ 
+     cpu_env = tcg_global_reg_new_ptr(TCG_AREG0, "env");
+     cpu_cc_op = tcg_global_mem_new_i32(cpu_env,
+-- 
+1.8.3.1
+

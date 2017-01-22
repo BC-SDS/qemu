@@ -1,0 +1,96 @@
+From dd4e9261b70ed2201cddab85e37c7b7f91ca423a Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Wed, 3 Aug 2016 07:13:40 +0200
+Subject: [PATCH 91/99] Revert "spapr: Ensure CPU cores are added contiguously
+ and removed in LIFO order"
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1470208421-7353-5-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71791
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCHv2 4/5] Revert "spapr: Ensure CPU cores are added contiguously and removed in LIFO order"
+Bugzilla: 1361443
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: David Gibson <david@gibson.dropbear.id.au>
+
+This reverts commit 5cbc64de25973e9129c5a7897734a06ac64b9aff.
+
+Now that we have stable cpu_index values for pseries-2.7 (and future)
+machine types, we can now safely allow hotplug and unplug in any order.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	hw/ppc/spapr_cpu_core.c
+
+Some conflicts on revert due to some small changes in the inserted
+code since the original commit.
+
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 7cdd76132a7daff30cde12ba81684741d50c4f22)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1361443
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+---
+ hw/ppc/spapr_cpu_core.c | 20 +-------------------
+ 1 file changed, 1 insertion(+), 19 deletions(-)
+
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index abea1df..9f37b07 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -125,7 +125,6 @@ static void spapr_core_release(DeviceState *dev, void *opaque)
+ void spapr_core_unplug(HotplugHandler *hotplug_dev, DeviceState *dev,
+                        Error **errp)
+ {
+-    sPAPRMachineState *spapr = SPAPR_MACHINE(OBJECT(hotplug_dev));
+     CPUCore *cc = CPU_CORE(dev);
+     int smt = kvmppc_smt_threads();
+     int index = cc->core_id / smp_threads;
+@@ -133,16 +132,7 @@ void spapr_core_unplug(HotplugHandler *hotplug_dev, DeviceState *dev,
+         spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, index * smt);
+     sPAPRDRConnectorClass *drck;
+     Error *local_err = NULL;
+-    int spapr_max_cores = max_cpus / smp_threads;
+-    int i;
+ 
+-    for (i = spapr_max_cores - 1; i > index; i--) {
+-        if (spapr->cores[i]) {
+-            error_setg(errp, "core-id %d should be removed first",
+-                       i * smp_threads);
+-            return;
+-        }
+-    }
+     g_assert(drc);
+ 
+     drck = SPAPR_DR_CONNECTOR_GET_CLASS(drc);
+@@ -224,7 +214,7 @@ void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+     sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(OBJECT(hotplug_dev));
+     sPAPRMachineState *spapr = SPAPR_MACHINE(OBJECT(hotplug_dev));
+     int spapr_max_cores = max_cpus / smp_threads;
+-    int index, i;
++    int index;
+     Error *local_err = NULL;
+     CPUCore *cc = CPU_CORE(dev);
+     char *base_core_type = spapr_get_cpu_core_type(machine->cpu_model);
+@@ -261,14 +251,6 @@ void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+         goto out;
+     }
+ 
+-    for (i = 0; i < index; i++) {
+-        if (!spapr->cores[i]) {
+-            error_setg(&local_err, "core-id %d should be added first",
+-                       i * smp_threads);
+-            goto out;
+-        }
+-    }
+-
+ out:
+     g_free(base_core_type);
+     error_propagate(errp, local_err);
+-- 
+1.8.3.1
+

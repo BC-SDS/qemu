@@ -1,0 +1,27 @@
+From 9fcd127ea680773464fd0dd175fde8e56c32a98e Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Mon, 5 Oct 2015 16:57:18 +0200
+Subject: Add --enable-fstack-protector to help output
+
+Missing --enable-fstack-protector. Add it.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ configure | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/configure b/configure
+index 78efd98..968d176 100755
+--- a/configure
++++ b/configure
+@@ -1282,6 +1282,7 @@ Advanced options (experts only):
+   --disable-strip          disable stripping binaries
+   --disable-werror         disable compilation abort on warning
+   --disable-stack-protector disable compiler-provided stack protection
++  --enable-stack-protector enable compiler-provided stack protection
+   --audio-drv-list=LIST    set audio drivers list:
+                            Available drivers: $audio_possible_drivers
+   --block-drv-whitelist=L  Same as --block-drv-rw-whitelist=L
+-- 
+2.5.5
+

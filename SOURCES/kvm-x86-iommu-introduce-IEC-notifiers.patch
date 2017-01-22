@@ -1,0 +1,267 @@
+From faac242ec5c7430ffd303718653865e0a5945b40 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:39 +0200
+Subject: [PATCH 21/37] x86-iommu: introduce IEC notifiers
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-21-git-send-email-peterx@redhat.com>
+Patchwork-id: 72005
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 20/34] x86-iommu: introduce IEC notifiers
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+This patch introduces x86 IOMMU IEC (Interrupt Entry Cache)
+invalidation notifier list. When vIOMMU receives IEC invalidate
+request, all the registered units will be notified with specific
+invalidation requests.
+
+Intel IOMMU is the first provider that generates such a event.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 02a2cbc872df99205eeafd399f01c210e0b797c4)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+  hw/i386/trace-events
+
+In downstream, we do not have hw/i386/trace-events, so move the addition
+lines into the big trace-events.
+---
+ hw/i386/intel_iommu.c          | 36 +++++++++++++++++++++++++++++-------
+ hw/i386/intel_iommu_internal.h | 24 ++++++++++++++++++++----
+ hw/i386/x86-iommu.c            | 29 +++++++++++++++++++++++++++++
+ include/hw/i386/x86-iommu.h    | 40 ++++++++++++++++++++++++++++++++++++++++
+ trace-events                   |  3 +++
+ 5 files changed, 121 insertions(+), 11 deletions(-)
+
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index c7ded0f..2acec85 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -904,6 +904,12 @@ static void vtd_root_table_setup(IntelIOMMUState *s)
+                 (s->root_extended ? "(extended)" : ""));
+ }
+ 
++static void vtd_iec_notify_all(IntelIOMMUState *s, bool global,
++                               uint32_t index, uint32_t mask)
++{
++    x86_iommu_iec_notify_all(X86_IOMMU_DEVICE(s), global, index, mask);
++}
++
+ static void vtd_interrupt_remap_table_setup(IntelIOMMUState *s)
+ {
+     uint64_t value = 0;
+@@ -911,7 +917,8 @@ static void vtd_interrupt_remap_table_setup(IntelIOMMUState *s)
+     s->intr_size = 1UL << ((value & VTD_IRTA_SIZE_MASK) + 1);
+     s->intr_root = value & VTD_IRTA_ADDR_MASK;
+ 
+-    /* TODO: invalidate interrupt entry cache */
++    /* Notify global invalidation */
++    vtd_iec_notify_all(s, true, 0, 0);
+ 
+     VTD_DPRINTF(CSR, "int remap table addr 0x%"PRIx64 " size %"PRIu32,
+                 s->intr_root, s->intr_size);
+@@ -1413,6 +1420,21 @@ static bool vtd_process_iotlb_desc(IntelIOMMUState *s, VTDInvDesc *inv_desc)
+     return true;
+ }
+ 
++static bool vtd_process_inv_iec_desc(IntelIOMMUState *s,
++                                     VTDInvDesc *inv_desc)
++{
++    VTD_DPRINTF(INV, "inv ir glob %d index %d mask %d",
++                inv_desc->iec.granularity,
++                inv_desc->iec.index,
++                inv_desc->iec.index_mask);
++
++    vtd_iec_notify_all(s, !inv_desc->iec.granularity,
++                       inv_desc->iec.index,
++                       inv_desc->iec.index_mask);
++
++    return true;
++}
++
+ static bool vtd_process_inv_desc(IntelIOMMUState *s)
+ {
+     VTDInvDesc inv_desc;
+@@ -1453,12 +1475,12 @@ static bool vtd_process_inv_desc(IntelIOMMUState *s)
+         break;
+ 
+     case VTD_INV_DESC_IEC:
+-        VTD_DPRINTF(INV, "Interrupt Entry Cache Invalidation "
+-                    "not implemented yet");
+-        /*
+-         * Since currently we do not cache interrupt entries, we can
+-         * just mark this descriptor as "good" and move on.
+-         */
++        VTD_DPRINTF(INV, "Invalidation Interrupt Entry Cache "
++                    "Descriptor hi 0x%"PRIx64 " lo 0x%"PRIx64,
++                    inv_desc.hi, inv_desc.lo);
++        if (!vtd_process_inv_iec_desc(s, &inv_desc)) {
++            return false;
++        }
+         break;
+ 
+     default:
+diff --git a/hw/i386/intel_iommu_internal.h b/hw/i386/intel_iommu_internal.h
+index e1a08cb..10c20fe 100644
+--- a/hw/i386/intel_iommu_internal.h
++++ b/hw/i386/intel_iommu_internal.h
+@@ -296,12 +296,28 @@ typedef enum VTDFaultReason {
+ 
+ #define VTD_CONTEXT_CACHE_GEN_MAX       0xffffffffUL
+ 
++/* Interrupt Entry Cache Invalidation Descriptor: VT-d 6.5.2.7. */
++struct VTDInvDescIEC {
++    uint32_t type:4;            /* Should always be 0x4 */
++    uint32_t granularity:1;     /* If set, it's global IR invalidation */
++    uint32_t resved_1:22;
++    uint32_t index_mask:5;      /* 2^N for continuous int invalidation */
++    uint32_t index:16;          /* Start index to invalidate */
++    uint32_t reserved_2:16;
++};
++typedef struct VTDInvDescIEC VTDInvDescIEC;
++
+ /* Queued Invalidation Descriptor */
+-struct VTDInvDesc {
+-    uint64_t lo;
+-    uint64_t hi;
++union VTDInvDesc {
++    struct {
++        uint64_t lo;
++        uint64_t hi;
++    };
++    union {
++        VTDInvDescIEC iec;
++    };
+ };
+-typedef struct VTDInvDesc VTDInvDesc;
++typedef union VTDInvDesc VTDInvDesc;
+ 
+ /* Masks for struct VTDInvDesc */
+ #define VTD_INV_DESC_TYPE               0xf
+diff --git a/hw/i386/x86-iommu.c b/hw/i386/x86-iommu.c
+index 4280839..ce26b2a 100644
+--- a/hw/i386/x86-iommu.c
++++ b/hw/i386/x86-iommu.c
+@@ -22,6 +22,33 @@
+ #include "hw/boards.h"
+ #include "hw/i386/x86-iommu.h"
+ #include "qemu/error-report.h"
++#include "trace.h"
++
++void x86_iommu_iec_register_notifier(X86IOMMUState *iommu,
++                                     iec_notify_fn fn, void *data)
++{
++    IEC_Notifier *notifier = g_new0(IEC_Notifier, 1);
++
++    notifier->iec_notify = fn;
++    notifier->private = data;
++
++    QLIST_INSERT_HEAD(&iommu->iec_notifiers, notifier, list);
++}
++
++void x86_iommu_iec_notify_all(X86IOMMUState *iommu, bool global,
++                              uint32_t index, uint32_t mask)
++{
++    IEC_Notifier *notifier;
++
++    trace_x86_iommu_iec_notify(global, index, mask);
++
++    QLIST_FOREACH(notifier, &iommu->iec_notifiers, list) {
++        if (notifier->iec_notify) {
++            notifier->iec_notify(notifier->private, global,
++                                 index, mask);
++        }
++    }
++}
+ 
+ /* Default X86 IOMMU device */
+ static X86IOMMUState *x86_iommu_default = NULL;
+@@ -46,7 +73,9 @@ X86IOMMUState *x86_iommu_get_default(void)
+ 
+ static void x86_iommu_realize(DeviceState *dev, Error **errp)
+ {
++    X86IOMMUState *x86_iommu = X86_IOMMU_DEVICE(dev);
+     X86IOMMUClass *x86_class = X86_IOMMU_GET_CLASS(dev);
++    QLIST_INIT(&x86_iommu->iec_notifiers);
+     if (x86_class->realize) {
+         x86_class->realize(dev, errp);
+     }
+diff --git a/include/hw/i386/x86-iommu.h b/include/hw/i386/x86-iommu.h
+index fa6ce31..c48e8dd 100644
+--- a/include/hw/i386/x86-iommu.h
++++ b/include/hw/i386/x86-iommu.h
+@@ -46,9 +46,28 @@ struct X86IOMMUClass {
+                      MSIMessage *dst, uint16_t sid);
+ };
+ 
++/**
++ * iec_notify_fn - IEC (Interrupt Entry Cache) notifier hook,
++ *                 triggered when IR invalidation happens.
++ * @private: private data
++ * @global: whether this is a global IEC invalidation
++ * @index: IRTE index to invalidate (start from)
++ * @mask: invalidation mask
++ */
++typedef void (*iec_notify_fn)(void *private, bool global,
++                              uint32_t index, uint32_t mask);
++
++struct IEC_Notifier {
++    iec_notify_fn iec_notify;
++    void *private;
++    QLIST_ENTRY(IEC_Notifier) list;
++};
++typedef struct IEC_Notifier IEC_Notifier;
++
+ struct X86IOMMUState {
+     SysBusDevice busdev;
+     bool intr_supported;        /* Whether vIOMMU supports IR */
++    QLIST_HEAD(, IEC_Notifier) iec_notifiers; /* IEC notify list */
+ };
+ 
+ /**
+@@ -57,4 +76,25 @@ struct X86IOMMUState {
+  */
+ X86IOMMUState *x86_iommu_get_default(void);
+ 
++/**
++ * x86_iommu_iec_register_notifier - register IEC (Interrupt Entry
++ *                                   Cache) notifiers
++ * @iommu: IOMMU device to register
++ * @fn: IEC notifier hook function
++ * @data: notifier private data
++ */
++void x86_iommu_iec_register_notifier(X86IOMMUState *iommu,
++                                     iec_notify_fn fn, void *data);
++
++/**
++ * x86_iommu_iec_notify_all - Notify IEC invalidations
++ * @iommu: IOMMU device that sends the notification
++ * @global: whether this is a global invalidation. If true, @index
++ *          and @mask are undefined.
++ * @index: starting index of interrupt entry to invalidate
++ * @mask: index mask for the invalidation
++ */
++void x86_iommu_iec_notify_all(X86IOMMUState *iommu, bool global,
++                              uint32_t index, uint32_t mask);
++
+ #endif
+diff --git a/trace-events b/trace-events
+index 6b5a934..68977b4 100644
+--- a/trace-events
++++ b/trace-events
+@@ -2159,3 +2159,6 @@ virtio_input_queue_full(void) "queue full"
+ 
+ # target-i386/kvm.c
+ kvm_x86_fixup_msi_error(uint32_t gsi) "VT-d failed to remap interrupt for GSI %" PRIu32
++
++# hw/i386/x86-iommu.c
++x86_iommu_iec_notify(bool global, uint32_t index, uint32_t mask) "Notify IEC invalidation: global=%d index=%" PRIu32 " mask=%" PRIu32
+-- 
+1.8.3.1
+

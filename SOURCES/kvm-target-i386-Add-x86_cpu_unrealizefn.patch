@@ -1,0 +1,65 @@
+From d87479041532f7476028669c77fdaa672ed334b2 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:14 +0200
+Subject: [PATCH 74/99] target-i386: Add x86_cpu_unrealizefn()
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-70-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71685
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 69/78] target-i386: Add x86_cpu_unrealizefn()
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+First remove VCPU from exec loop and only then remove lapic.
+
+Signed-off-by: Chen Fan <chen.fan.fnst@cn.fujitsu.com>
+Signed-off-by: Gu Zheng <guz.fnst@cn.fujitsu.com>
+Signed-off-by: Zhu Guihua <zhugh.fnst@cn.fujitsu.com>
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit c884776e9dc947105827bd6c22192863f97267d2)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/cpu.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 7c66d09..b8e499b 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -3064,6 +3064,21 @@ out:
+     }
+ }
+ 
++static void x86_cpu_unrealizefn(DeviceState *dev, Error **errp)
++{
++    X86CPU *cpu = X86_CPU(dev);
++
++#ifndef CONFIG_USER_ONLY
++    cpu_remove_sync(CPU(dev));
++    qemu_unregister_reset(x86_cpu_machine_reset_cb, dev);
++#endif
++
++    if (cpu->apic_state) {
++        object_unparent(OBJECT(cpu->apic_state));
++        cpu->apic_state = NULL;
++    }
++}
++
+ typedef struct BitProperty {
+     uint32_t *ptr;
+     uint32_t mask;
+@@ -3310,6 +3325,7 @@ static void x86_cpu_common_class_init(ObjectClass *oc, void *data)
+ 
+     xcc->parent_realize = dc->realize;
+     dc->realize = x86_cpu_realizefn;
++    dc->unrealize = x86_cpu_unrealizefn;
+     dc->props = x86_cpu_properties;
+ 
+     xcc->parent_reset = cc->reset;
+-- 
+1.8.3.1
+

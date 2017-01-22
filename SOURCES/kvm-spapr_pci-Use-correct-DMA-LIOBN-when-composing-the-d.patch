@@ -1,0 +1,50 @@
+From ac1e6aa6359fd11059c795a9cd095c1f4bea4995 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:08 +0200
+Subject: [PATCH 01/27] spapr_pci: Use correct DMA LIOBN when composing the
+ device tree
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-2-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71088
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 01/16] spapr_pci: Use correct DMA LIOBN when composing the device tree
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Alexey Kardashevskiy <aik@ozlabs.ru>
+
+The user could have picked LIOBN via the CLI but the device tree
+rendering code would still use the value derived from the PHB index
+(which is the default fallback if LIOBN is not set in the CLI).
+
+This replaces SPAPR_PCI_LIOBN() with the actual DMA LIOBN value.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit eded5bac3b2fa51f6165030b0e8ed718247af188)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_pci.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hw/ppc/spapr_pci.c b/hw/ppc/spapr_pci.c
+index 573e635..742d127 100644
+--- a/hw/ppc/spapr_pci.c
++++ b/hw/ppc/spapr_pci.c
+@@ -1815,7 +1815,7 @@ int spapr_populate_pci_dt(sPAPRPHBState *phb,
+     _FDT(fdt_setprop(fdt, bus_off, "interrupt-map", &interrupt_map,
+                      sizeof(interrupt_map)));
+ 
+-    tcet = spapr_tce_find_by_liobn(SPAPR_PCI_LIOBN(phb->index, 0));
++    tcet = spapr_tce_find_by_liobn(phb->dma_liobn);
+     if (!tcet) {
+         return -1;
+     }
+-- 
+1.8.3.1
+

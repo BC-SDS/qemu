@@ -1,0 +1,91 @@
+From ea7df612828890c8e1c0c283385fc9f16713354e Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:44 +0200
+Subject: [PATCH 44/99] machine: Add machine_register_compat_props() function
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-40-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71655
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 39/78] machine: Add machine_register_compat_props() function
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Eduardo Habkost <ehabkost@redhat.com>
+
+Move the compat_props handling to core machine code.
+
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+Reviewed-by: Markus Armbruster <armbru@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 39a3b377b89506ad15b8bc91fe2296f65b9f755a)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/core/machine.c   | 16 ++++++++++++++++
+ include/hw/boards.h |  1 +
+ vl.c                |  9 ++-------
+ 3 files changed, 19 insertions(+), 7 deletions(-)
+
+diff --git a/hw/core/machine.c b/hw/core/machine.c
+index 1abe0cc..4ccb7e6 100644
+--- a/hw/core/machine.c
++++ b/hw/core/machine.c
+@@ -539,6 +539,22 @@ static void machine_class_finalize(ObjectClass *klass, void *data)
+     }
+ }
+ 
++void machine_register_compat_props(MachineState *machine)
++{
++    MachineClass *mc = MACHINE_GET_CLASS(machine);
++    int i;
++    GlobalProperty *p;
++
++    if (!mc->compat_props) {
++        return;
++    }
++
++    for (i = 0; i < mc->compat_props->len; i++) {
++        p = g_array_index(mc->compat_props, GlobalProperty *, i);
++        qdev_prop_register_global(p);
++    }
++}
++
+ static const TypeInfo machine_info = {
+     .name = TYPE_MACHINE,
+     .parent = TYPE_OBJECT,
+diff --git a/include/hw/boards.h b/include/hw/boards.h
+index ab65753..6b3fae8 100644
+--- a/include/hw/boards.h
++++ b/include/hw/boards.h
+@@ -40,6 +40,7 @@ int machine_kvm_shadow_mem(MachineState *machine);
+ int machine_phandle_start(MachineState *machine);
+ bool machine_dump_guest_core(MachineState *machine);
+ bool machine_mem_merge(MachineState *machine);
++void machine_register_compat_props(MachineState *machine);
+ 
+ /**
+  * CPUArchId:
+diff --git a/vl.c b/vl.c
+index 0f1d688..35ad32f 100644
+--- a/vl.c
++++ b/vl.c
+@@ -4517,13 +4517,8 @@ int main(int argc, char **argv, char **envp)
+             exit (i == 1 ? 1 : 0);
+     }
+ 
+-    if (machine_class->compat_props) {
+-        GlobalProperty *p;
+-        for (i = 0; i < machine_class->compat_props->len; i++) {
+-            p = g_array_index(machine_class->compat_props, GlobalProperty *, i);
+-            qdev_prop_register_global(p);
+-        }
+-    }
++    machine_register_compat_props(current_machine);
++
+     qemu_opts_foreach(qemu_find_opts("global"),
+                       global_init_func, NULL, NULL);
+ 
+-- 
+1.8.3.1
+

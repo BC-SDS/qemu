@@ -1,0 +1,117 @@
+From 82e3557549a6ada14a8bd2e5b049cfc88ba7a737 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:23 +0200
+Subject: [PATCH 23/99] target-i386: Move features logic that requires CPUState
+ to realize time
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-19-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71634
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 18/78] target-i386: Move features logic that requires CPUState to realize time
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Making x86_cpu_parse_featurestr() a pure convertor
+of legacy feature string into global properties, needs
+it to be called before a CPU instance is created so
+parser shouldn't modify CPUState directly or access
+it at all. Hence move current hack that directly pokes
+into CPUState, to set/unset +-feats, from parser to
+CPU's realize method.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit dc15c0517b010a9444a2c05794dae980f2a2cbd9)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/cpu.c | 44 ++++++++++++++++++++++++++------------------
+ 1 file changed, 26 insertions(+), 18 deletions(-)
+
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 4ff7934..782bb55 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -1961,6 +1961,14 @@ static inline void feat2prop(char *s)
+     }
+ }
+ 
++/* Compatibily hack to maintain legacy +-feat semantic,
++ * where +-feat overwrites any feature set by
++ * feat=on|feat even if the later is parsed after +-feat
++ * (i.e. "-x2apic,x2apic=on" will result in x2apic disabled)
++ */
++static FeatureWordArray plus_features = { 0 };
++static FeatureWordArray minus_features = { 0 };
++
+ /* Parse "+feature,-feature,feature=foo" CPU feature string
+  */
+ static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
+@@ -1968,12 +1976,6 @@ static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
+ {
+     X86CPU *cpu = X86_CPU(cs);
+     char *featurestr; /* Single 'key=value" string being parsed */
+-    FeatureWord w;
+-    /* Features to be added */
+-    FeatureWordArray plus_features = { 0 };
+-    /* Features to be removed */
+-    FeatureWordArray minus_features = { 0 };
+-    CPUX86State *env = &cpu->env;
+     Error *local_err = NULL;
+ 
+     featurestr = features ? strtok(features, ",") : NULL;
+@@ -2014,18 +2016,6 @@ static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
+         }
+         featurestr = strtok(NULL, ",");
+     }
+-
+-    if (cpu->host_features) {
+-        for (w = 0; w < FEATURE_WORDS; w++) {
+-            env->features[w] =
+-                x86_cpu_get_supported_feature_word(w, cpu->migratable);
+-        }
+-    }
+-
+-    for (w = 0; w < FEATURE_WORDS; w++) {
+-        env->features[w] |= plus_features[w];
+-        env->features[w] &= ~minus_features[w];
+-    }
+ }
+ 
+ /* Print all cpuid feature names in featureset
+@@ -2952,12 +2942,30 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
+     CPUX86State *env = &cpu->env;
+     Error *local_err = NULL;
+     static bool ht_warned;
++    FeatureWord w;
+ 
+     if (cpu->apic_id < 0) {
+         error_setg(errp, "apic-id property was not initialized properly");
+         return;
+     }
+ 
++    /*TODO: cpu->host_features incorrectly overwrites features
++     * set using "feat=on|off". Once we fix this, we can convert
++     * plus_features & minus_features to global properties
++     * inside x86_cpu_parse_featurestr() too.
++     */
++    if (cpu->host_features) {
++        for (w = 0; w < FEATURE_WORDS; w++) {
++            env->features[w] =
++                x86_cpu_get_supported_feature_word(w, cpu->migratable);
++        }
++    }
++
++    for (w = 0; w < FEATURE_WORDS; w++) {
++        cpu->env.features[w] |= plus_features[w];
++        cpu->env.features[w] &= ~minus_features[w];
++    }
++
+     if (env->features[FEAT_7_0_EBX] && env->cpuid_level < 7) {
+         env->cpuid_level = 7;
+     }
+-- 
+1.8.3.1
+

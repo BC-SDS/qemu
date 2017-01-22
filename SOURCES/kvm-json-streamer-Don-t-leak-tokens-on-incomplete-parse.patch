@@ -1,0 +1,65 @@
+From 6e7a72ad751d3c2d2d6001a4a3a7c94d77f6176a Mon Sep 17 00:00:00 2001
+From: Markus Armbruster <armbru@redhat.com>
+Date: Wed, 27 Jul 2016 08:06:31 +0200
+Subject: [PATCH 14/16] json-streamer: Don't leak tokens on incomplete parse
+
+RH-Author: Markus Armbruster <armbru@redhat.com>
+Message-id: <1469606792-13115-2-git-send-email-armbru@redhat.com>
+Patchwork-id: 71485
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 1/2] json-streamer: Don't leak tokens on incomplete parse
+Bugzilla: 1360612
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+From: Eric Blake <eblake@redhat.com>
+
+Valgrind complained about a number of leaks in
+tests/check-qobject-json:
+
+==12657==    definitely lost: 17,247 bytes in 1,234 blocks
+
+All of which had the same root cause: on an incomplete parse,
+we were abandoning the token queue without cleaning up the
+allocated data within each queue element.  Introduced in
+commit 95385fe, when we switched from QList (which recursively
+frees contents) to g_queue (which does not).
+
+We don't yet require glib 2.32 with its g_queue_free_full(),
+so open-code it instead.
+
+CC: qemu-stable@nongnu.org
+Signed-off-by: Eric Blake <eblake@redhat.com>
+Message-Id: <1463608012-12760-1-git-send-email-eblake@redhat.com>
+Reviewed-by: Markus Armbruster <armbru@redhat.com>
+Signed-off-by: Markus Armbruster <armbru@redhat.com>
+(cherry picked from commit ba4dba54347d5062436a8553f527dbbed6dcf069)
+Signed-off-by: Markus Armbruster <armbru@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ qobject/json-streamer.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/qobject/json-streamer.c b/qobject/json-streamer.c
+index 0251685..7164390 100644
+--- a/qobject/json-streamer.c
++++ b/qobject/json-streamer.c
+@@ -20,9 +20,15 @@
+ #define MAX_TOKEN_COUNT (2ULL << 20)
+ #define MAX_NESTING (1ULL << 10)
+ 
++static void json_message_free_token(void *token, void *opaque)
++{
++    g_free(token);
++}
++
+ static void json_message_free_tokens(JSONMessageParser *parser)
+ {
+     if (parser->tokens) {
++        g_queue_foreach(parser->tokens, json_message_free_token, NULL);
+         g_queue_free(parser->tokens);
+         parser->tokens = NULL;
+     }
+-- 
+1.8.3.1
+

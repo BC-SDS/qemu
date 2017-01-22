@@ -1,0 +1,57 @@
+From b4a413995d4c0f55355cc3ce1073c4a811f210da Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:51 +0200
+Subject: [PATCH 33/37] kvm-irqchip: only commit route when irqchip is used
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-33-git-send-email-peterx@redhat.com>
+Patchwork-id: 72017
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 32/34] kvm-irqchip: only commit route when irqchip is used
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Reported from Alexey Kardashevskiy:
+
+3f1fea0fb5bf "kvm-irqchip: do explicit commit when update irq" produces
+a crash on pseries guest running with VFIO on POWER8 machine as it does
+not support KVM_CAP_IRQCHIP (KVM_CAP_IRQ_XICS is there instead). At the
+result, KVMState::irq_routes is NULL when VFIO calls
+kvm_irqchip_commit_routes.
+
+This makes the routing update conditional.
+
+Reported-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Tested-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 7005f7f81cef31bda895d3274c13854c143d3d8d)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ kvm-all.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/kvm-all.c b/kvm-all.c
+index beb99c8..62daa28 100644
+--- a/kvm-all.c
++++ b/kvm-all.c
+@@ -1041,6 +1041,14 @@ void kvm_irqchip_commit_routes(KVMState *s)
+ {
+     int ret;
+ 
++    if (kvm_gsi_direct_mapping()) {
++        return;
++    }
++
++    if (!kvm_gsi_routing_enabled()) {
++        return;
++    }
++
+     s->irq_routes->flags = 0;
+     trace_kvm_irqchip_commit_routes();
+     ret = kvm_vm_ioctl(s, KVM_SET_GSI_ROUTING, s->irq_routes);
+-- 
+1.8.3.1
+

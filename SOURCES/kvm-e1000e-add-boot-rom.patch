@@ -1,0 +1,41 @@
+From b2a3bb98aa9da5b904e8d77a11079694451e9bd8 Mon Sep 17 00:00:00 2001
+From: Xiao Wang <jasowang@redhat.com>
+Date: Thu, 4 Aug 2016 05:31:36 +0200
+Subject: [PATCH 99/99] e1000e: add boot rom
+
+RH-Author: Xiao Wang <jasowang@redhat.com>
+Message-id: <1470288696-16601-3-git-send-email-jasowang@redhat.com>
+Patchwork-id: 71852
+O-Subject: [RHEL7.3 qemu-kvm-rhev 2/2] e1000e: add boot rom
+Bugzilla: 1343092
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+From: Gerd Hoffmann <kraxel@redhat.com>
+
+Upstream: 1676103dc25e8b7d5bbd2ee7ae0bab08a02c1c88
+Notes: to be aligned with other pxe roms, rename to pxe-e1000e.rom.
+
+Signed-off-by: Gerd Hoffmann <kraxel@redhat.com>
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/e1000e.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/net/e1000e.c b/hw/net/e1000e.c
+index 692283f..d80b857 100644
+--- a/hw/net/e1000e.c
++++ b/hw/net/e1000e.c
+@@ -693,6 +693,7 @@ static void e1000e_class_init(ObjectClass *class, void *data)
+     c->vendor_id = PCI_VENDOR_ID_INTEL;
+     c->device_id = E1000_DEV_ID_82574L;
+     c->revision = 0;
++    c->romfile = "pxe-e1000e.rom";
+     c->class_id = PCI_CLASS_NETWORK_ETHERNET;
+     c->is_express = 1;
+ 
+-- 
+1.8.3.1
+

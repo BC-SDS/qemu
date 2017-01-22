@@ -1,0 +1,50 @@
+From 295c40a6a30f55f6118fe05967cb7bd35d580c71 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 24 Jun 2016 18:55:55 +0200
+Subject: [PATCH 26/33] nvdimm acpi: check revision
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466794559-27963-19-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70785
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 18/22] nvdimm acpi: check revision
+Bugzilla: 1270345
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+
+Currently only revision 1 is supported
+
+Signed-off-by: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+Reviewed-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit d15fc53f8d564ba977f64df96b0114b58f36d154)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/nvdimm.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/hw/acpi/nvdimm.c b/hw/acpi/nvdimm.c
+index 07c95c1..8b89285 100644
+--- a/hw/acpi/nvdimm.c
++++ b/hw/acpi/nvdimm.c
+@@ -485,6 +485,13 @@ nvdimm_dsm_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
+     nvdimm_debug("Revision %#x Handler %#x Function %#x.\n", in->revision,
+                  in->handle, in->function);
+ 
++    if (in->revision != 0x1 /* Currently we only support DSM Spec Rev1. */) {
++        nvdimm_debug("Revision %#x is not supported, expect %#x.\n",
++                     in->revision, 0x1);
++        nvdimm_dsm_no_payload(1 /* Not Supported */, dsm_mem_addr);
++        goto exit;
++    }
++
+      /* Handle 0 is reserved for NVDIMM Root Device. */
+     if (!in->handle) {
+         nvdimm_dsm_root(in, dsm_mem_addr);
+-- 
+1.8.3.1
+

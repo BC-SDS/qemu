@@ -1,0 +1,142 @@
+From 7a16dc272bdc6c135a3063b0f674d7945c7b8494 Mon Sep 17 00:00:00 2001
+From: John Snow <jsnow@redhat.com>
+Date: Fri, 17 Jun 2016 21:28:20 +0200
+Subject: [PATCH 1/8] block: clarify error message for qmp-eject
+
+RH-Author: John Snow <jsnow@redhat.com>
+Message-id: <1466198902-14524-2-git-send-email-jsnow@redhat.com>
+Patchwork-id: 70681
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 1/3] block: clarify error message for qmp-eject
+Bugzilla: 961589
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Max Reitz <mreitz@redhat.com>
+
+If you use HMP's eject but the CDROM tray is locked, you may get a
+confusing error message informing you that the "tray isn't open."
+
+As this is the point of eject, we can do a little better and help
+clarify that the tray was locked and that it (might) open up later,
+so try again.
+
+It's not ideal, but it makes the semantics of the (legacy) eject
+command more understandable to end users when they try to use it.
+
+Signed-off-by: John Snow <jsnow@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Signed-off-by: Kevin Wolf <kwolf@redhat.com>
+(cherry picked from commit 3a3086b72ab723de9e0ffd705d01b82a8a9f3e49)
+Signed-off-by: John Snow <jsnow@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ blockdev.c | 51 ++++++++++++++++++++++++++++++++++++++++-----------
+ 1 file changed, 40 insertions(+), 11 deletions(-)
+
+diff --git a/blockdev.c b/blockdev.c
+index fa1c4ed..d437888 100644
+--- a/blockdev.c
++++ b/blockdev.c
+@@ -2290,16 +2290,29 @@ exit:
+     block_job_txn_unref(block_job_txn);
+ }
+ 
++static int do_open_tray(const char *device, bool force, Error **errp);
++
+ void qmp_eject(const char *device, bool has_force, bool force, Error **errp)
+ {
+     Error *local_err = NULL;
++    int rc;
++
++    if (!has_force) {
++        force = false;
++    }
+ 
+-    qmp_blockdev_open_tray(device, has_force, force, &local_err);
++    rc = do_open_tray(device, force, &local_err);
+     if (local_err) {
+         error_propagate(errp, local_err);
+         return;
+     }
+ 
++    if (rc == EINPROGRESS) {
++        error_setg(errp, "Device '%s' is locked and force was not specified, "
++                   "wait for tray to open and try again", device);
++        return;
++    }
++
+     qmp_x_blockdev_remove_medium(device, errp);
+ }
+ 
+@@ -2327,35 +2340,36 @@ void qmp_block_passwd(bool has_device, const char *device,
+     aio_context_release(aio_context);
+ }
+ 
+-void qmp_blockdev_open_tray(const char *device, bool has_force, bool force,
+-                            Error **errp)
++/**
++ * returns -errno on fatal error, +errno for non-fatal situations.
++ * errp will always be set when the return code is negative.
++ * May return +ENOSYS if the device has no tray,
++ * or +EINPROGRESS if the tray is locked and the guest has been notified.
++ */
++static int do_open_tray(const char *device, bool force, Error **errp)
+ {
+     BlockBackend *blk;
+     bool locked;
+ 
+-    if (!has_force) {
+-        force = false;
+-    }
+-
+     blk = blk_by_name(device);
+     if (!blk) {
+         error_set(errp, ERROR_CLASS_DEVICE_NOT_FOUND,
+                   "Device '%s' not found", device);
+-        return;
++        return -ENODEV;
+     }
+ 
+     if (!blk_dev_has_removable_media(blk)) {
+         error_setg(errp, "Device '%s' is not removable", device);
+-        return;
++        return -ENOTSUP;
+     }
+ 
+     if (!blk_dev_has_tray(blk)) {
+         /* Ignore this command on tray-less devices */
+-        return;
++        return ENOSYS;
+     }
+ 
+     if (blk_dev_is_tray_open(blk)) {
+-        return;
++        return 0;
+     }
+ 
+     locked = blk_dev_is_medium_locked(blk);
+@@ -2366,6 +2380,21 @@ void qmp_blockdev_open_tray(const char *device, bool has_force, bool force,
+     if (!locked || force) {
+         blk_dev_change_media_cb(blk, false);
+     }
++
++    if (locked && !force) {
++        return EINPROGRESS;
++    }
++
++    return 0;
++}
++
++void qmp_blockdev_open_tray(const char *device, bool has_force, bool force,
++                            Error **errp)
++{
++    if (!has_force) {
++        force = false;
++    }
++    do_open_tray(device, force, errp);
+ }
+ 
+ void qmp_blockdev_close_tray(const char *device, Error **errp)
+-- 
+1.8.3.1
+

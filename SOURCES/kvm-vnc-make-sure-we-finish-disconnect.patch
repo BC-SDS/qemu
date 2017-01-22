@@ -1,0 +1,47 @@
+From a17249d3ad52702c237d615ba80ac904c19e5493 Mon Sep 17 00:00:00 2001
+From: Gerd Hoffmann <kraxel@redhat.com>
+Date: Thu, 11 Aug 2016 13:14:34 +0200
+Subject: [PATCH 13/17] vnc: make sure we finish disconnect
+
+RH-Author: Gerd Hoffmann <kraxel@redhat.com>
+Message-id: <1470921274-32369-2-git-send-email-kraxel@redhat.com>
+Patchwork-id: 71950
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/1] vnc: make sure we finish disconnect
+Bugzilla: 1352799
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+It may happen that vnc connections linger in disconnecting state forever
+because VncState happens to be in a state where vnc_update_client()
+exists early and never reaches the vnc_disconnect_finish() call at the
+bottom of the function.  Fix that by doing an additinal check at the
+start of the function.
+
+Signed-off-by: Gerd Hoffmann <kraxel@redhat.com>
+Message-id: 1468405280-2571-1-git-send-email-kraxel@redhat.com
+(cherry picked from commit 5a8be0f73d6f60ff08746377eb09ca459f39deab)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ ui/vnc.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/ui/vnc.c b/ui/vnc.c
+index 90ed2ff..6454f57 100644
+--- a/ui/vnc.c
++++ b/ui/vnc.c
+@@ -1029,6 +1029,11 @@ static int find_and_clear_dirty_height(VncState *vs,
+ 
+ static int vnc_update_client(VncState *vs, int has_dirty, bool sync)
+ {
++    if (vs->disconnecting) {
++        vnc_disconnect_finish(vs);
++        return 0;
++    }
++
+     vs->has_dirty += has_dirty;
+     if (vs->need_update && vs->ioc != NULL) {
+         VncDisplay *vd = vs->vd;
+-- 
+1.8.3.1
+

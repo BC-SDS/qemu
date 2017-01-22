@@ -1,0 +1,99 @@
+From 707a00930fc41841e0cc5fdcd255d6483c1b4524 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:43 +0200
+Subject: [PATCH 23/30] vhost-user: wait until backend init is completed
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-24-marcandre.lureau@redhat.com>
+Patchwork-id: 71939
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 23/28] vhost-user: wait until backend init is completed
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+The chardev waits for an initial connection before starting qemu, and
+vhost-user should wait for the backend negotiation to be completed
+before starting qemu too.
+
+vhost-user is started in the net_vhost_user_event callback, which is
+synchronously called after the socket is connected. Use a
+VhostUserState.started flag to indicate vhost-user init completed
+successfully and qemu can be started.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit c89804d674e4e3804bd3ac1fe79650896044b4e8)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ net/vhost-user.c | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/net/vhost-user.c b/net/vhost-user.c
+index 4083840..0d44c85 100644
+--- a/net/vhost-user.c
++++ b/net/vhost-user.c
+@@ -24,6 +24,7 @@ typedef struct VhostUserState {
+     VHostNetState *vhost_net;
+     int watch;
+     uint64_t acked_features;
++    bool started;
+ } VhostUserState;
+ 
+ typedef struct VhostUserChardevProps {
+@@ -220,6 +221,7 @@ static void net_vhost_user_event(void *opaque, int event)
+             return;
+         }
+         qmp_set_link(name, true, &err);
++        s->started = true;
+         break;
+     case CHR_EVENT_CLOSED:
+         qmp_set_link(name, false, &err);
+@@ -238,7 +240,7 @@ static int net_vhost_user_init(NetClientState *peer, const char *device,
+                                const char *name, CharDriverState *chr,
+                                int queues)
+ {
+-    NetClientState *nc;
++    NetClientState *nc, *nc0 = NULL;
+     VhostUserState *s;
+     int i;
+ 
+@@ -247,6 +249,9 @@ static int net_vhost_user_init(NetClientState *peer, const char *device,
+ 
+     for (i = 0; i < queues; i++) {
+         nc = qemu_new_net_client(&net_vhost_user_info, peer, device, name);
++        if (!nc0) {
++            nc0 = nc;
++        }
+ 
+         snprintf(nc->info_str, sizeof(nc->info_str), "vhost-user%d to %s",
+                  i, chr->label);
+@@ -257,7 +262,16 @@ static int net_vhost_user_init(NetClientState *peer, const char *device,
+         s->chr = chr;
+     }
+ 
+-    qemu_chr_add_handlers(chr, NULL, NULL, net_vhost_user_event, nc[0].name);
++    s = DO_UPCAST(VhostUserState, nc, nc0);
++    do {
++        Error *err = NULL;
++        if (qemu_chr_wait_connected(chr, &err) < 0) {
++            error_report_err(err);
++            return -1;
++        }
++        qemu_chr_add_handlers(chr, NULL, NULL,
++                              net_vhost_user_event, nc0->name);
++    } while (!s->started);
+ 
+     assert(s->vhost_net);
+ 
+-- 
+1.8.3.1
+

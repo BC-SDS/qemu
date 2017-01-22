@@ -1,0 +1,48 @@
+From b64fefe2a5b5996a5c6c57b7fe08dfe18300f227 Mon Sep 17 00:00:00 2001
+From: "Daniel P. Berrange" <berrange@redhat.com>
+Date: Sat, 27 Aug 2016 15:36:33 +0200
+Subject: [PATCH 3/8] crypto: assert that qcrypto_hash_digest_len is in range
+
+RH-Author: Daniel P. Berrange <berrange@redhat.com>
+Message-id: <1472312195-23794-4-git-send-email-berrange@redhat.com>
+Patchwork-id: 72099
+O-Subject: [PATCH qemu-kvm-rhev 7.3 3/5] crypto: assert that qcrypto_hash_digest_len is in range
+Bugzilla: 1301019
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+From: Paolo Bonzini <pbonzini@redhat.com>
+
+Otherwise unintended results could happen.  For example,
+Coverity reports a division by zero in qcrypto_afsplit_hash.
+While this cannot really happen, it shows that the contract
+of qcrypto_hash_digest_len can be improved.
+
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Signed-off-by: Daniel P. Berrange <berrange@redhat.com>
+(cherry picked from commit b35c1f3361ebf6ec9ea5022903af4b559bff6063)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ crypto/hash.c | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/crypto/hash.c b/crypto/hash.c
+index b90af34..2907bff 100644
+--- a/crypto/hash.c
++++ b/crypto/hash.c
+@@ -36,9 +36,7 @@ static size_t qcrypto_hash_alg_size[QCRYPTO_HASH_ALG__MAX] = {
+ 
+ size_t qcrypto_hash_digest_len(QCryptoHashAlgorithm alg)
+ {
+-    if (alg >= G_N_ELEMENTS(qcrypto_hash_alg_size)) {
+-        return 0;
+-    }
++    assert(alg < G_N_ELEMENTS(qcrypto_hash_alg_size));
+     return qcrypto_hash_alg_size[alg];
+ }
+ 
+-- 
+1.8.3.1
+

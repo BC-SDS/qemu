@@ -1,0 +1,68 @@
+From dbb7773f69492d4016a792913bb5c49d699c4472 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 24 Jun 2016 18:55:42 +0200
+Subject: [PATCH 13/33] tpm: apci: cleanup TCPA table initialization
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466794559-27963-6-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70772
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 05/22] tpm: apci: cleanup TCPA table initialization
+Bugzilla: 1270345
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Igor Mammedov <imammedo@redhat.com>
+
+At the time build_tpm_tcpa() is called the tcpalog size is
+always 0, so log_area_start_address which is actually offset
+from the start of ACPI_BUILD_TPMLOG_FILE is always 0.
+
+Also as 'TCPA' is allocated 0 filled, there is no point
+in calculating always 0 log_area_start_address and set
+tcpa->log_area_start_address to it since the field should
+always point to start of ACPI_BUILD_TPMLOG_FILE.
+Make code easier to read dropping not needed offset
+calculations.
+While at that move tcpalog allocation closer to the code
+that defines its size.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 9774ccf7cdb8bfbf024eff02b22f754a49d99df8)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/acpi-build.c | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index b93296b..e0fbed7 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -2391,11 +2391,10 @@ static void
+ build_tpm_tcpa(GArray *table_data, BIOSLinker *linker, GArray *tcpalog)
+ {
+     Acpi20Tcpa *tcpa = acpi_data_push(table_data, sizeof *tcpa);
+-    uint64_t log_area_start_address = acpi_data_len(tcpalog);
+ 
+     tcpa->platform_class = cpu_to_le16(TPM_TCPA_ACPI_CLASS_CLIENT);
+     tcpa->log_area_minimum_length = cpu_to_le32(TPM_LOG_AREA_MINIMUM_SIZE);
+-    tcpa->log_area_start_address = cpu_to_le64(log_area_start_address);
++    acpi_data_push(tcpalog, le32_to_cpu(tcpa->log_area_minimum_length));
+ 
+     bios_linker_loader_alloc(linker, ACPI_BUILD_TPMLOG_FILE, tcpalog, 1,
+                              false /* high memory */);
+@@ -2408,8 +2407,6 @@ build_tpm_tcpa(GArray *table_data, BIOSLinker *linker, GArray *tcpalog)
+ 
+     build_header(linker, table_data,
+                  (void *)tcpa, "TCPA", sizeof(*tcpa), 2, NULL, NULL);
+-
+-    acpi_data_push(tcpalog, TPM_LOG_AREA_MINIMUM_SIZE);
+ }
+ 
+ static void
+-- 
+1.8.3.1
+

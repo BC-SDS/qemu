@@ -1,0 +1,35 @@
+From 274dcebd94d65b8f6be37eb5a5330a835589ef08 Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Thu, 18 Dec 2014 06:27:49 +0100
+Subject: Use kvm by default
+
+Bugzilla: 906185
+
+RHEL uses kvm accelerator by default, if available.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Rebase note:
+ - 2.2: Move code from vl.c to accel.c
+---
+ accel.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/accel.c b/accel.c
+index 0510b90..9d7a49c 100644
+--- a/accel.c
++++ b/accel.c
+@@ -88,8 +88,8 @@ int configure_accelerator(MachineState *ms)
+ 
+     p = qemu_opt_get(qemu_get_machine_opts(), "accel");
+     if (p == NULL) {
+-        /* Use the default "accelerator", tcg */
+-        p = "tcg";
++        /* Use kvm accelerator by default, fail to tcg*/
++        p = "kvm:tcg";
+     }
+ 
+     while (!accel_initialised && *p != '\0') {
+-- 
+2.5.5
+

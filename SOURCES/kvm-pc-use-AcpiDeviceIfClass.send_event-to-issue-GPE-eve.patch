@@ -1,0 +1,369 @@
+From 7a1017f9d0c4c53fef0fadf4257f95394f10ec44 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:21 +0200
+Subject: [PATCH 21/99] pc: use AcpiDeviceIfClass.send_event to issue GPE
+ events
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-17-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71632
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 16/78] pc: use AcpiDeviceIfClass.send_event to issue GPE events
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+it reduces number of args passed in handlers by 1 and
+a number of used proxy wrappers saving ~20LOC.
+Also it allows to make cpu/mem hotplug code more
+universal as it would allow ARM to reuse it without
+rewrite by providing its own send_event callback
+to trigger events usiong GPIO instead of GPE
+as fixed hadrware ACPI model doen't have GPE at all.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 0058c0823815d33c96f4f26106dbd713c76280e1)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/cpu_hotplug.c            |  5 ++---
+ hw/acpi/ich9.c                   | 33 ++++++++++++++++++++-------------
+ hw/acpi/memory_hotplug.c         | 12 ++++--------
+ hw/acpi/pcihp.c                  | 10 ++++------
+ hw/acpi/piix4.c                  | 11 +++++------
+ hw/isa/lpc_ich9.c                | 30 +++---------------------------
+ include/hw/acpi/cpu_hotplug.h    |  3 ++-
+ include/hw/acpi/ich9.h           |  9 +++++----
+ include/hw/acpi/memory_hotplug.h |  4 ++--
+ include/hw/acpi/pcihp.h          |  5 +++--
+ 10 files changed, 50 insertions(+), 72 deletions(-)
+
+diff --git a/hw/acpi/cpu_hotplug.c b/hw/acpi/cpu_hotplug.c
+index 9d71d2f..fe75bd9 100644
+--- a/hw/acpi/cpu_hotplug.c
++++ b/hw/acpi/cpu_hotplug.c
+@@ -62,15 +62,14 @@ static void acpi_set_cpu_present_bit(AcpiCpuHotplug *g, CPUState *cpu,
+     g->sts[cpu_id / 8] |= (1 << (cpu_id % 8));
+ }
+ 
+-void legacy_acpi_cpu_plug_cb(ACPIREGS *ar, qemu_irq irq,
++void legacy_acpi_cpu_plug_cb(HotplugHandler *hotplug_dev,
+                              AcpiCpuHotplug *g, DeviceState *dev, Error **errp)
+ {
+     acpi_set_cpu_present_bit(g, CPU(dev), errp);
+     if (*errp != NULL) {
+         return;
+     }
+-
+-    acpi_send_gpe_event(ar, irq, ACPI_CPU_HOTPLUG_STATUS);
++    acpi_send_event(DEVICE(hotplug_dev), ACPI_CPU_HOTPLUG_STATUS);
+ }
+ 
+ void legacy_acpi_cpu_hotplug_init(MemoryRegion *parent, Object *owner,
+diff --git a/hw/acpi/ich9.c b/hw/acpi/ich9.c
+index af340d0..853c9c4 100644
+--- a/hw/acpi/ich9.c
++++ b/hw/acpi/ich9.c
+@@ -430,40 +430,47 @@ void ich9_pm_add_properties(Object *obj, ICH9LPCPMRegs *pm, Error **errp)
+                              NULL);
+ }
+ 
+-void ich9_pm_device_plug_cb(ICH9LPCPMRegs *pm, DeviceState *dev, Error **errp)
++void ich9_pm_device_plug_cb(HotplugHandler *hotplug_dev, DeviceState *dev,
++                            Error **errp)
+ {
+-    if (pm->acpi_memory_hotplug.is_enabled &&
++    ICH9LPCState *lpc = ICH9_LPC_DEVICE(hotplug_dev);
++
++    if (lpc->pm.acpi_memory_hotplug.is_enabled &&
+         object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+-        acpi_memory_plug_cb(&pm->acpi_regs, pm->irq, &pm->acpi_memory_hotplug,
++        acpi_memory_plug_cb(hotplug_dev, &lpc->pm.acpi_memory_hotplug,
+                             dev, errp);
+     } else if (object_dynamic_cast(OBJECT(dev), TYPE_CPU)) {
+-        legacy_acpi_cpu_plug_cb(&pm->acpi_regs, pm->irq,
+-                                &pm->gpe_cpu, dev, errp);
++        legacy_acpi_cpu_plug_cb(hotplug_dev, &lpc->pm.gpe_cpu, dev, errp);
+     } else {
+         error_setg(errp, "acpi: device plug request for not supported device"
+                    " type: %s", object_get_typename(OBJECT(dev)));
+     }
+ }
+ 
+-void ich9_pm_device_unplug_request_cb(ICH9LPCPMRegs *pm, DeviceState *dev,
+-                                      Error **errp)
++void ich9_pm_device_unplug_request_cb(HotplugHandler *hotplug_dev,
++                                      DeviceState *dev, Error **errp)
+ {
+-    if (pm->acpi_memory_hotplug.is_enabled &&
++    ICH9LPCState *lpc = ICH9_LPC_DEVICE(hotplug_dev);
++
++    if (lpc->pm.acpi_memory_hotplug.is_enabled &&
+         object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+-        acpi_memory_unplug_request_cb(&pm->acpi_regs, pm->irq,
+-                                      &pm->acpi_memory_hotplug, dev, errp);
++        acpi_memory_unplug_request_cb(hotplug_dev,
++                                      &lpc->pm.acpi_memory_hotplug, dev,
++                                      errp);
+     } else {
+         error_setg(errp, "acpi: device unplug request for not supported device"
+                    " type: %s", object_get_typename(OBJECT(dev)));
+     }
+ }
+ 
+-void ich9_pm_device_unplug_cb(ICH9LPCPMRegs *pm, DeviceState *dev,
++void ich9_pm_device_unplug_cb(HotplugHandler *hotplug_dev, DeviceState *dev,
+                               Error **errp)
+ {
+-    if (pm->acpi_memory_hotplug.is_enabled &&
++    ICH9LPCState *lpc = ICH9_LPC_DEVICE(hotplug_dev);
++
++    if (lpc->pm.acpi_memory_hotplug.is_enabled &&
+         object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+-        acpi_memory_unplug_cb(&pm->acpi_memory_hotplug, dev, errp);
++        acpi_memory_unplug_cb(&lpc->pm.acpi_memory_hotplug, dev, errp);
+     } else {
+         error_setg(errp, "acpi: device unplug for not supported device"
+                    " type: %s", object_get_typename(OBJECT(dev)));
+diff --git a/hw/acpi/memory_hotplug.c b/hw/acpi/memory_hotplug.c
+index f65a3a2..ec4e64b 100644
+--- a/hw/acpi/memory_hotplug.c
++++ b/hw/acpi/memory_hotplug.c
+@@ -228,7 +228,7 @@ acpi_memory_slot_status(MemHotplugState *mem_st,
+     return &mem_st->devs[slot];
+ }
+ 
+-void acpi_memory_plug_cb(ACPIREGS *ar, qemu_irq irq, MemHotplugState *mem_st,
++void acpi_memory_plug_cb(HotplugHandler *hotplug_dev, MemHotplugState *mem_st,
+                          DeviceState *dev, Error **errp)
+ {
+     MemStatus *mdev;
+@@ -247,13 +247,11 @@ void acpi_memory_plug_cb(ACPIREGS *ar, qemu_irq irq, MemHotplugState *mem_st,
+     mdev->is_enabled = true;
+     if (dev->hotplugged) {
+         mdev->is_inserting = true;
+-
+-        /* do ACPI magic */
+-        acpi_send_gpe_event(ar, irq, ACPI_MEMORY_HOTPLUG_STATUS);
++        acpi_send_event(DEVICE(hotplug_dev), ACPI_MEMORY_HOTPLUG_STATUS);
+     }
+ }
+ 
+-void acpi_memory_unplug_request_cb(ACPIREGS *ar, qemu_irq irq,
++void acpi_memory_unplug_request_cb(HotplugHandler *hotplug_dev,
+                                    MemHotplugState *mem_st,
+                                    DeviceState *dev, Error **errp)
+ {
+@@ -265,9 +263,7 @@ void acpi_memory_unplug_request_cb(ACPIREGS *ar, qemu_irq irq,
+     }
+ 
+     mdev->is_removing = true;
+-
+-    /* Do ACPI magic */
+-    acpi_send_gpe_event(ar, irq, ACPI_MEMORY_HOTPLUG_STATUS);
++    acpi_send_event(DEVICE(hotplug_dev), ACPI_MEMORY_HOTPLUG_STATUS);
+ }
+ 
+ void acpi_memory_unplug_cb(MemHotplugState *mem_st,
+diff --git a/hw/acpi/pcihp.c b/hw/acpi/pcihp.c
+index 71f4c4e..d957d1e 100644
+--- a/hw/acpi/pcihp.c
++++ b/hw/acpi/pcihp.c
+@@ -182,7 +182,7 @@ void acpi_pcihp_reset(AcpiPciHpState *s)
+     acpi_pcihp_update(s);
+ }
+ 
+-void acpi_pcihp_device_plug_cb(ACPIREGS *ar, qemu_irq irq, AcpiPciHpState *s,
++void acpi_pcihp_device_plug_cb(HotplugHandler *hotplug_dev, AcpiPciHpState *s,
+                                DeviceState *dev, Error **errp)
+ {
+     PCIDevice *pdev = PCI_DEVICE(dev);
+@@ -202,11 +202,10 @@ void acpi_pcihp_device_plug_cb(ACPIREGS *ar, qemu_irq irq, AcpiPciHpState *s,
+     }
+ 
+     s->acpi_pcihp_pci_status[bsel].up |= (1U << slot);
+-
+-    acpi_send_gpe_event(ar, irq, ACPI_PCI_HOTPLUG_STATUS);
++    acpi_send_event(DEVICE(hotplug_dev), ACPI_PCI_HOTPLUG_STATUS);
+ }
+ 
+-void acpi_pcihp_device_unplug_cb(ACPIREGS *ar, qemu_irq irq, AcpiPciHpState *s,
++void acpi_pcihp_device_unplug_cb(HotplugHandler *hotplug_dev, AcpiPciHpState *s,
+                                  DeviceState *dev, Error **errp)
+ {
+     PCIDevice *pdev = PCI_DEVICE(dev);
+@@ -219,8 +218,7 @@ void acpi_pcihp_device_unplug_cb(ACPIREGS *ar, qemu_irq irq, AcpiPciHpState *s,
+     }
+ 
+     s->acpi_pcihp_pci_status[bsel].down |= (1U << slot);
+-
+-    acpi_send_gpe_event(ar, irq, ACPI_PCI_HOTPLUG_STATUS);
++    acpi_send_event(DEVICE(hotplug_dev), ACPI_PCI_HOTPLUG_STATUS);
+ }
+ 
+ static uint64_t pci_read(void *opaque, hwaddr addr, unsigned int size)
+diff --git a/hw/acpi/piix4.c b/hw/acpi/piix4.c
+index 75de6ac..8a6f4c9 100644
+--- a/hw/acpi/piix4.c
++++ b/hw/acpi/piix4.c
+@@ -347,12 +347,11 @@ static void piix4_device_plug_cb(HotplugHandler *hotplug_dev,
+ 
+     if (s->acpi_memory_hotplug.is_enabled &&
+         object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+-        acpi_memory_plug_cb(&s->ar, s->irq, &s->acpi_memory_hotplug, dev, errp);
++        acpi_memory_plug_cb(hotplug_dev, &s->acpi_memory_hotplug, dev, errp);
+     } else if (object_dynamic_cast(OBJECT(dev), TYPE_PCI_DEVICE)) {
+-        acpi_pcihp_device_plug_cb(&s->ar, s->irq, &s->acpi_pci_hotplug, dev,
+-                                  errp);
++        acpi_pcihp_device_plug_cb(hotplug_dev, &s->acpi_pci_hotplug, dev, errp);
+     } else if (object_dynamic_cast(OBJECT(dev), TYPE_CPU)) {
+-        legacy_acpi_cpu_plug_cb(&s->ar, s->irq, &s->gpe_cpu, dev, errp);
++        legacy_acpi_cpu_plug_cb(hotplug_dev, &s->gpe_cpu, dev, errp);
+     } else {
+         error_setg(errp, "acpi: device plug request for not supported device"
+                    " type: %s", object_get_typename(OBJECT(dev)));
+@@ -366,10 +365,10 @@ static void piix4_device_unplug_request_cb(HotplugHandler *hotplug_dev,
+ 
+     if (s->acpi_memory_hotplug.is_enabled &&
+         object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+-        acpi_memory_unplug_request_cb(&s->ar, s->irq, &s->acpi_memory_hotplug,
++        acpi_memory_unplug_request_cb(hotplug_dev, &s->acpi_memory_hotplug,
+                                       dev, errp);
+     } else if (object_dynamic_cast(OBJECT(dev), TYPE_PCI_DEVICE)) {
+-        acpi_pcihp_device_unplug_cb(&s->ar, s->irq, &s->acpi_pci_hotplug, dev,
++        acpi_pcihp_device_unplug_cb(hotplug_dev, &s->acpi_pci_hotplug, dev,
+                                     errp);
+     } else {
+         error_setg(errp, "acpi: device unplug request for not supported device"
+diff --git a/hw/isa/lpc_ich9.c b/hw/isa/lpc_ich9.c
+index 305ccd6..86d4547 100644
+--- a/hw/isa/lpc_ich9.c
++++ b/hw/isa/lpc_ich9.c
+@@ -636,30 +636,6 @@ static void ich9_lpc_realize(PCIDevice *d, Error **errp)
+                                         1);
+ }
+ 
+-static void ich9_device_plug_cb(HotplugHandler *hotplug_dev,
+-                                DeviceState *dev, Error **errp)
+-{
+-    ICH9LPCState *lpc = ICH9_LPC_DEVICE(hotplug_dev);
+-
+-    ich9_pm_device_plug_cb(&lpc->pm, dev, errp);
+-}
+-
+-static void ich9_device_unplug_request_cb(HotplugHandler *hotplug_dev,
+-                                          DeviceState *dev, Error **errp)
+-{
+-    ICH9LPCState *lpc = ICH9_LPC_DEVICE(hotplug_dev);
+-
+-    ich9_pm_device_unplug_request_cb(&lpc->pm, dev, errp);
+-}
+-
+-static void ich9_device_unplug_cb(HotplugHandler *hotplug_dev,
+-                                  DeviceState *dev, Error **errp)
+-{
+-    ICH9LPCState *lpc = ICH9_LPC_DEVICE(hotplug_dev);
+-
+-    ich9_pm_device_unplug_cb(&lpc->pm, dev, errp);
+-}
+-
+ static bool ich9_rst_cnt_needed(void *opaque)
+ {
+     ICH9LPCState *lpc = opaque;
+@@ -732,9 +708,9 @@ static void ich9_lpc_class_init(ObjectClass *klass, void *data)
+      * pc_q35_init()
+      */
+     dc->cannot_instantiate_with_device_add_yet = true;
+-    hc->plug = ich9_device_plug_cb;
+-    hc->unplug_request = ich9_device_unplug_request_cb;
+-    hc->unplug = ich9_device_unplug_cb;
++    hc->plug = ich9_pm_device_plug_cb;
++    hc->unplug_request = ich9_pm_device_unplug_request_cb;
++    hc->unplug = ich9_pm_device_unplug_cb;
+     adevc->ospm_status = ich9_pm_ospm_status;
+     adevc->send_event = ich9_send_gpe;
+ }
+diff --git a/include/hw/acpi/cpu_hotplug.h b/include/hw/acpi/cpu_hotplug.h
+index 6d729d8..6fef67e 100644
+--- a/include/hw/acpi/cpu_hotplug.h
++++ b/include/hw/acpi/cpu_hotplug.h
+@@ -15,13 +15,14 @@
+ #include "hw/acpi/acpi.h"
+ #include "hw/acpi/pc-hotplug.h"
+ #include "hw/acpi/aml-build.h"
++#include "hw/hotplug.h"
+ 
+ typedef struct AcpiCpuHotplug {
+     MemoryRegion io;
+     uint8_t sts[ACPI_GPE_PROC_LEN];
+ } AcpiCpuHotplug;
+ 
+-void legacy_acpi_cpu_plug_cb(ACPIREGS *ar, qemu_irq irq,
++void legacy_acpi_cpu_plug_cb(HotplugHandler *hotplug_dev,
+                              AcpiCpuHotplug *g, DeviceState *dev, Error **errp);
+ 
+ void legacy_acpi_cpu_hotplug_init(MemoryRegion *parent, Object *owner,
+diff --git a/include/hw/acpi/ich9.h b/include/hw/acpi/ich9.h
+index 63fa198..bbd657c 100644
+--- a/include/hw/acpi/ich9.h
++++ b/include/hw/acpi/ich9.h
+@@ -69,10 +69,11 @@ extern const VMStateDescription vmstate_ich9_pm;
+ 
+ void ich9_pm_add_properties(Object *obj, ICH9LPCPMRegs *pm, Error **errp);
+ 
+-void ich9_pm_device_plug_cb(ICH9LPCPMRegs *pm, DeviceState *dev, Error **errp);
+-void ich9_pm_device_unplug_request_cb(ICH9LPCPMRegs *pm, DeviceState *dev,
+-                                      Error **errp);
+-void ich9_pm_device_unplug_cb(ICH9LPCPMRegs *pm, DeviceState *dev,
++void ich9_pm_device_plug_cb(HotplugHandler *hotplug_dev, DeviceState *dev,
++                            Error **errp);
++void ich9_pm_device_unplug_request_cb(HotplugHandler *hotplug_dev,
++                                      DeviceState *dev, Error **errp);
++void ich9_pm_device_unplug_cb(HotplugHandler *hotplug_dev, DeviceState *dev,
+                               Error **errp);
+ 
+ void ich9_pm_ospm_status(AcpiDeviceIf *adev, ACPIOSTInfoList ***list);
+diff --git a/include/hw/acpi/memory_hotplug.h b/include/hw/acpi/memory_hotplug.h
+index 3a646b1..d2c7452 100644
+--- a/include/hw/acpi/memory_hotplug.h
++++ b/include/hw/acpi/memory_hotplug.h
+@@ -32,9 +32,9 @@ typedef struct MemHotplugState {
+ void acpi_memory_hotplug_init(MemoryRegion *as, Object *owner,
+                               MemHotplugState *state);
+ 
+-void acpi_memory_plug_cb(ACPIREGS *ar, qemu_irq irq, MemHotplugState *mem_st,
++void acpi_memory_plug_cb(HotplugHandler *hotplug_dev, MemHotplugState *mem_st,
+                          DeviceState *dev, Error **errp);
+-void acpi_memory_unplug_request_cb(ACPIREGS *ar, qemu_irq irq,
++void acpi_memory_unplug_request_cb(HotplugHandler *hotplug_dev,
+                                    MemHotplugState *mem_st,
+                                    DeviceState *dev, Error **errp);
+ void acpi_memory_unplug_cb(MemHotplugState *mem_st,
+diff --git a/include/hw/acpi/pcihp.h b/include/hw/acpi/pcihp.h
+index 79a4392..04528b7 100644
+--- a/include/hw/acpi/pcihp.h
++++ b/include/hw/acpi/pcihp.h
+@@ -29,6 +29,7 @@
+ 
+ #include "hw/acpi/acpi.h"
+ #include "migration/vmstate.h"
++#include "hw/hotplug.h"
+ 
+ #define ACPI_PCIHP_IO_BASE_PROP "acpi-pcihp-io-base"
+ #define ACPI_PCIHP_IO_LEN_PROP "acpi-pcihp-io-len"
+@@ -56,9 +57,9 @@ typedef struct AcpiPciHpState {
+ void acpi_pcihp_init(Object *owner, AcpiPciHpState *, PCIBus *root,
+                      MemoryRegion *address_space_io, bool bridges_enabled);
+ 
+-void acpi_pcihp_device_plug_cb(ACPIREGS *ar, qemu_irq irq, AcpiPciHpState *s,
++void acpi_pcihp_device_plug_cb(HotplugHandler *hotplug_dev, AcpiPciHpState *s,
+                                DeviceState *dev, Error **errp);
+-void acpi_pcihp_device_unplug_cb(ACPIREGS *ar, qemu_irq irq, AcpiPciHpState *s,
++void acpi_pcihp_device_unplug_cb(HotplugHandler *hotplug_dev, AcpiPciHpState *s,
+                                  DeviceState *dev, Error **errp);
+ 
+ /* Called on reset */
+-- 
+1.8.3.1
+

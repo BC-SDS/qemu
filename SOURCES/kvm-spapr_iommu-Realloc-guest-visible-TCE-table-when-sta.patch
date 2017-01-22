@@ -1,0 +1,99 @@
+From 5a5fef4923274890a642b198e43516a5134c3567 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:19 +0200
+Subject: [PATCH 12/27] spapr_iommu: Realloc guest visible TCE table when
+ starting/stopping listening
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-13-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71099
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 12/16] spapr_iommu: Realloc guest visible TCE table when starting/stopping listening
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Alex Williamson <alex.williamson@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Alexey Kardashevskiy <aik@ozlabs.ru>
+
+The sPAPR TCE tables manage 2 copies when VFIO is using an IOMMU -
+a guest view of the table and a hardware TCE table. If there is no VFIO
+presense in the address space, then just the guest view is used, if
+this is the case, it is allocated in the KVM. However since there is no
+support yet for VFIO in KVM TCE hypercalls, when we start using VFIO,
+we need to move the guest view from KVM to the userspace; and we need
+to do this for every IOMMU on a bus with VFIO devices.
+
+This implements the callbacks for the sPAPR IOMMU - notify_started()
+reallocated the guest view to the user space, notify_stopped() does
+the opposite.
+
+This removes explicit spapr_tce_set_need_vfio() call from PCI hotplug
+path as the new callbacks do this better - they notify IOMMU at
+the exact moment when the configuration is changed, and this also
+includes the case of PCI hot unplug.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Acked-by: Alex Williamson <alex.williamson@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 606b54986df4e3964eee2d74460bd06ed2f384e5)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_iommu.c | 12 ++++++++++++
+ hw/ppc/spapr_pci.c   |  6 ------
+ 2 files changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/hw/ppc/spapr_iommu.c b/hw/ppc/spapr_iommu.c
+index 83080de..d12c1cb 100644
+--- a/hw/ppc/spapr_iommu.c
++++ b/hw/ppc/spapr_iommu.c
+@@ -155,6 +155,16 @@ static uint64_t spapr_tce_get_min_page_size(MemoryRegion *iommu)
+     return 1ULL << tcet->page_shift;
+ }
+ 
++static void spapr_tce_notify_started(MemoryRegion *iommu)
++{
++    spapr_tce_set_need_vfio(container_of(iommu, sPAPRTCETable, iommu), true);
++}
++
++static void spapr_tce_notify_stopped(MemoryRegion *iommu)
++{
++    spapr_tce_set_need_vfio(container_of(iommu, sPAPRTCETable, iommu), false);
++}
++
+ static int spapr_tce_table_post_load(void *opaque, int version_id)
+ {
+     sPAPRTCETable *tcet = SPAPR_TCE_TABLE(opaque);
+@@ -235,6 +245,8 @@ static const VMStateDescription vmstate_spapr_tce_table = {
+ static MemoryRegionIOMMUOps spapr_iommu_ops = {
+     .translate = spapr_tce_translate_iommu,
+     .get_min_page_size = spapr_tce_get_min_page_size,
++    .notify_started = spapr_tce_notify_started,
++    .notify_stopped = spapr_tce_notify_stopped,
+ };
+ 
+ static int spapr_tce_table_realize(DeviceState *dev)
+diff --git a/hw/ppc/spapr_pci.c b/hw/ppc/spapr_pci.c
+index 4a79ffe..e07400c 100644
+--- a/hw/ppc/spapr_pci.c
++++ b/hw/ppc/spapr_pci.c
+@@ -1086,12 +1086,6 @@ static void spapr_phb_add_pci_device(sPAPRDRConnector *drc,
+     void *fdt = NULL;
+     int fdt_start_offset = 0, fdt_size;
+ 
+-    if (object_dynamic_cast(OBJECT(pdev), "vfio-pci")) {
+-        sPAPRTCETable *tcet = spapr_tce_find_by_liobn(phb->dma_liobn);
+-
+-        spapr_tce_set_need_vfio(tcet, true);
+-    }
+-
+     fdt = create_device_tree(&fdt_size);
+     fdt_start_offset = spapr_create_pci_child_dt(phb, pdev, fdt, 0);
+     if (!fdt_start_offset) {
+-- 
+1.8.3.1
+

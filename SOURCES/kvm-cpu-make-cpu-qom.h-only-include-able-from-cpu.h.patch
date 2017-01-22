@@ -1,0 +1,153 @@
+From 531c1005064ace0a3f7ddfdcc59aa2f73678188c Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:50 +0200
+Subject: [PATCH 50/99] cpu: make cpu-qom.h only include-able from cpu.h
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-46-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71661
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 45/78] cpu: make cpu-qom.h only include-able from cpu.h
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Paolo Bonzini <pbonzini@redhat.com>
+
+Make cpu-qom.h so that it is only included from cpu.h.  Then there
+is no need for it to include cpu.h again.
+
+Later we will make cpu-qom.h target independent and we will _want_
+to include it from elsewhere, but for now reduce the number of cases
+to handle.
+
+Reviewed-by: Alex Bennée <alex.bennee@linaro.org>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit 347b1a5cc6f43ac51615aa7490e8a8e2b7244a78)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-alpha/cpu-qom.h     | 1 -
+ target-arm/psci.c          | 1 -
+ target-i386/cpu-qom.h      | 1 -
+ target-lm32/cpu-qom.h      | 1 -
+ target-ppc/cpu-qom.h       | 1 -
+ target-s390x/cpu-qom.h     | 1 -
+ target-sparc/cpu-qom.h     | 1 -
+ target-unicore32/cpu-qom.h | 1 -
+ target-xtensa/cpu-qom.h    | 1 -
+ 9 files changed, 9 deletions(-)
+
+diff --git a/target-alpha/cpu-qom.h b/target-alpha/cpu-qom.h
+index b01c6c8..cf5264a 100644
+--- a/target-alpha/cpu-qom.h
++++ b/target-alpha/cpu-qom.h
+@@ -21,7 +21,6 @@
+ #define QEMU_ALPHA_CPU_QOM_H
+ 
+ #include "qom/cpu.h"
+-#include "cpu.h"
+ 
+ #define TYPE_ALPHA_CPU "alpha-cpu"
+ 
+diff --git a/target-arm/psci.c b/target-arm/psci.c
+index c55487f..2b624b9 100644
+--- a/target-arm/psci.c
++++ b/target-arm/psci.c
+@@ -17,7 +17,6 @@
+  */
+ #include "qemu/osdep.h"
+ #include <cpu.h>
+-#include <cpu-qom.h>
+ #include <exec/helper-proto.h>
+ #include <kvm-consts.h>
+ #include <sysemu/sysemu.h>
+diff --git a/target-i386/cpu-qom.h b/target-i386/cpu-qom.h
+index ab21455..695d6c9 100644
+--- a/target-i386/cpu-qom.h
++++ b/target-i386/cpu-qom.h
+@@ -21,7 +21,6 @@
+ #define QEMU_I386_CPU_QOM_H
+ 
+ #include "qom/cpu.h"
+-#include "cpu.h"
+ #include "qemu/notify.h"
+ 
+ #ifdef TARGET_X86_64
+diff --git a/target-lm32/cpu-qom.h b/target-lm32/cpu-qom.h
+index 77bc7b2..54989e4 100644
+--- a/target-lm32/cpu-qom.h
++++ b/target-lm32/cpu-qom.h
+@@ -21,7 +21,6 @@
+ #define QEMU_LM32_CPU_QOM_H
+ 
+ #include "qom/cpu.h"
+-#include "cpu.h"
+ 
+ #define TYPE_LM32_CPU "lm32-cpu"
+ 
+diff --git a/target-ppc/cpu-qom.h b/target-ppc/cpu-qom.h
+index 69af69a..daf6d63 100644
+--- a/target-ppc/cpu-qom.h
++++ b/target-ppc/cpu-qom.h
+@@ -21,7 +21,6 @@
+ #define QEMU_PPC_CPU_QOM_H
+ 
+ #include "qom/cpu.h"
+-#include "cpu.h"
+ 
+ #ifdef TARGET_PPC64
+ #define TYPE_POWERPC_CPU "powerpc64-cpu"
+diff --git a/target-s390x/cpu-qom.h b/target-s390x/cpu-qom.h
+index 1c90933..681e370 100644
+--- a/target-s390x/cpu-qom.h
++++ b/target-s390x/cpu-qom.h
+@@ -21,7 +21,6 @@
+ #define QEMU_S390_CPU_QOM_H
+ 
+ #include "qom/cpu.h"
+-#include "cpu.h"
+ 
+ #define TYPE_S390_CPU "s390-cpu"
+ 
+diff --git a/target-sparc/cpu-qom.h b/target-sparc/cpu-qom.h
+index 5096b10..174dfd3 100644
+--- a/target-sparc/cpu-qom.h
++++ b/target-sparc/cpu-qom.h
+@@ -21,7 +21,6 @@
+ #define QEMU_SPARC_CPU_QOM_H
+ 
+ #include "qom/cpu.h"
+-#include "cpu.h"
+ 
+ #ifdef TARGET_SPARC64
+ #define TYPE_SPARC_CPU "sparc64-cpu"
+diff --git a/target-unicore32/cpu-qom.h b/target-unicore32/cpu-qom.h
+index ea65b83..e554f1f 100644
+--- a/target-unicore32/cpu-qom.h
++++ b/target-unicore32/cpu-qom.h
+@@ -12,7 +12,6 @@
+ #define QEMU_UC32_CPU_QOM_H
+ 
+ #include "qom/cpu.h"
+-#include "cpu.h"
+ 
+ #define TYPE_UNICORE32_CPU "unicore32-cpu"
+ 
+diff --git a/target-xtensa/cpu-qom.h b/target-xtensa/cpu-qom.h
+index 2258224..f5d9b9f 100644
+--- a/target-xtensa/cpu-qom.h
++++ b/target-xtensa/cpu-qom.h
+@@ -30,7 +30,6 @@
+ #define QEMU_XTENSA_CPU_QOM_H
+ 
+ #include "qom/cpu.h"
+-#include "cpu.h"
+ 
+ #define TYPE_XTENSA_CPU "xtensa-cpu"
+ 
+-- 
+1.8.3.1
+

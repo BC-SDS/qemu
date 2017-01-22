@@ -1,0 +1,85 @@
+From ad1d1d1dd303282d4c9dbc87663dad53099f39ee Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Fri, 16 Sep 2016 01:58:24 +0200
+Subject: [PATCH 14/18] vfio/pci: Fix regression in MSI routing configuration
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1473991104-21915-1-git-send-email-dgibson@redhat.com>
+Patchwork-id: 72370
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH] vfio/pci: Fix regression in MSI routing configuration
+Bugzilla: 1373802
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Auger Eric <eric.auger@redhat.com>
+
+From: David Gibson <david@gibson.dropbear.id.au>
+
+d1f6af6 "kvm-irqchip: simplify kvm_irqchip_add_msi_route" was a cleanup
+of kvmchip routing configuration, that was mostly intended for x86.
+However, it also contains a subtle change in behaviour which breaks EEH[1]
+error recovery on certain VFIO passthrough devices on spapr guests.  So far
+it's only been seen on a BCM5719 NIC on a POWER8 server, but there may be
+other hardware with the same problem.  It's also possible there could be
+circumstances where it causes a bug on x86 as well, though I don't know of
+any obvious candidates.
+
+Prior to d1f6af6, both vfio_msix_vector_do_use() and
+vfio_add_kvm_msi_virq() used msg == NULL as a special flag to mark this
+as the "dummy" vector used to make the host hardware state sync with the
+guest expected hardware state in terms of MSI configuration.
+
+Specifically that flag caused vfio_add_kvm_msi_virq() to become a no-op,
+meaning the dummy irq would always be delivered via qemu. d1f6af6 changed
+vfio_add_kvm_msi_virq() so it takes a vector number instead of the msg
+parameter, and determines the correct message itself.  The test for !msg
+was removed, and not replaced with anything there or in the caller.
+
+With an spapr guest which has a VFIO device, if an EEH error occurs on the
+host hardware, then the device will be isolated then reset.  This is a
+combination of host and guest action, mediated by some EEH related
+hypercalls.  I haven't fully traced the mechanics, but somehow installing
+the kvm irqchip route for the dummy irq on the BCM5719 means that after EEH
+reset and recovery, at least some irqs are no longer delivered to the
+guest.
+
+In particular, the guest never gets the link up event, and so the NIC is
+effectively dead.
+
+[1] EEH (Enhanced Error Handling) is an IBM POWER server specific PCI-*
+    error reporting and recovery mechanism.  The concept is somewhat
+    similar to PCI-E AER, but the details are different.
+
+Cc: Alex Williamson <alex.williamson@redhat.com>
+Cc: Peter Xu <peterx@redhat.com>
+Cc: Gavin Shan <gwshan@au1.ibm.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+Cc: qemu-stable@nongnu.org
+Fixes: d1f6af6a17a6 ("kvm-irqchip: simplify kvm_irqchip_add_msi_route")
+Signed-off-by: Alex Williamson <alex.williamson@redhat.com>
+(cherry picked from commit 6d17a018d09801a2b18133a4febd81433bb0cf85)
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/vfio/pci.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/hw/vfio/pci.c b/hw/vfio/pci.c
+index 18cac7e..d771c4f 100644
+--- a/hw/vfio/pci.c
++++ b/hw/vfio/pci.c
+@@ -497,7 +497,9 @@ static int vfio_msix_vector_do_use(PCIDevice *pdev, unsigned int nr,
+             vfio_update_kvm_msi_virq(vector, *msg, pdev);
+         }
+     } else {
+-        vfio_add_kvm_msi_virq(vdev, vector, nr, true);
++        if (msg) {
++            vfio_add_kvm_msi_virq(vdev, vector, nr, true);
++        }
+     }
+ 
+     /*
+-- 
+1.8.3.1
+

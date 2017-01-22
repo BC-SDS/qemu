@@ -1,0 +1,183 @@
+From f09868fa61aa926cb2b6c961dad4d738e824137c Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:13 +0200
+Subject: [PATCH 06/27] spapr_iommu: Migrate full state
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-7-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71093
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 06/16] spapr_iommu: Migrate full state
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Alexey Kardashevskiy <aik@ozlabs.ru>
+
+The source guest could have reallocated the default TCE table and
+migrate bigger/smaller table. This adds reallocation in post_load()
+if the default table size is different on source and destination.
+
+This adds @bus_offset, @page_shift to the migration stream as
+a subsection so when DDW is added, migration to older machines will
+still be possible. As @bus_offset and @page_shift are not used yet,
+this makes no change in behavior.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit a26fdf393404e96b51bec5db9ed6bd54ab6eab85)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_iommu.c   | 65 +++++++++++++++++++++++++++++++++++++++++++++++---
+ include/hw/ppc/spapr.h |  3 +++
+ trace-events           |  2 ++
+ 3 files changed, 67 insertions(+), 3 deletions(-)
+
+diff --git a/hw/ppc/spapr_iommu.c b/hw/ppc/spapr_iommu.c
+index e54f362..ca254b2 100644
+--- a/hw/ppc/spapr_iommu.c
++++ b/hw/ppc/spapr_iommu.c
+@@ -137,33 +137,92 @@ static IOMMUTLBEntry spapr_tce_translate_iommu(MemoryRegion *iommu, hwaddr addr,
+     return ret;
+ }
+ 
++static void spapr_tce_table_pre_save(void *opaque)
++{
++    sPAPRTCETable *tcet = SPAPR_TCE_TABLE(opaque);
++
++    tcet->mig_table = tcet->table;
++    tcet->mig_nb_table = tcet->nb_table;
++
++    trace_spapr_iommu_pre_save(tcet->liobn, tcet->mig_nb_table,
++                               tcet->bus_offset, tcet->page_shift);
++}
++
+ static int spapr_tce_table_post_load(void *opaque, int version_id)
+ {
+     sPAPRTCETable *tcet = SPAPR_TCE_TABLE(opaque);
++    uint32_t old_nb_table = tcet->nb_table;
++    uint64_t old_bus_offset = tcet->bus_offset;
++    uint32_t old_page_shift = tcet->page_shift;
+ 
+     if (tcet->vdev) {
+         spapr_vio_set_bypass(tcet->vdev, tcet->bypass);
+     }
+ 
++    if (tcet->mig_nb_table != tcet->nb_table) {
++        spapr_tce_table_disable(tcet);
++    }
++
++    if (tcet->mig_nb_table) {
++        if (!tcet->nb_table) {
++            spapr_tce_table_enable(tcet, old_page_shift, old_bus_offset,
++                                   tcet->mig_nb_table);
++        }
++
++        memcpy(tcet->table, tcet->mig_table,
++               tcet->nb_table * sizeof(tcet->table[0]));
++
++        free(tcet->mig_table);
++        tcet->mig_table = NULL;
++    }
++
++    trace_spapr_iommu_post_load(tcet->liobn, old_nb_table, tcet->nb_table,
++                                tcet->bus_offset, tcet->page_shift);
++
+     return 0;
+ }
+ 
++static bool spapr_tce_table_ex_needed(void *opaque)
++{
++    sPAPRTCETable *tcet = opaque;
++
++    return tcet->bus_offset || tcet->page_shift != 0xC;
++}
++
++static const VMStateDescription vmstate_spapr_tce_table_ex = {
++    .name = "spapr_iommu_ex",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .needed = spapr_tce_table_ex_needed,
++    .fields = (VMStateField[]) {
++        VMSTATE_UINT64(bus_offset, sPAPRTCETable),
++        VMSTATE_UINT32(page_shift, sPAPRTCETable),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
+ static const VMStateDescription vmstate_spapr_tce_table = {
+     .name = "spapr_iommu",
+     .version_id = 2,
+     .minimum_version_id = 2,
++    .pre_save = spapr_tce_table_pre_save,
+     .post_load = spapr_tce_table_post_load,
+     .fields      = (VMStateField []) {
+         /* Sanity check */
+         VMSTATE_UINT32_EQUAL(liobn, sPAPRTCETable),
+-        VMSTATE_UINT32_EQUAL(nb_table, sPAPRTCETable),
+ 
+         /* IOMMU state */
++        VMSTATE_UINT32(mig_nb_table, sPAPRTCETable),
+         VMSTATE_BOOL(bypass, sPAPRTCETable),
+-        VMSTATE_VARRAY_UINT32(table, sPAPRTCETable, nb_table, 0, vmstate_info_uint64, uint64_t),
++        VMSTATE_VARRAY_UINT32_ALLOC(mig_table, sPAPRTCETable, mig_nb_table, 0,
++                                    vmstate_info_uint64, uint64_t),
+ 
+         VMSTATE_END_OF_LIST()
+     },
++    .subsections = (const VMStateDescription*[]) {
++        &vmstate_spapr_tce_table_ex,
++        NULL
++    }
+ };
+ 
+ static MemoryRegionIOMMUOps spapr_iommu_ops = {
+@@ -263,7 +322,7 @@ void spapr_tce_table_enable(sPAPRTCETable *tcet,
+                            (uint64_t)tcet->nb_table << tcet->page_shift);
+ }
+ 
+-static void spapr_tce_table_disable(sPAPRTCETable *tcet)
++void spapr_tce_table_disable(sPAPRTCETable *tcet)
+ {
+     if (!tcet->nb_table) {
+         return;
+diff --git a/include/hw/ppc/spapr.h b/include/hw/ppc/spapr.h
+index 26c327d..f849714 100644
+--- a/include/hw/ppc/spapr.h
++++ b/include/hw/ppc/spapr.h
+@@ -539,6 +539,8 @@ struct sPAPRTCETable {
+     uint64_t bus_offset;
+     uint32_t page_shift;
+     uint64_t *table;
++    uint32_t mig_nb_table;
++    uint64_t *mig_table;
+     bool bypass;
+     bool need_vfio;
+     int fd;
+@@ -565,6 +567,7 @@ sPAPRTCETable *spapr_tce_new_table(DeviceState *owner, uint32_t liobn);
+ void spapr_tce_table_enable(sPAPRTCETable *tcet,
+                             uint32_t page_shift, uint64_t bus_offset,
+                             uint32_t nb_table);
++void spapr_tce_table_disable(sPAPRTCETable *tcet);
+ void spapr_tce_set_need_vfio(sPAPRTCETable *tcet, bool need_vfio);
+ 
+ MemoryRegion *spapr_tce_get_iommu(sPAPRTCETable *tcet);
+diff --git a/trace-events b/trace-events
+index 8ca6e2f..ab7f1bf 100644
+--- a/trace-events
++++ b/trace-events
+@@ -1432,6 +1432,8 @@ spapr_iommu_pci_indirect(uint64_t liobn, uint64_t ioba, uint64_t tce, uint64_t i
+ spapr_iommu_pci_stuff(uint64_t liobn, uint64_t ioba, uint64_t tce_value, uint64_t npages, uint64_t ret) "liobn=%"PRIx64" ioba=0x%"PRIx64" tcevalue=0x%"PRIx64" npages=%"PRId64" ret=%"PRId64
+ spapr_iommu_xlate(uint64_t liobn, uint64_t ioba, uint64_t tce, unsigned perm, unsigned pgsize) "liobn=%"PRIx64" 0x%"PRIx64" -> 0x%"PRIx64" perm=%u mask=%x"
+ spapr_iommu_new_table(uint64_t liobn, void *table, int fd) "liobn=%"PRIx64" table=%p fd=%d"
++spapr_iommu_pre_save(uint64_t liobn, uint32_t nb, uint64_t offs, uint32_t ps) "liobn=%"PRIx64" %"PRIx32" bus_offset=%"PRIx64" ps=%"PRIu32
++spapr_iommu_post_load(uint64_t liobn, uint32_t pre_nb, uint32_t post_nb, uint64_t offs, uint32_t ps) "liobn=%"PRIx64" %"PRIx32" => %"PRIx32" bus_offset=%"PRIx64" ps=%"PRIu32
+ 
+ # hw/ppc/ppc.c
+ ppc_tb_adjust(uint64_t offs1, uint64_t offs2, int64_t diff, int64_t seconds) "adjusted from 0x%"PRIx64" to 0x%"PRIx64", diff %"PRId64" (%"PRId64"s)"
+-- 
+1.8.3.1
+

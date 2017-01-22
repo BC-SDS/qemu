@@ -1,0 +1,187 @@
+From 4f6fa7e0d0764ea2be7d15a1331c19d3f7cb28ec Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:17 +0200
+Subject: [PATCH 10/27] memory: Add reporting of supported page sizes
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-11-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71097
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 10/16] memory: Add reporting of supported page sizes 1; 4402; 0c Every IOMMU has some granularity which MemoryRegionIOMMUOps::translate uses when translating, however this information is not available outside the translate context for various checks.
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Alex Williamson <alex.williamson@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+This adds a get_min_page_size callback to MemoryRegionIOMMUOps and
+a wrapper for it so IOMMU users (such as VFIO) can know the minimum
+actual page size supported by an IOMMU.
+
+As IOMMU MR represents a guest IOMMU, this uses TARGET_PAGE_SIZE
+as fallback.
+
+This removes vfio_container_granularity() and uses new helper in
+memory_region_iommu_replay() when replaying IOMMU mappings on added
+IOMMU memory region.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Acked-by: Alex Williamson <alex.williamson@redhat.com>
+[dwg: Removed an unnecessary calculation]
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+
+(cherry picked from commit f682e9c244af7166225f4a50cc18ff296bb9d43e)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	include/exec/memory.h
+
+Corrected context conflict because the patch adding notify_started
+and notify_stopped callbacks to this structure was already backported
+out of order with this one.
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+---
+ hw/ppc/spapr_iommu.c  |  8 ++++++++
+ hw/vfio/common.c      |  9 +--------
+ include/exec/memory.h | 19 +++++++++++++++----
+ memory.c              | 16 +++++++++++++---
+ 4 files changed, 37 insertions(+), 15 deletions(-)
+
+diff --git a/hw/ppc/spapr_iommu.c b/hw/ppc/spapr_iommu.c
+index 53bd3eb..83080de 100644
+--- a/hw/ppc/spapr_iommu.c
++++ b/hw/ppc/spapr_iommu.c
+@@ -148,6 +148,13 @@ static void spapr_tce_table_pre_save(void *opaque)
+                                tcet->bus_offset, tcet->page_shift);
+ }
+ 
++static uint64_t spapr_tce_get_min_page_size(MemoryRegion *iommu)
++{
++    sPAPRTCETable *tcet = container_of(iommu, sPAPRTCETable, iommu);
++
++    return 1ULL << tcet->page_shift;
++}
++
+ static int spapr_tce_table_post_load(void *opaque, int version_id)
+ {
+     sPAPRTCETable *tcet = SPAPR_TCE_TABLE(opaque);
+@@ -227,6 +234,7 @@ static const VMStateDescription vmstate_spapr_tce_table = {
+ 
+ static MemoryRegionIOMMUOps spapr_iommu_ops = {
+     .translate = spapr_tce_translate_iommu,
++    .get_min_page_size = spapr_tce_get_min_page_size,
+ };
+ 
+ static int spapr_tce_table_realize(DeviceState *dev)
+diff --git a/hw/vfio/common.c b/hw/vfio/common.c
+index a098ea0..f6a49eb 100644
+--- a/hw/vfio/common.c
++++ b/hw/vfio/common.c
+@@ -313,11 +313,6 @@ out:
+     rcu_read_unlock();
+ }
+ 
+-static hwaddr vfio_container_granularity(VFIOContainer *container)
+-{
+-    return (hwaddr)1 << ctz64(container->iova_pgsizes);
+-}
+-
+ static void vfio_listener_region_add(MemoryListener *listener,
+                                      MemoryRegionSection *section)
+ {
+@@ -382,9 +377,7 @@ static void vfio_listener_region_add(MemoryListener *listener,
+         QLIST_INSERT_HEAD(&container->giommu_list, giommu, giommu_next);
+ 
+         memory_region_register_iommu_notifier(giommu->iommu, &giommu->n);
+-        memory_region_iommu_replay(giommu->iommu, &giommu->n,
+-                                   vfio_container_granularity(container),
+-                                   false);
++        memory_region_iommu_replay(giommu->iommu, &giommu->n, false);
+ 
+         return;
+     }
+diff --git a/include/exec/memory.h b/include/exec/memory.h
+index e4d0331..8f13f4d 100644
+--- a/include/exec/memory.h
++++ b/include/exec/memory.h
+@@ -149,6 +149,8 @@ typedef struct MemoryRegionIOMMUOps MemoryRegionIOMMUOps;
+ struct MemoryRegionIOMMUOps {
+     /* Return a TLB entry that contains a given address. */
+     IOMMUTLBEntry (*translate)(MemoryRegion *iommu, hwaddr addr, bool is_write);
++    /* Returns minimum supported page size */
++    uint64_t (*get_min_page_size)(MemoryRegion *iommu);
+     /* Called when the first notifier is set */
+     void (*notify_started)(MemoryRegion *iommu);
+     /* Called when the last notifier is removed */
+@@ -576,6 +578,16 @@ static inline bool memory_region_is_iommu(MemoryRegion *mr)
+ 
+ 
+ /**
++ * memory_region_iommu_get_min_page_size: get minimum supported page size
++ * for an iommu
++ *
++ * Returns minimum supported page size for an iommu.
++ *
++ * @mr: the memory region being queried
++ */
++uint64_t memory_region_iommu_get_min_page_size(MemoryRegion *mr);
++
++/**
+  * memory_region_notify_iommu: notify a change in an IOMMU translation entry.
+  *
+  * @mr: the memory region that was changed
+@@ -599,16 +611,15 @@ void memory_region_register_iommu_notifier(MemoryRegion *mr, Notifier *n);
+ 
+ /**
+  * memory_region_iommu_replay: replay existing IOMMU translations to
+- * a notifier
++ * a notifier with the minimum page granularity returned by
++ * mr->iommu_ops->get_page_size().
+  *
+  * @mr: the memory region to observe
+  * @n: the notifier to which to replay iommu mappings
+- * @granularity: Minimum page granularity to replay notifications for
+  * @is_write: Whether to treat the replay as a translate "write"
+  *     through the iommu
+  */
+-void memory_region_iommu_replay(MemoryRegion *mr, Notifier *n,
+-                                hwaddr granularity, bool is_write);
++void memory_region_iommu_replay(MemoryRegion *mr, Notifier *n, bool is_write);
+ 
+ /**
+  * memory_region_unregister_iommu_notifier: unregister a notifier for
+diff --git a/memory.c b/memory.c
+index 7f452da..8f273a1 100644
+--- a/memory.c
++++ b/memory.c
+@@ -1517,12 +1517,22 @@ void memory_region_register_iommu_notifier(MemoryRegion *mr, Notifier *n)
+     notifier_list_add(&mr->iommu_notify, n);
+ }
+ 
+-void memory_region_iommu_replay(MemoryRegion *mr, Notifier *n,
+-                                hwaddr granularity, bool is_write)
++uint64_t memory_region_iommu_get_min_page_size(MemoryRegion *mr)
+ {
+-    hwaddr addr;
++    assert(memory_region_is_iommu(mr));
++    if (mr->iommu_ops && mr->iommu_ops->get_min_page_size) {
++        return mr->iommu_ops->get_min_page_size(mr);
++    }
++    return TARGET_PAGE_SIZE;
++}
++
++void memory_region_iommu_replay(MemoryRegion *mr, Notifier *n, bool is_write)
++{
++    hwaddr addr, granularity;
+     IOMMUTLBEntry iotlb;
+ 
++    granularity = memory_region_iommu_get_min_page_size(mr);
++
+     for (addr = 0; addr < memory_region_size(mr); addr += granularity) {
+         iotlb = mr->iommu_ops->translate(mr, addr, is_write);
+         if (iotlb.perm != IOMMU_NONE) {
+-- 
+1.8.3.1
+

@@ -1,0 +1,117 @@
+From a24706b4060b771cfa99a79df5f7b0621766f64f Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:59 +0200
+Subject: [PATCH 59/99] target-i386: Add socket/core/thread properties to
+ X86CPU
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-55-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71670
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 54/78] target-i386: Add socket/core/thread properties to X86CPU
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+These properties will be used by as address where to plug
+CPU with help -device/device_add commands.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit d89c2b8b98e097b9cad5104b0f178bde1cfa011b)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	target-i386/cpu.h - due to missing not releated
+          d71b62a1 target-i386: kvm: Allocate kvm_msrs struct once per VCPU
+---
+ hw/i386/pc.c      | 29 +++++++++++++++++++++++++++++
+ target-i386/cpu.c |  6 ++++++
+ target-i386/cpu.h |  4 ++++
+ 3 files changed, 39 insertions(+)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index f431746..175447c 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1772,6 +1772,7 @@ static void pc_cpu_pre_plug(HotplugHandler *hotplug_dev,
+                             DeviceState *dev, Error **errp)
+ {
+     int idx;
++    X86CPUTopoInfo topo;
+     X86CPU *cpu = X86_CPU(dev);
+     PCMachineState *pcms = PC_MACHINE(hotplug_dev);
+     CPUArchId *cpu_slot = pc_find_cpu_slot(pcms, CPU(dev), &idx);
+@@ -1788,6 +1789,34 @@ static void pc_cpu_pre_plug(HotplugHandler *hotplug_dev,
+                    idx, cpu->apic_id);
+         return;
+     }
++
++    /* if 'address' properties socket-id/core-id/thread-id are not set, set them
++     * so that query_hotpluggable_cpus would show correct values
++     */
++    /* TODO: move socket_id/core_id/thread_id checks into x86_cpu_realizefn()
++     * once -smp refactoring is complete and there will be CPU private
++     * CPUState::nr_cores and CPUState::nr_threads fields instead of globals */
++    x86_topo_ids_from_apicid(cpu->apic_id, smp_cores, smp_threads, &topo);
++    if (cpu->socket_id != -1 && cpu->socket_id != topo.pkg_id) {
++        error_setg(errp, "property socket-id: %u doesn't match set apic-id:"
++            " 0x%x (socket-id: %u)", cpu->socket_id, cpu->apic_id, topo.pkg_id);
++        return;
++    }
++    cpu->socket_id = topo.pkg_id;
++
++    if (cpu->core_id != -1 && cpu->core_id != topo.core_id) {
++        error_setg(errp, "property core-id: %u doesn't match set apic-id:"
++            " 0x%x (core-id: %u)", cpu->core_id, cpu->apic_id, topo.core_id);
++        return;
++    }
++    cpu->core_id = topo.core_id;
++
++    if (cpu->thread_id != -1 && cpu->thread_id != topo.smt_id) {
++        error_setg(errp, "property thread-id: %u doesn't match set apic-id:"
++            " 0x%x (thread-id: %u)", cpu->thread_id, cpu->apic_id, topo.smt_id);
++        return;
++    }
++    cpu->thread_id = topo.smt_id;
+ }
+ 
+ static void pc_machine_device_pre_plug_cb(HotplugHandler *hotplug_dev,
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index c1cbed2..d419d60 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -3265,8 +3265,14 @@ static Property x86_cpu_properties[] = {
+ #ifdef CONFIG_USER_ONLY
+     /* apic_id = 0 by default for *-user, see commit 9886e834 */
+     DEFINE_PROP_UINT32("apic-id", X86CPU, apic_id, 0),
++    DEFINE_PROP_INT32("thread-id", X86CPU, thread_id, 0),
++    DEFINE_PROP_INT32("core-id", X86CPU, core_id, 0),
++    DEFINE_PROP_INT32("socket-id", X86CPU, socket_id, 0),
+ #else
+     DEFINE_PROP_UINT32("apic-id", X86CPU, apic_id, UNASSIGNED_APIC_ID),
++    DEFINE_PROP_INT32("thread-id", X86CPU, thread_id, -1),
++    DEFINE_PROP_INT32("core-id", X86CPU, core_id, -1),
++    DEFINE_PROP_INT32("socket-id", X86CPU, socket_id, -1),
+ #endif
+     DEFINE_PROP_BOOL("pmu", X86CPU, enable_pmu, false),
+     { .name  = "hv-spinlocks", .info  = &qdev_prop_spinlocks },
+diff --git a/target-i386/cpu.h b/target-i386/cpu.h
+index 2e08516..efbc296 100644
+--- a/target-i386/cpu.h
++++ b/target-i386/cpu.h
+@@ -1094,6 +1094,10 @@ struct X86CPU {
+     struct DeviceState *apic_state;
+     struct MemoryRegion *cpu_as_root, *cpu_as_mem, *smram;
+     Notifier machine_done;
++
++    int32_t socket_id;
++    int32_t core_id;
++    int32_t thread_id;
+ };
+ 
+ static inline X86CPU *x86_env_get_cpu(CPUX86State *env)
+-- 
+1.8.3.1
+

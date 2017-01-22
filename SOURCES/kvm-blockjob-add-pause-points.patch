@@ -1,0 +1,181 @@
+From dd6d526f1089857d6bc42fcb62f96e61b8291b8b Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Tue, 21 Jun 2016 13:34:17 +0200
+Subject: [PATCH 15/25] blockjob: add pause points
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466516062-20048-5-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70721
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 4/9] blockjob: add pause points
+Bugzilla: 1265179
+RH-Acked-by: Jeffrey Cody <jcody@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+Block jobs are coroutines that usually perform I/O but sometimes also
+sleep or yield.  Currently only sleeping or yielded block jobs can be
+paused.  This means jobs that do not sleep or yield (using
+block_job_yield()) are unaffected by block_job_pause().
+
+Add block_job_pause_point() so that block jobs can mark quiescent points
+that are suitable for pausing.  This solves the problem that it can take
+a block job a long time to pause if it is performing a long series of
+I/O operations.
+
+Transitioning to paused state involves a .pause()/.resume() callback.
+These callbacks are used to ensure that I/O and event loop activity has
+ceased while the job is at a pause point.
+
+Note that this patch introduces a stricter pause state than previously.
+The job->busy flag was incorrectly documented as a quiescent state
+without I/O pending.  This is violated by any job that has I/O pending
+across sleep or block_job_yield(), like the mirror block job.
+
+[Add missing block_job_should_pause() check to avoid deadlock after
+job->driver->pause() in block_job_pause_point().
+--Stefan]
+
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Message-id: 1466096189-6477-4-git-send-email-stefanha@redhat.com
+(cherry picked from commit fc9c0a9c4b2c07cf2b8683f2617af584f14c93e7)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ blockjob.c               | 38 +++++++++++++++++++++++++++++++++-----
+ include/block/blockjob.h | 35 ++++++++++++++++++++++++++++++++---
+ 2 files changed, 65 insertions(+), 8 deletions(-)
+
+diff --git a/blockjob.c b/blockjob.c
+index afca775..64e6431 100644
+--- a/blockjob.c
++++ b/blockjob.c
+@@ -241,6 +241,32 @@ static bool block_job_should_pause(BlockJob *job)
+     return job->pause_count > 0;
+ }
+ 
++void coroutine_fn block_job_pause_point(BlockJob *job)
++{
++    if (!block_job_should_pause(job)) {
++        return;
++    }
++    if (block_job_is_cancelled(job)) {
++        return;
++    }
++
++    if (job->driver->pause) {
++        job->driver->pause(job);
++    }
++
++    if (block_job_should_pause(job) && !block_job_is_cancelled(job)) {
++        job->paused = true;
++        job->busy = false;
++        qemu_coroutine_yield(); /* wait for block_job_resume() */
++        job->busy = true;
++        job->paused = false;
++    }
++
++    if (job->driver->resume) {
++        job->driver->resume(job);
++    }
++}
++
+ void block_job_resume(BlockJob *job)
+ {
+     assert(job->pause_count > 0);
+@@ -336,11 +362,9 @@ void block_job_sleep_ns(BlockJob *job, QEMUClockType type, int64_t ns)
+     if (!block_job_should_pause(job)) {
+         co_aio_sleep_ns(bdrv_get_aio_context(job->bs), type, ns);
+     }
+-    /* The job can be paused while sleeping, so check this again */
+-    if (block_job_should_pause(job)) {
+-        qemu_coroutine_yield();
+-    }
+     job->busy = true;
++
++    block_job_pause_point(job);
+ }
+ 
+ void block_job_yield(BlockJob *job)
+@@ -353,8 +377,12 @@ void block_job_yield(BlockJob *job)
+     }
+ 
+     job->busy = false;
+-    qemu_coroutine_yield();
++    if (!block_job_should_pause(job)) {
++        qemu_coroutine_yield();
++    }
+     job->busy = true;
++
++    block_job_pause_point(job);
+ }
+ 
+ BlockJobInfo *block_job_query(BlockJob *job)
+diff --git a/include/block/blockjob.h b/include/block/blockjob.h
+index 691abfe..9c71457 100644
+--- a/include/block/blockjob.h
++++ b/include/block/blockjob.h
+@@ -70,6 +70,20 @@ typedef struct BlockJobDriver {
+      * never both.
+      */
+     void (*abort)(BlockJob *job);
++
++    /**
++     * If the callback is not NULL, it will be invoked when the job transitions
++     * into the paused state.  Paused jobs must not perform any asynchronous
++     * I/O or event loop activity.  This callback is used to quiesce jobs.
++     */
++    void coroutine_fn (*pause)(BlockJob *job);
++
++    /**
++     * If the callback is not NULL, it will be invoked when the job transitions
++     * out of the paused state.  Any asynchronous I/O or event loop activity
++     * should be restarted from this callback.
++     */
++    void coroutine_fn (*resume)(BlockJob *job);
+ } BlockJobDriver;
+ 
+ /**
+@@ -119,13 +133,19 @@ struct BlockJob {
+     bool user_paused;
+ 
+     /**
+-     * Set to false by the job while it is in a quiescent state, where
+-     * no I/O is pending and the job has yielded on any condition
+-     * that is not detected by #aio_poll, such as a timer.
++     * Set to false by the job while the coroutine has yielded and may be
++     * re-entered by block_job_enter().  There may still be I/O or event loop
++     * activity pending.
+      */
+     bool busy;
+ 
+     /**
++     * Set to true by the job while it is in a quiescent state, where
++     * no I/O or event loop activity is pending.
++     */
++    bool paused;
++
++    /**
+      * Set to true when the job is ready to be completed.
+      */
+     bool ready;
+@@ -285,6 +305,15 @@ bool block_job_is_cancelled(BlockJob *job);
+ BlockJobInfo *block_job_query(BlockJob *job);
+ 
+ /**
++ * block_job_pause_point:
++ * @job: The job that is ready to pause.
++ *
++ * Pause now if block_job_pause() has been called.  Block jobs that perform
++ * lots of I/O must call this between requests so that the job can be paused.
++ */
++void coroutine_fn block_job_pause_point(BlockJob *job);
++
++/**
+  * block_job_pause:
+  * @job: The job to be paused.
+  *
+-- 
+1.8.3.1
+

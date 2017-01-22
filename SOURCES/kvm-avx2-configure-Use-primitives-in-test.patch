@@ -1,0 +1,84 @@
+From ed3695c3a1e864a32c1a412f8772469957f60c3c Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Fri, 17 Jun 2016 12:17:27 +0200
+Subject: [PATCH 12/13] avx2 configure: Use primitives in test
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1466165847-8766-3-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70645
+O-Subject: [RHEL-7.3 qemu-kvm-rehv PATCH 2/2] avx2 configure: Use primitives in test
+Bugzilla: 1323294
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Amit Shah <amit.shah@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+Use the avx2 primitives during the test, thus making sure that the
+compiler and assembler could actually use avx2.
+
+This also detects the failure case on gcc 4.8.x with -save-temps
+and avoids the need for the gcc version check in cutils.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-Id: <1465557378-24105-3-git-send-email-dgilbert@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit 4fb8320a2efb2216c7ddcc929ad0362f4e285681)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ configure     | 17 ++++++++++++-----
+ util/cutils.c |  8 +-------
+ 2 files changed, 13 insertions(+), 12 deletions(-)
+
+diff --git a/configure b/configure
+index 1b00ead..9a105cd 100755
+--- a/configure
++++ b/configure
+@@ -1789,13 +1789,20 @@ fi
+ # avx2 optimization requirement check
+ 
+ cat > $TMPC << EOF
+-static void bar(void) {}
++#pragma GCC push_options
++#pragma GCC target("avx2")
++#include <cpuid.h>
++#include <immintrin.h>
++
++static int bar(void *a) {
++    return _mm256_movemask_epi8(_mm256_cmpeq_epi8(*(__m256i *)a, (__m256i){0}));
++}
+ static void *bar_ifunc(void) {return (void*) bar;}
+-void foo(void) __attribute__((ifunc("bar_ifunc")));
+-int main(void) { foo(); return 0; }
++int foo(void *a) __attribute__((ifunc("bar_ifunc")));
++int main(int argc, char *argv[]) { return foo(argv[0]);}
+ EOF
+-if compile_prog "-mavx2" "" ; then
+-    if readelf --syms $TMPE |grep "IFUNC.*foo" >/dev/null 2>&1; then
++if compile_object "" ; then
++    if readelf --syms $TMPO |grep "IFUNC.*foo" >/dev/null 2>&1; then
+         avx2_opt="yes"
+     fi
+ fi
+diff --git a/util/cutils.c b/util/cutils.c
+index 43d1afb..5830a68 100644
+--- a/util/cutils.c
++++ b/util/cutils.c
+@@ -256,13 +256,7 @@ static size_t buffer_find_nonzero_offset_inner(const void *buf, size_t len)
+     return i * sizeof(VECTYPE);
+ }
+ 
+-/*
+- * GCC before version 4.9 has a bug which will cause the target
+- * attribute work incorrectly and failed to compile in some case,
+- * restrict the gcc version to 4.9+ to prevent the failure.
+- */
+-
+-#if defined CONFIG_AVX2_OPT && QEMU_GNUC_PREREQ(4, 9)
++#if defined CONFIG_AVX2_OPT
+ #pragma GCC push_options
+ #pragma GCC target("avx2")
+ #include <cpuid.h>
+-- 
+1.8.3.1
+

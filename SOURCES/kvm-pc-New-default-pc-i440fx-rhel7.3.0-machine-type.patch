@@ -1,0 +1,81 @@
+From 2da9bb8e14fa2e44ad94c7ee5d8341afd32fae19 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Thu, 2 Jun 2016 15:11:45 +0200
+Subject: [PATCH 19/24] pc: New (default) pc-i440fx-rhel7.3.0 machine-type
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1464880310-29953-2-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70539
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/6] pc: New (default) pc-i440fx-rhel7.3.0 machine-type
+Bugzilla: 1305121
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Bandan Das <bsd@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Eduardo Habkost <ehabkost@redhat.com>
+
+Add a new pc-i440fx machine-type. The new machine-type is based
+on the QEMU 2.5.0 defaults (so it should be similar to upstream
+pc-i440fx-2.5).
+
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+
+With a fix to the description strings;
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc_piix.c | 29 ++++++++++++++++++++++++-----
+ 1 file changed, 24 insertions(+), 5 deletions(-)
+
+diff --git a/hw/i386/pc_piix.c b/hw/i386/pc_piix.c
+index d336170..10dd567 100644
+--- a/hw/i386/pc_piix.c
++++ b/hw/i386/pc_piix.c
+@@ -1067,6 +1067,27 @@ machine_init(pc_machine_init);
+ #endif  /* Disabled for Red Hat Enterprise Linux */
+ 
+ /* Red Hat Enterprise Linux machine types */
++
++static void pc_init_rhel730(MachineState *machine)
++{
++    pc_init1(machine, TYPE_I440FX_PCI_HOST_BRIDGE, \
++             TYPE_I440FX_PCI_DEVICE);
++}
++
++static void pc_machine_rhel730_options(MachineClass *m)
++{
++    m->family = "pc_piix_Y";
++    m->alias = "pc";
++    m->desc = "RHEL 7.3.0 PC (i440FX + PIIX, 1996)";
++    m->is_default = 1;
++    m->default_machine_opts = "firmware=bios-256k.bin";
++    m->default_display = "std";
++}
++
++DEFINE_PC_MACHINE(rhel730, "pc-i440fx-rhel7.3.0", pc_init_rhel730,
++                  pc_machine_rhel730_options);
++
++
+ static void pc_compat_rhel720(MachineState *machine)
+ {
+ }
+@@ -1080,12 +1101,10 @@ static void pc_init_rhel720(MachineState *machine)
+ 
+ static void pc_machine_rhel720_options(MachineClass *m)
+ {
+-    m->family = "pc_piix_Y";
+-    m->alias = "pc";
++    pc_machine_rhel730_options(m);
++    m->is_default = 0;
++    m->alias = NULL;
+     m->desc = "RHEL 7.2.0 PC (i440FX + PIIX, 1996)";
+-    m->is_default = 1;
+-    m->default_machine_opts = "firmware=bios-256k.bin";
+-    m->default_display = "std";
+     SET_MACHINE_COMPAT(m, PC_RHEL7_2_COMPAT);
+ }
+ 
+-- 
+1.8.3.1
+

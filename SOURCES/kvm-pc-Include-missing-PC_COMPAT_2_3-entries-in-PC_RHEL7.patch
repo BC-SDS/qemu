@@ -1,0 +1,129 @@
+From 7a6ed672936fff6d0116a974096650b088868cda Mon Sep 17 00:00:00 2001
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Mon, 4 Jul 2016 00:20:01 +0200
+Subject: [PATCH 07/16] pc: Include missing PC_COMPAT_2_3 entries in
+ PC_RHEL7_2_COMPAT
+
+RH-Author: Eduardo Habkost <ehabkost@redhat.com>
+Message-id: <1467591601-12091-5-git-send-email-ehabkost@redhat.com>
+Patchwork-id: 70929
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 4/4] pc: Include missing PC_COMPAT_2_3 entries in PC_RHEL7_2_COMPAT
+Bugzilla: 1318386 1321139
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1318386
+Upstream: not applicable
+
+PC_RHEL7_2_COMPAT was missing multiple entries for
+changes introduced between QEMU 2.3 and QEMU 2.6.
+
+For reference, below is the full compat property list from
+PC_COMPAT_2_5, PC_COMPAT_2_4 and PC_COMPAT_2_3, with a short
+summary of their status.
+
+* {Haswell,Broadwell}{,-noTSX}.abm=off: INCLUDED
+  * Upstream commit becb66673ec30cb604926d247ab9449a60ad8b11
+  * Commit never backported to RHEL-7, RHEL-7.2 had abm=off
+    just like upstream v2.3
+* host.host-cache-info=on: INCLUDED
+  * Upstream commit e265e3e48049fbece9eaf536aa00ca41aa3c54d0
+  * Commit never backported to RHEL-7, RHEL-7.2 had
+    cache_info_passthrough=true just like upstream v2.3
+* check=off: INCLUDED
+  * Just like upstream, be conservative and don't trigger
+    warnings in setups that are already working. Keep "check"
+    disabled by default for old machine-types
+* qemu64.sse4a=on: ALREADY INCLUDED
+  * Upstream commit 0909ad24b2769368716c85f79fbb995dbb7041a9
+  * Done in a separate RHEL-7.3 patch
+* qemu64.abm=on: ALREADY INCLUDED
+  * Upstream commit 711956722c6764336f8b78a2106e57c55f02f36d
+  * Done in a separate RHEL-7.3 patch
+* qemu64.popcnt=on: NOT INCLUDED
+  * Upstream commit 6aa91e4a0237ddcebb85e3a95e166f3b3cfa42ae
+  * Upstream commit was not directly backported,
+    but qemu64 in RHEL-7 is different and never included popcnt
+* qemu32.popcnt=on: INCLUDED
+  * Upstream commit 6aa91e4a0237ddcebb85e3a95e166f3b3cfa42ae
+  * Commit never backported to RHEL-7, RHEL-7.2 had popcnt=on
+    just like upstream v2.3
+* Opteron_G[2345].rdtscp=on: NOT INCLUDED
+  * Upstream commit 33b5e8c03ae7a62d320d3c5c1104fe297d5c300d
+  * rdtscp was already disabled in those CPU models since
+    RHEL-7.0 (commit 47d47cf36d5172dbe6d2c3b3794817d30d10610c)
+* TYPE_X86_CPU.arat=off: INCLUDED
+  * Upstream commit 28b8e4d0bf93ba176b4b7be819d537383c5a9060
+  * Commit never backported to RHEL-7, RHEL-7.2 had arat=off
+    just like upstream v2.3
+* "level" and "xlevel" properties on multiple CPU models
+  (qemu64, kvm64, pentium3, n270, Conrole, Nehalem, Penryn,
+  Conroe, Nehalem, Westmere, SandyBridge, IvyBridge, Haswell,
+  Haswell-noTSX, Broadwell, Broadwell-noTSX): NOT INCLUDED
+  * Upstream commit 3046bb5debc8153a542acb1df93b2a1a85527a15
+  * Commit was already backported to RHEL-7.2
+    (commit 3999ea575d8d7795189d73d942592ba517de9972)
+  * That's why PC_RHEL7_1_COMPAT has the same entries,
+    they were added by the RHEL-7.2 backport
+
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/i386/pc.h | 40 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index 6396968..7f93c9f 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -898,6 +898,46 @@ extern void igd_passthrough_isa_bridge_create(PCIBus *bus, uint16_t gpu_dev_id);
+             .driver   = "qemu64" "-" TYPE_X86_CPU,\
+             .property = "abm",\
+             .value    = "on",\
++        },\
++        { /* PC_RHEL7_2_COMPAT */ \
++            .driver   = "Haswell-" TYPE_X86_CPU,\
++            .property = "abm",\
++            .value    = "off",\
++        },\
++        { /* PC_RHEL7_2_COMPAT */ \
++            .driver   = "Haswell-noTSX-" TYPE_X86_CPU,\
++            .property = "abm",\
++            .value    = "off",\
++        },\
++        { /* PC_RHEL7_2_COMPAT */ \
++            .driver   = "Broadwell-" TYPE_X86_CPU,\
++            .property = "abm",\
++            .value    = "off",\
++        },\
++        { /* PC_RHEL7_2_COMPAT */ \
++            .driver   = "Broadwell-noTSX-" TYPE_X86_CPU,\
++            .property = "abm",\
++            .value    = "off",\
++        },\
++        { /* PC_RHEL7_2_COMPAT */ \
++            .driver   = "host" "-" TYPE_X86_CPU,\
++            .property = "host-cache-info",\
++            .value    = "on",\
++        },\
++        { /* PC_RHEL7_2_COMPAT */ \
++            .driver   = TYPE_X86_CPU,\
++            .property = "check",\
++            .value    = "off",\
++        },\
++        { /* PC_RHEL7_2_COMPAT */ \
++            .driver   = "qemu32" "-" TYPE_X86_CPU,\
++            .property = "popcnt",\
++            .value    = "on",\
++        },\
++        { /* PC_RHEL7_2_COMPAT */ \
++            .driver   = TYPE_X86_CPU,\
++            .property = "arat",\
++            .value    = "off",\
+         },
+ 
+ 
+-- 
+1.8.3.1
+

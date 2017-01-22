@@ -1,0 +1,123 @@
+From 07a3e1b83c968933b2801dfff6b331fd3649c745 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Fri, 17 Jun 2016 14:39:23 +0200
+Subject: [PATCH 02/33] Migration: Split out ram part of qmp_query_migrate
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1466174367-11047-3-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70660
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/6] Migration: Split out ram part of qmp_query_migrate
+Bugzilla: 1347256
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+RH-Acked-by: John Snow <jsnow@redhat.com>
+RH-Acked-by: Amit Shah <amit.shah@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+The RAM section of qmp_query_migrate is reasonably complex
+and repeated 3 times.  Split it out into a helper.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Message-id: 1465816605-29488-3-git-send-email-dgilbert@redhat.com
+Reviwed-by: Denis V. Lunev <den@openvz.org>
+Message-Id: <1465816605-29488-3-git-send-email-dgilbert@redhat.com>
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+(cherry picked from commit a22463a5dca6c1e3fbb474e758af7d864de61690)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ migration/migration.c | 57 ++++++++++++++++++++-------------------------------
+ 1 file changed, 22 insertions(+), 35 deletions(-)
+
+diff --git a/migration/migration.c b/migration/migration.c
+index 7d139ce..fcb832a 100644
+--- a/migration/migration.c
++++ b/migration/migration.c
+@@ -562,6 +562,25 @@ static void get_xbzrle_cache_stats(MigrationInfo *info)
+     }
+ }
+ 
++static void populate_ram_info(MigrationInfo *info, MigrationState *s)
++{
++    info->has_ram = true;
++    info->ram = g_malloc0(sizeof(*info->ram));
++    info->ram->transferred = ram_bytes_transferred();
++    info->ram->total = ram_bytes_total();
++    info->ram->duplicate = dup_mig_pages_transferred();
++    info->ram->skipped = skipped_mig_pages_transferred();
++    info->ram->normal = norm_mig_pages_transferred();
++    info->ram->normal_bytes = norm_mig_bytes_transferred();
++    info->ram->mbps = s->mbps;
++    info->ram->dirty_sync_count = s->dirty_sync_count;
++
++    if (s->state != MIGRATION_STATUS_COMPLETED) {
++        info->ram->remaining = ram_bytes_remaining();
++        info->ram->dirty_pages_rate = s->dirty_pages_rate;
++    }
++}
++
+ MigrationInfo *qmp_query_migrate(Error **errp)
+ {
+     MigrationInfo *info = g_malloc0(sizeof(*info));
+@@ -586,18 +605,7 @@ MigrationInfo *qmp_query_migrate(Error **errp)
+         info->has_setup_time = true;
+         info->setup_time = s->setup_time;
+ 
+-        info->has_ram = true;
+-        info->ram = g_malloc0(sizeof(*info->ram));
+-        info->ram->transferred = ram_bytes_transferred();
+-        info->ram->remaining = ram_bytes_remaining();
+-        info->ram->total = ram_bytes_total();
+-        info->ram->duplicate = dup_mig_pages_transferred();
+-        info->ram->skipped = skipped_mig_pages_transferred();
+-        info->ram->normal = norm_mig_pages_transferred();
+-        info->ram->normal_bytes = norm_mig_bytes_transferred();
+-        info->ram->dirty_pages_rate = s->dirty_pages_rate;
+-        info->ram->mbps = s->mbps;
+-        info->ram->dirty_sync_count = s->dirty_sync_count;
++        populate_ram_info(info, s);
+ 
+         if (blk_mig_active()) {
+             info->has_disk = true;
+@@ -625,18 +633,7 @@ MigrationInfo *qmp_query_migrate(Error **errp)
+         info->has_setup_time = true;
+         info->setup_time = s->setup_time;
+ 
+-        info->has_ram = true;
+-        info->ram = g_malloc0(sizeof(*info->ram));
+-        info->ram->transferred = ram_bytes_transferred();
+-        info->ram->remaining = ram_bytes_remaining();
+-        info->ram->total = ram_bytes_total();
+-        info->ram->duplicate = dup_mig_pages_transferred();
+-        info->ram->skipped = skipped_mig_pages_transferred();
+-        info->ram->normal = norm_mig_pages_transferred();
+-        info->ram->normal_bytes = norm_mig_bytes_transferred();
+-        info->ram->dirty_pages_rate = s->dirty_pages_rate;
+-        info->ram->mbps = s->mbps;
+-        info->ram->dirty_sync_count = s->dirty_sync_count;
++        populate_ram_info(info, s);
+ 
+         if (blk_mig_active()) {
+             info->has_disk = true;
+@@ -659,17 +656,7 @@ MigrationInfo *qmp_query_migrate(Error **errp)
+         info->has_setup_time = true;
+         info->setup_time = s->setup_time;
+ 
+-        info->has_ram = true;
+-        info->ram = g_malloc0(sizeof(*info->ram));
+-        info->ram->transferred = ram_bytes_transferred();
+-        info->ram->remaining = 0;
+-        info->ram->total = ram_bytes_total();
+-        info->ram->duplicate = dup_mig_pages_transferred();
+-        info->ram->skipped = skipped_mig_pages_transferred();
+-        info->ram->normal = norm_mig_pages_transferred();
+-        info->ram->normal_bytes = norm_mig_bytes_transferred();
+-        info->ram->mbps = s->mbps;
+-        info->ram->dirty_sync_count = s->dirty_sync_count;
++        populate_ram_info(info, s);
+         break;
+     case MIGRATION_STATUS_FAILED:
+         info->has_status = true;
+-- 
+1.8.3.1
+

@@ -1,0 +1,59 @@
+From a259b8f252590e0d9aba3312ef5863d885b403f1 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:56 +0200
+Subject: [PATCH 23/34] spapr: drop reference on child object during core
+ realization
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-24-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71143
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 23/27] spapr: drop reference on child object during core realization
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Greg Kurz <groug@kaod.org>
+
+When a core is being realized, we create a child object for each thread
+of the core.
+
+The child is first initialized with object_initialize() which sets its ref
+count to 1, and then added to the core with object_property_add_child()
+which bumps the ref count to 2.
+
+When the core gets released, object_unparent() decreases the ref count to 1,
+and we g_free() the object: we hence loose the reference on an unfinalized
+object. This is likely to cause random crashes.
+
+Let's drop the extra reference as soon as we don't need it, after the
+thread is added to the core.
+
+Signed-off-by: Greg Kurz <groug@kaod.org>
+Reviewed-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 8e758dee663bfda2ccfe0076914bf49108055386)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_cpu_core.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index bfacf8d..95e2436 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -300,6 +300,7 @@ static void spapr_cpu_core_realize(DeviceState *dev, Error **errp)
+         if (local_err) {
+             goto err;
+         }
++        object_unref(obj);
+     }
+     object_child_foreach(OBJECT(dev), spapr_cpu_core_realize_child, &local_err);
+     if (local_err) {
+-- 
+1.8.3.1
+

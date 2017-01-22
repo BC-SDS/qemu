@@ -1,0 +1,131 @@
+From ddcab2789642ae3061dbf56a7147f43f4d88da22 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:42 +0200
+Subject: [PATCH 22/30] char: add and use tcp_chr_wait_connected
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-23-marcandre.lureau@redhat.com>
+Patchwork-id: 71938
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 22/28] char: add and use tcp_chr_wait_connected
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Add a chr_wait_connected for the tcp backend, and use it in the
+open_socket() function.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit d7a04fd7d500870ad70f15089c6590e4bea73e70)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ qemu-char.c | 63 ++++++++++++++++++++++++++++++++++++++++++-------------------
+ 1 file changed, 44 insertions(+), 19 deletions(-)
+
+diff --git a/qemu-char.c b/qemu-char.c
+index 02f5aa9..47cbb46 100644
+--- a/qemu-char.c
++++ b/qemu-char.c
+@@ -3141,6 +3141,32 @@ static gboolean tcp_chr_accept(QIOChannel *channel,
+     return TRUE;
+ }
+ 
++static int tcp_chr_wait_connected(CharDriverState *chr, Error **errp)
++{
++    TCPCharDriver *s = chr->opaque;
++    QIOChannelSocket *sioc;
++
++    while (!s->connected) {
++        if (s->is_listen) {
++            fprintf(stderr, "QEMU waiting for connection on: %s\n",
++                    chr->filename);
++            qio_channel_set_blocking(QIO_CHANNEL(s->listen_ioc), true, NULL);
++            tcp_chr_accept(QIO_CHANNEL(s->listen_ioc), G_IO_IN, chr);
++            qio_channel_set_blocking(QIO_CHANNEL(s->listen_ioc), false, NULL);
++        } else {
++            sioc = qio_channel_socket_new();
++            if (qio_channel_socket_connect_sync(sioc, s->addr, errp) < 0) {
++                object_unref(OBJECT(sioc));
++                return -1;
++            }
++            tcp_chr_new_client(chr, sioc);
++            object_unref(OBJECT(sioc));
++        }
++    }
++
++    return 0;
++}
++
+ int qemu_chr_wait_connected(CharDriverState *chr, Error **errp)
+ {
+     if (chr->chr_wait_connected) {
+@@ -4420,6 +4446,7 @@ static CharDriverState *qmp_chardev_open_socket(const char *id,
+     qapi_copy_SocketAddress(&s->addr, sock->addr);
+ 
+     chr->opaque = s;
++    chr->chr_wait_connected = tcp_chr_wait_connected;
+     chr->chr_write = tcp_chr_write;
+     chr->chr_sync_read = tcp_chr_sync_read;
+     chr->chr_close = tcp_chr_close;
+@@ -4443,32 +4470,30 @@ static CharDriverState *qmp_chardev_open_socket(const char *id,
+         s->reconnect_time = reconnect;
+     }
+ 
+-    sioc = qio_channel_socket_new();
+     if (s->reconnect_time) {
++        sioc = qio_channel_socket_new();
+         qio_channel_socket_connect_async(sioc, s->addr,
+                                          qemu_chr_socket_connected,
+                                          chr, NULL);
+-    } else if (s->is_listen) {
+-        if (qio_channel_socket_listen_sync(sioc, s->addr, errp) < 0) {
+-            goto error;
+-        }
+-        s->listen_ioc = sioc;
+-        if (is_waitconnect) {
+-            fprintf(stderr, "QEMU waiting for connection on: %s\n",
+-                    chr->filename);
+-            tcp_chr_accept(QIO_CHANNEL(s->listen_ioc), G_IO_IN, chr);
+-        }
+-        qio_channel_set_blocking(QIO_CHANNEL(s->listen_ioc), false, NULL);
+-        if (!s->ioc) {
+-            s->listen_tag = qio_channel_add_watch(
+-                QIO_CHANNEL(s->listen_ioc), G_IO_IN, tcp_chr_accept, chr, NULL);
+-        }
+     } else {
+-        if (qio_channel_socket_connect_sync(sioc, s->addr, errp) < 0) {
++        if (s->is_listen) {
++            sioc = qio_channel_socket_new();
++            if (qio_channel_socket_listen_sync(sioc, s->addr, errp) < 0) {
++                goto error;
++            }
++            s->listen_ioc = sioc;
++            if (is_waitconnect &&
++                qemu_chr_wait_connected(chr, errp) < 0) {
++                goto error;
++            }
++            if (!s->ioc) {
++                s->listen_tag = qio_channel_add_watch(
++                    QIO_CHANNEL(s->listen_ioc), G_IO_IN,
++                    tcp_chr_accept, chr, NULL);
++            }
++        } else if (qemu_chr_wait_connected(chr, errp) < 0) {
+             goto error;
+         }
+-        tcp_chr_new_client(chr, sioc);
+-        object_unref(OBJECT(sioc));
+     }
+ 
+     return chr;
+-- 
+1.8.3.1
+

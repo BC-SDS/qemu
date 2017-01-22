@@ -1,0 +1,47 @@
+From 6dffc9daaa2a3c463099c4d83a3ded88955ce98a Mon Sep 17 00:00:00 2001
+From: Laurent Vivier <lvivier@redhat.com>
+Date: Fri, 13 May 2016 11:45:07 +0200
+Subject: [PATCH 01/24] spapr: update RHEL-7.2 machine type
+
+RH-Author: Laurent Vivier <lvivier@redhat.com>
+Message-id: <1463139908-2374-2-git-send-email-lvivier@redhat.com>
+Patchwork-id: 70400
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH v2 1/2] spapr: update RHEL-7.2 machine type
+Bugzilla: 1316303
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+BREW: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11026308
+BZ:   https://bugzilla.redhat.com/show_bug.cgi?id=1316303
+Upstream: Downstream only
+
+RHEL-7.2 use OHCI by default (new default is XHCI)
+
+Signed-off-by: Laurent Vivier <lvivier@redhat.com>
+---
+ hw/ppc/spapr.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index 0bb2c83..3653be7 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -2518,7 +2518,10 @@ static void spapr_machine_rhel720_instance_options(MachineState *machine)
+ 
+ static void spapr_machine_rhel720_class_options(MachineClass *mc)
+ {
++    sPAPRMachineClass *smc = SPAPR_MACHINE_CLASS(mc);
++
+     spapr_machine_rhel730_class_options(mc);
++    smc->use_ohci_by_default = true;
+     SET_MACHINE_COMPAT(mc, SPAPR_COMPAT_RHEL7_2);
+ }
+ 
+-- 
+1.8.3.1
+

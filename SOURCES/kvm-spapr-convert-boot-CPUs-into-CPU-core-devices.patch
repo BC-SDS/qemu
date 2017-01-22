@@ -1,0 +1,296 @@
+From d10f1c831b3a36452808159d93b27d58a98412b3 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:45 +0200
+Subject: [PATCH 12/34] spapr: convert boot CPUs into CPU core devices
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-13-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71132
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 12/27] spapr: convert boot CPUs into CPU core devices
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+Introduce sPAPRMachineClass.dr_cpu_enabled to indicate support for
+CPU core hotplug. Initialize boot time CPUs as core deivces and prevent
+topologies that result in partially filled cores. Both of these are done
+only if CPU core hotplug is supported.
+
+Note: An unrelated change in the call to xics_system_init() is done
+in this patch as it makes sense to use the local variable smt introduced
+in this patch instead of kvmppc_smt_threads() call here.
+
+TODO: We derive sPAPR core type by looking at -cpu <model>. However
+we don't take care of "compat=" feature yet for boot time as well
+as hotplug CPUs.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 94a94e4c49197d10e5ee7710bb0538ddeff75ba9)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	hw/ppc/spapr.c
+
+Fixed conflicts caused by the RHEL machine types replacing the
+upstream machine types.  Introduced equivalent compatibility flag for
+the RHEL7.2 machine type.
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+---
+ hw/ppc/spapr.c                  | 71 +++++++++++++++++++++++++++++++++++------
+ hw/ppc/spapr_cpu_core.c         | 58 +++++++++++++++++++++++++++++++++
+ include/hw/ppc/spapr.h          |  2 ++
+ include/hw/ppc/spapr_cpu_core.h |  3 ++
+ 4 files changed, 124 insertions(+), 10 deletions(-)
+
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index 85dae22..baf3f29 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -65,6 +65,7 @@
+ 
+ #include "hw/compat.h"
+ #include "qemu/cutils.h"
++#include "hw/ppc/spapr_cpu_core.h"
+ 
+ #include <libfdt.h>
+ 
+@@ -1665,7 +1666,6 @@ static void ppc_spapr_init(MachineState *machine)
+     const char *kernel_filename = machine->kernel_filename;
+     const char *kernel_cmdline = machine->kernel_cmdline;
+     const char *initrd_filename = machine->initrd_filename;
+-    PowerPCCPU *cpu;
+     PCIHostState *phb;
+     int i;
+     MemoryRegion *sysmem = get_system_memory();
+@@ -1679,6 +1679,22 @@ static void ppc_spapr_init(MachineState *machine)
+     long load_limit, fw_size;
+     bool kernel_le = false;
+     char *filename;
++    int smt = kvmppc_smt_threads();
++    int spapr_cores = smp_cpus / smp_threads;
++    int spapr_max_cores = max_cpus / smp_threads;
++
++    if (smc->dr_cpu_enabled) {
++        if (smp_cpus % smp_threads) {
++            error_report("smp_cpus (%u) must be multiple of threads (%u)",
++                         smp_cpus, smp_threads);
++            exit(1);
++        }
++        if (max_cpus % smp_threads) {
++            error_report("max_cpus (%u) must be multiple of threads (%u)",
++                         max_cpus, smp_threads);
++            exit(1);
++        }
++    }
+ 
+     msi_nonbroken = true;
+ 
+@@ -1725,8 +1741,7 @@ static void ppc_spapr_init(MachineState *machine)
+ 
+     /* Set up Interrupt Controller before we create the VCPUs */
+     spapr->icp = xics_system_init(machine,
+-                                  DIV_ROUND_UP(max_cpus * kvmppc_smt_threads(),
+-                                               smp_threads),
++                                  DIV_ROUND_UP(max_cpus * smt, smp_threads),
+                                   XICS_IRQS, &error_fatal);
+ 
+     if (smc->dr_lmb_enabled) {
+@@ -1737,13 +1752,37 @@ static void ppc_spapr_init(MachineState *machine)
+     if (machine->cpu_model == NULL) {
+         machine->cpu_model = kvm_enabled() ? "host" : "POWER7";
+     }
+-    for (i = 0; i < smp_cpus; i++) {
+-        cpu = cpu_ppc_init(machine->cpu_model);
+-        if (cpu == NULL) {
+-            error_report("Unable to find PowerPC CPU definition");
+-            exit(1);
++
++    if (smc->dr_cpu_enabled) {
++        char *type = spapr_get_cpu_core_type(machine->cpu_model);
++
++        spapr->cores = g_new0(Object *, spapr_max_cores);
++        for (i = 0; i < spapr_cores; i++) {
++            int core_dt_id = i * smt;
++            Object *core;
++
++            if (!object_class_by_name(type)) {
++                error_report("Unable to find sPAPR CPU Core definition");
++                exit(1);
++            }
++
++            core  = object_new(type);
++            object_property_set_int(core, smp_threads, "nr-threads",
++                                    &error_fatal);
++            object_property_set_int(core, core_dt_id, CPU_CORE_PROP_CORE_ID,
++                                    &error_fatal);
++            object_property_set_bool(core, true, "realized", &error_fatal);
+         }
+-        spapr_cpu_init(spapr, cpu, &error_fatal);
++        g_free(type);
++    } else {
++        for (i = 0; i < smp_cpus; i++) {
++            PowerPCCPU *cpu = cpu_ppc_init(machine->cpu_model);
++            if (cpu == NULL) {
++                error_report("Unable to find PowerPC CPU definition");
++                exit(1);
++            }
++            spapr_cpu_init(spapr, cpu, &error_fatal);
++       }
+     }
+ 
+     if (kvm_enabled()) {
+@@ -2195,10 +2234,19 @@ static void spapr_machine_device_unplug(HotplugHandler *hotplug_dev,
+     }
+ }
+ 
++static void spapr_machine_device_pre_plug(HotplugHandler *hotplug_dev,
++                                          DeviceState *dev, Error **errp)
++{
++    if (object_dynamic_cast(OBJECT(dev), TYPE_SPAPR_CPU_CORE)) {
++        spapr_core_pre_plug(hotplug_dev, dev, errp);
++    }
++}
++
+ static HotplugHandler *spapr_get_hotpug_handler(MachineState *machine,
+                                              DeviceState *dev)
+ {
+-    if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
++    if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM) ||
++        object_dynamic_cast(OBJECT(dev), TYPE_SPAPR_CPU_CORE)) {
+         return HOTPLUG_HANDLER(machine);
+     }
+     return NULL;
+@@ -2237,11 +2285,13 @@ static void spapr_machine_class_init(ObjectClass *oc, void *data)
+     mc->has_dynamic_sysbus = true;
+     mc->pci_allow_0_address = true;
+     mc->get_hotplug_handler = spapr_get_hotpug_handler;
++    hc->pre_plug = spapr_machine_device_pre_plug;
+     hc->plug = spapr_machine_device_plug;
+     hc->unplug = spapr_machine_device_unplug;
+     mc->cpu_index_to_socket_id = spapr_cpu_index_to_socket_id;
+ 
+     smc->dr_lmb_enabled = true;
++    smc->dr_cpu_enabled = true;
+     fwc->get_dev_path = spapr_get_fw_dev_path;
+     nc->nmi_monitor_handler = spapr_nmi;
+ }
+@@ -2476,6 +2526,7 @@ static void spapr_machine_rhel720_class_options(MachineClass *mc)
+ 
+     spapr_machine_rhel730_class_options(mc);
+     smc->use_ohci_by_default = true;
++    smc->dr_cpu_enabled = false;
+     SET_MACHINE_COMPAT(mc, SPAPR_COMPAT_RHEL7_2);
+ }
+ 
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index 2e24e39..d747c26 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -63,6 +63,64 @@ void spapr_cpu_init(sPAPRMachineState *spapr, PowerPCCPU *cpu, Error **errp)
+     qemu_register_reset(spapr_cpu_reset, cpu);
+ }
+ 
++/*
++ * Return the sPAPR CPU core type for @model which essentially is the CPU
++ * model specified with -cpu cmdline option.
++ */
++char *spapr_get_cpu_core_type(const char *model)
++{
++    char *core_type;
++    gchar **model_pieces = g_strsplit(model, ",", 2);
++
++    core_type = g_strdup_printf("%s-%s", model_pieces[0], TYPE_SPAPR_CPU_CORE);
++    g_strfreev(model_pieces);
++    return core_type;
++}
++
++void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
++                         Error **errp)
++{
++    MachineState *machine = MACHINE(OBJECT(hotplug_dev));
++    sPAPRMachineState *spapr = SPAPR_MACHINE(OBJECT(hotplug_dev));
++    int spapr_max_cores = max_cpus / smp_threads;
++    int index;
++    int smt = kvmppc_smt_threads();
++    Error *local_err = NULL;
++    CPUCore *cc = CPU_CORE(dev);
++    char *base_core_type = spapr_get_cpu_core_type(machine->cpu_model);
++    const char *type = object_get_typename(OBJECT(dev));
++
++    if (strcmp(base_core_type, type)) {
++        error_setg(&local_err, "CPU core type should be %s", base_core_type);
++        goto out;
++    }
++
++    if (cc->nr_threads != smp_threads) {
++        error_setg(&local_err, "threads must be %d", smp_threads);
++        goto out;
++    }
++
++    if (cc->core_id % smt) {
++        error_setg(&local_err, "invalid core id %d\n", cc->core_id);
++        goto out;
++    }
++
++    index = cc->core_id / smt;
++    if (index < 0 || index >= spapr_max_cores) {
++        error_setg(&local_err, "core id %d out of range", cc->core_id);
++        goto out;
++    }
++
++    if (spapr->cores[index]) {
++        error_setg(&local_err, "core %d already populated", cc->core_id);
++        goto out;
++    }
++
++out:
++    g_free(base_core_type);
++    error_propagate(errp, local_err);
++}
++
+ static int spapr_cpu_core_realize_child(Object *child, void *opaque)
+ {
+     Error **errp = opaque;
+diff --git a/include/hw/ppc/spapr.h b/include/hw/ppc/spapr.h
+index 5e3fb56..3189332 100644
+--- a/include/hw/ppc/spapr.h
++++ b/include/hw/ppc/spapr.h
+@@ -38,6 +38,7 @@ struct sPAPRMachineClass {
+ 
+     /*< public >*/
+     bool dr_lmb_enabled;       /* enable dynamic-reconfig/hotplug of LMBs */
++    bool dr_cpu_enabled;       /* enable dynamic-reconfig/hotplug of CPUs */
+     bool use_ohci_by_default;  /* use USB-OHCI instead of XHCI */
+ };
+ 
+@@ -81,6 +82,7 @@ struct sPAPRMachineState {
+     /*< public >*/
+     char *kvm_type;
+     MemoryHotplugState hotplug_memory;
++    Object **cores;
+ };
+ 
+ #define H_SUCCESS         0
+diff --git a/include/hw/ppc/spapr_cpu_core.h b/include/hw/ppc/spapr_cpu_core.h
+index 424edec..401381b 100644
+--- a/include/hw/ppc/spapr_cpu_core.h
++++ b/include/hw/ppc/spapr_cpu_core.h
+@@ -26,4 +26,7 @@ typedef struct sPAPRCPUCore {
+     ObjectClass *cpu_class;
+ } sPAPRCPUCore;
+ 
++void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
++                         Error **errp);
++char *spapr_get_cpu_core_type(const char *model);
+ #endif
+-- 
+1.8.3.1
+

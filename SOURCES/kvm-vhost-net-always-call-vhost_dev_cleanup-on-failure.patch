@@ -1,0 +1,77 @@
+From ecfa3daf6209a7db99e0f4da821bb160fe00e09c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:27 +0200
+Subject: [PATCH 07/30] vhost-net: always call vhost_dev_cleanup() on failure
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-8-marcandre.lureau@redhat.com>
+Patchwork-id: 71923
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 07/28] vhost-net: always call vhost_dev_cleanup() on failure
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+vhost_dev_init(), calling vhost backend initialization, should be
+cleaned up after failure too. Call vhost_dev_cleanup() in all failure
+cases. First, it needs to zero-alloc the struct to avoid the initial
+garbage.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit f1a0365b686c2abdfde6303947f8893873b6b00b)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/vhost_net.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/hw/net/vhost_net.c b/hw/net/vhost_net.c
+index 11fabc0..f9a8e70 100644
+--- a/hw/net/vhost_net.c
++++ b/hw/net/vhost_net.c
+@@ -140,7 +140,7 @@ struct vhost_net *vhost_net_init(VhostNetOptions *options)
+ {
+     int r;
+     bool backend_kernel = options->backend_type == VHOST_BACKEND_TYPE_KERNEL;
+-    struct vhost_net *net = g_malloc(sizeof *net);
++    struct vhost_net *net = g_new0(struct vhost_net, 1);
+     uint64_t features = 0;
+ 
+     if (!options->net_backend) {
+@@ -185,7 +185,6 @@ struct vhost_net *vhost_net_init(VhostNetOptions *options)
+             fprintf(stderr, "vhost lacks feature mask %" PRIu64
+                    " for backend\n",
+                    (uint64_t)(~net->dev.features & net->dev.backend_features));
+-            vhost_dev_cleanup(&net->dev);
+             goto fail;
+         }
+     }
+@@ -197,7 +196,6 @@ struct vhost_net *vhost_net_init(VhostNetOptions *options)
+             fprintf(stderr, "vhost lacks feature mask %" PRIu64
+                     " for backend\n",
+                     (uint64_t)(~net->dev.features & features));
+-            vhost_dev_cleanup(&net->dev);
+             goto fail;
+         }
+     }
+@@ -205,7 +203,9 @@ struct vhost_net *vhost_net_init(VhostNetOptions *options)
+     vhost_net_ack_features(net, features);
+ 
+     return net;
++
+ fail:
++    vhost_dev_cleanup(&net->dev);
+     g_free(net);
+     return NULL;
+ }
+-- 
+1.8.3.1
+

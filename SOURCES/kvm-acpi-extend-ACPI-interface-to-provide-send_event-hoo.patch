@@ -1,0 +1,198 @@
+From 1cdb203de7b7fbce0526c937962a6ba68d357465 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:20 +0200
+Subject: [PATCH 20/99] acpi: extend ACPI interface to provide send_event hook
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-16-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71631
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 15/78] acpi: extend ACPI interface to provide send_event hook
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+send_event() hook will allow to send ACPI event in
+a target specific way (GPE or GPIO based impl.)
+it will also simplify proxy wrappers in piix4pm/ich9
+that access ACPI regs and SCI which are part of
+piix4pm/lcp_ich9 devices and call acpi_foo() API directly.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+(cherry picked from commit eaf23bf794c749c621a5605c1076a16e3d81e12b)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/acpi_interface.c             |  9 +++++++++
+ hw/acpi/core.c                       |  2 +-
+ hw/acpi/piix4.c                      |  8 ++++++++
+ hw/isa/lpc_ich9.c                    |  8 ++++++++
+ include/hw/acpi/acpi.h               | 10 ++--------
+ include/hw/acpi/acpi_dev_interface.h | 11 +++++++++++
+ 6 files changed, 39 insertions(+), 9 deletions(-)
+
+diff --git a/hw/acpi/acpi_interface.c b/hw/acpi/acpi_interface.c
+index d821313..6583917 100644
+--- a/hw/acpi/acpi_interface.c
++++ b/hw/acpi/acpi_interface.c
+@@ -2,6 +2,15 @@
+ #include "hw/acpi/acpi_dev_interface.h"
+ #include "qemu/module.h"
+ 
++void acpi_send_event(DeviceState *dev, AcpiEventStatusBits event)
++{
++    AcpiDeviceIfClass *adevc = ACPI_DEVICE_IF_GET_CLASS(dev);
++    if (adevc->send_event) {
++        AcpiDeviceIf *adev = ACPI_DEVICE_IF(dev);
++        adevc->send_event(adev, event);
++    }
++}
++
+ static void register_types(void)
+ {
+     static const TypeInfo acpi_dev_if_info = {
+diff --git a/hw/acpi/core.c b/hw/acpi/core.c
+index 6a2f452..d05844b 100644
+--- a/hw/acpi/core.c
++++ b/hw/acpi/core.c
+@@ -692,7 +692,7 @@ uint32_t acpi_gpe_ioport_readb(ACPIREGS *ar, uint32_t addr)
+ }
+ 
+ void acpi_send_gpe_event(ACPIREGS *ar, qemu_irq irq,
+-                         AcpiGPEStatusBits status)
++                         AcpiEventStatusBits status)
+ {
+     ar->gpe.sts[0] |= status;
+     acpi_update_sci(ar, irq);
+diff --git a/hw/acpi/piix4.c b/hw/acpi/piix4.c
+index 47bbcbe..75de6ac 100644
+--- a/hw/acpi/piix4.c
++++ b/hw/acpi/piix4.c
+@@ -585,6 +585,13 @@ static void piix4_ospm_status(AcpiDeviceIf *adev, ACPIOSTInfoList ***list)
+     acpi_memory_ospm_status(&s->acpi_memory_hotplug, list);
+ }
+ 
++static void piix4_send_gpe(AcpiDeviceIf *adev, AcpiEventStatusBits ev)
++{
++    PIIX4PMState *s = PIIX4_PM(adev);
++
++    acpi_send_gpe_event(&s->ar, s->irq, ev);
++}
++
+ static Property piix4_pm_properties[] = {
+     DEFINE_PROP_UINT32("smb_io_base", PIIX4PMState, smb_io_base, 0),
+     DEFINE_PROP_UINT8(ACPI_PM_PROP_S3_DISABLED, PIIX4PMState, disable_s3, 1),
+@@ -623,6 +630,7 @@ static void piix4_pm_class_init(ObjectClass *klass, void *data)
+     hc->unplug_request = piix4_device_unplug_request_cb;
+     hc->unplug = piix4_device_unplug_cb;
+     adevc->ospm_status = piix4_ospm_status;
++    adevc->send_event = piix4_send_gpe;
+ }
+ 
+ static const TypeInfo piix4_pm_info = {
+diff --git a/hw/isa/lpc_ich9.c b/hw/isa/lpc_ich9.c
+index 99cd3ba..305ccd6 100644
+--- a/hw/isa/lpc_ich9.c
++++ b/hw/isa/lpc_ich9.c
+@@ -702,6 +702,13 @@ static Property ich9_lpc_properties[] = {
+     DEFINE_PROP_END_OF_LIST(),
+ };
+ 
++static void ich9_send_gpe(AcpiDeviceIf *adev, AcpiEventStatusBits ev)
++{
++    ICH9LPCState *s = ICH9_LPC_DEVICE(adev);
++
++    acpi_send_gpe_event(&s->pm.acpi_regs, s->pm.irq, ev);
++}
++
+ static void ich9_lpc_class_init(ObjectClass *klass, void *data)
+ {
+     DeviceClass *dc = DEVICE_CLASS(klass);
+@@ -729,6 +736,7 @@ static void ich9_lpc_class_init(ObjectClass *klass, void *data)
+     hc->unplug_request = ich9_device_unplug_request_cb;
+     hc->unplug = ich9_device_unplug_cb;
+     adevc->ospm_status = ich9_pm_ospm_status;
++    adevc->send_event = ich9_send_gpe;
+ }
+ 
+ static const TypeInfo ich9_lpc_info = {
+diff --git a/include/hw/acpi/acpi.h b/include/hw/acpi/acpi.h
+index e0978c8..24dd572 100644
+--- a/include/hw/acpi/acpi.h
++++ b/include/hw/acpi/acpi.h
+@@ -23,6 +23,7 @@
+ #include "qemu/option.h"
+ #include "exec/memory.h"
+ #include "hw/irq.h"
++#include "hw/acpi/acpi_dev_interface.h"
+ 
+ /*
+  * current device naming scheme supports up to 256 memory devices
+@@ -89,13 +90,6 @@
+ /* PM2_CNT */
+ #define ACPI_BITMASK_ARB_DISABLE                0x0001
+ 
+-/* These values are part of guest ABI, and can not be changed */
+-typedef enum {
+-    ACPI_PCI_HOTPLUG_STATUS = 2,
+-    ACPI_CPU_HOTPLUG_STATUS = 4,
+-    ACPI_MEMORY_HOTPLUG_STATUS = 8,
+-} AcpiGPEStatusBits;
+-
+ /* structs */
+ typedef struct ACPIPMTimer ACPIPMTimer;
+ typedef struct ACPIPM1EVT ACPIPM1EVT;
+@@ -179,7 +173,7 @@ void acpi_gpe_ioport_writeb(ACPIREGS *ar, uint32_t addr, uint32_t val);
+ uint32_t acpi_gpe_ioport_readb(ACPIREGS *ar, uint32_t addr);
+ 
+ void acpi_send_gpe_event(ACPIREGS *ar, qemu_irq irq,
+-                         AcpiGPEStatusBits status);
++                         AcpiEventStatusBits status);
+ 
+ void acpi_update_sci(ACPIREGS *acpi_regs, qemu_irq irq);
+ 
+diff --git a/include/hw/acpi/acpi_dev_interface.h b/include/hw/acpi/acpi_dev_interface.h
+index f245f8d..a0c4a33 100644
+--- a/include/hw/acpi/acpi_dev_interface.h
++++ b/include/hw/acpi/acpi_dev_interface.h
+@@ -4,6 +4,13 @@
+ #include "qom/object.h"
+ #include "qapi-types.h"
+ 
++/* These values are part of guest ABI, and can not be changed */
++typedef enum {
++    ACPI_PCI_HOTPLUG_STATUS = 2,
++    ACPI_CPU_HOTPLUG_STATUS = 4,
++    ACPI_MEMORY_HOTPLUG_STATUS = 8,
++} AcpiEventStatusBits;
++
+ #define TYPE_ACPI_DEVICE_IF "acpi-device-interface"
+ 
+ #define ACPI_DEVICE_IF_CLASS(klass) \
+@@ -22,11 +29,14 @@ typedef struct AcpiDeviceIf {
+     Object Parent;
+ } AcpiDeviceIf;
+ 
++void acpi_send_event(DeviceState *dev, AcpiEventStatusBits event);
++
+ /**
+  * AcpiDeviceIfClass:
+  *
+  * ospm_status: returns status of ACPI device objects, reported
+  *              via _OST method if device supports it.
++ * send_event: inject a specified event into guest
+  *
+  * Interface is designed for providing unified interface
+  * to generic ACPI functionality that could be used without
+@@ -39,5 +49,6 @@ typedef struct AcpiDeviceIfClass {
+ 
+     /* <public> */
+     void (*ospm_status)(AcpiDeviceIf *adev, ACPIOSTInfoList ***list);
++    void (*send_event)(AcpiDeviceIf *adev, AcpiEventStatusBits ev);
+ } AcpiDeviceIfClass;
+ #endif
+-- 
+1.8.3.1
+

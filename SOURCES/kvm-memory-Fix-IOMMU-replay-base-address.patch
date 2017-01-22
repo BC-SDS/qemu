@@ -1,0 +1,128 @@
+From e288254aba41902a33b97c0354e49c900543405a Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Thu, 18 Aug 2016 06:00:01 +0200
+Subject: [PATCH 36/37] memory: Fix IOMMU replay base address
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1471500001-5610-1-git-send-email-dgibson@redhat.com>
+Patchwork-id: 72020
+O-Subject: [PATCH] memory: Fix IOMMU replay base address
+Bugzilla: 1364035
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Alex Williamson <alex.williamson@redhat.com>
+
+Since a788f227 "memory: Allow replay of IOMMU mapping notifications"
+when new VFIO listener is added, all existing IOMMU mappings are
+replayed. However there is a problem that the base address of
+an IOMMU memory region (IOMMU MR) is ignored which is not a problem
+for the existing user (which is pseries) with its default 32bit DMA
+window starting at 0 but it is if there is another DMA window.
+
+This stores the IOMMU's offset_within_address_space and adjusts
+the IOVA before calling vfio_dma_map/vfio_dma_unmap.
+
+As the IOMMU notifier expects IOVA offset rather than the absolute
+address, this also adjusts IOVA in sPAPR H_PUT_TCE handler before
+calling notifier(s).
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Alex Williamson <alex.williamson@redhat.com>
+(cherry picked from commit d78c19b5cf4821d0c198f4132a085bdbf19dda4c)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1364035
+Brew: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11620440
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_iommu.c          |  2 +-
+ hw/vfio/common.c              | 14 ++++++++------
+ include/hw/vfio/vfio-common.h |  1 +
+ 3 files changed, 10 insertions(+), 7 deletions(-)
+
+diff --git a/hw/ppc/spapr_iommu.c b/hw/ppc/spapr_iommu.c
+index d12c1cb..9098aea 100644
+--- a/hw/ppc/spapr_iommu.c
++++ b/hw/ppc/spapr_iommu.c
+@@ -403,7 +403,7 @@ static target_ulong put_tce_emu(sPAPRTCETable *tcet, target_ulong ioba,
+     tcet->table[index] = tce;
+ 
+     entry.target_as = &address_space_memory,
+-    entry.iova = ioba & page_mask;
++    entry.iova = (ioba - tcet->bus_offset) & page_mask;
+     entry.translated_addr = tce & page_mask;
+     entry.addr_mask = ~page_mask;
+     entry.perm = spapr_tce_iommu_access_flags(tce);
+diff --git a/hw/vfio/common.c b/hw/vfio/common.c
+index e6c0f44..c100cd5 100644
+--- a/hw/vfio/common.c
++++ b/hw/vfio/common.c
+@@ -296,14 +296,14 @@ static void vfio_iommu_map_notify(Notifier *n, void *data)
+     VFIOGuestIOMMU *giommu = container_of(n, VFIOGuestIOMMU, n);
+     VFIOContainer *container = giommu->container;
+     IOMMUTLBEntry *iotlb = data;
++    hwaddr iova = iotlb->iova + giommu->iommu_offset;
+     MemoryRegion *mr;
+     hwaddr xlat;
+     hwaddr len = iotlb->addr_mask + 1;
+     void *vaddr;
+     int ret;
+ 
+-    trace_vfio_iommu_map_notify(iotlb->iova,
+-                                iotlb->iova + iotlb->addr_mask);
++    trace_vfio_iommu_map_notify(iova, iova + iotlb->addr_mask);
+ 
+     /*
+      * The IOMMU TLB entry we have just covers translation through
+@@ -330,21 +330,21 @@ static void vfio_iommu_map_notify(Notifier *n, void *data)
+ 
+     if ((iotlb->perm & IOMMU_RW) != IOMMU_NONE) {
+         vaddr = memory_region_get_ram_ptr(mr) + xlat;
+-        ret = vfio_dma_map(container, iotlb->iova,
++        ret = vfio_dma_map(container, iova,
+                            iotlb->addr_mask + 1, vaddr,
+                            !(iotlb->perm & IOMMU_WO) || mr->readonly);
+         if (ret) {
+             error_report("vfio_dma_map(%p, 0x%"HWADDR_PRIx", "
+                          "0x%"HWADDR_PRIx", %p) = %d (%m)",
+-                         container, iotlb->iova,
++                         container, iova,
+                          iotlb->addr_mask + 1, vaddr, ret);
+         }
+     } else {
+-        ret = vfio_dma_unmap(container, iotlb->iova, iotlb->addr_mask + 1);
++        ret = vfio_dma_unmap(container, iova, iotlb->addr_mask + 1);
+         if (ret) {
+             error_report("vfio_dma_unmap(%p, 0x%"HWADDR_PRIx", "
+                          "0x%"HWADDR_PRIx") = %d (%m)",
+-                         container, iotlb->iova,
++                         container, iova,
+                          iotlb->addr_mask + 1, ret);
+         }
+     }
+@@ -442,6 +442,8 @@ static void vfio_listener_region_add(MemoryListener *listener,
+          */
+         giommu = g_malloc0(sizeof(*giommu));
+         giommu->iommu = section->mr;
++        giommu->iommu_offset = section->offset_within_address_space -
++                               section->offset_within_region;
+         giommu->container = container;
+         giommu->n.notify = vfio_iommu_map_notify;
+         QLIST_INSERT_HEAD(&container->giommu_list, giommu, giommu_next);
+diff --git a/include/hw/vfio/vfio-common.h b/include/hw/vfio/vfio-common.h
+index 376b74b..28396be 100644
+--- a/include/hw/vfio/vfio-common.h
++++ b/include/hw/vfio/vfio-common.h
+@@ -91,6 +91,7 @@ typedef struct VFIOContainer {
+ typedef struct VFIOGuestIOMMU {
+     VFIOContainer *container;
+     MemoryRegion *iommu;
++    hwaddr iommu_offset;
+     Notifier n;
+     QLIST_ENTRY(VFIOGuestIOMMU) giommu_next;
+ } VFIOGuestIOMMU;
+-- 
+1.8.3.1
+

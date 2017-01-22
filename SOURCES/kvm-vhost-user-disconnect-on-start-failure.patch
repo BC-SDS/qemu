@@ -1,0 +1,54 @@
+From 7d16a541a5c93288f692c25d21361a094f746bad Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Fri, 17 Jun 2016 13:45:39 +0200
+Subject: [PATCH 06/25] vhost-user: disconnect on start failure
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <1466171144-10377-6-git-send-email-marcandre.lureau@redhat.com>
+Patchwork-id: 70651
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 05/10] vhost-user: disconnect on start failure
+Bugzilla: 1322087
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Marc-André Lureau <marcandre.lureau@redhat.com>
+
+If the backend failed to start (for example feature negociation failed),
+do not exit, but disconnect the char device instead. Slightly more
+robust for reconnect case.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Tested-by: Yuanhan Liu <yuanhan.liu@linux.intel.com>
+Reviewed-by: Yuanhan Liu <yuanhan.liu@linux.intel.com>
+Reviewed-by: Victor Kaplansky <victork@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 0d572afd5266d1d67d132d06ea45d7246bcd6105)
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ net/vhost-user.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/net/vhost-user.c b/net/vhost-user.c
+index 4a7fd5f..41ddb4b 100644
+--- a/net/vhost-user.c
++++ b/net/vhost-user.c
+@@ -202,7 +202,8 @@ static void net_vhost_user_event(void *opaque, int event)
+         s->watch = qemu_chr_fe_add_watch(s->chr, G_IO_HUP,
+                                          net_vhost_user_watch, s);
+         if (vhost_user_start(queues, ncs) < 0) {
+-            exit(1);
++            qemu_chr_disconnect(s->chr);
++            return;
+         }
+         qmp_set_link(name, true, &err);
+         break;
+-- 
+1.8.3.1
+

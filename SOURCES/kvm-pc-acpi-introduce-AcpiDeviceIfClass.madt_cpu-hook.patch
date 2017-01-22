@@ -1,0 +1,214 @@
+From 30d8a1ce0a5f05b7f18e8723fb845767aa7065c9 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:31 +0200
+Subject: [PATCH 31/99] pc: acpi: introduce AcpiDeviceIfClass.madt_cpu hook
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-27-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71642
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 26/78] pc: acpi: introduce AcpiDeviceIfClass.madt_cpu hook
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Add madt_cpu callback to AcpiDeviceIfClass and use
+it for generating LAPIC MADT entries for CPUs.
+
+Later it will be used for generating x2APIC
+entries in case of more than 255 CPUs and also
+would be reused by ARM target when ACPI CPU hotplug
+is introduced there.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit ac35f13ba8f80533b21016ced01aa55891952251)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	stubs/Makefile.objs
+           - due to skipped not related ipmi and smbios patches
+---
+ hw/acpi/piix4.c                      |  1 +
+ hw/i386/acpi-build.c                 | 45 +++++++++++++++++++++---------------
+ hw/isa/lpc_ich9.c                    |  1 +
+ include/hw/acpi/acpi_dev_interface.h |  7 ++++++
+ include/hw/i386/pc.h                 |  5 ++++
+ stubs/Makefile.objs                  |  1 +
+ stubs/pc_madt_cpu_entry.c            |  7 ++++++
+ 7 files changed, 49 insertions(+), 18 deletions(-)
+ create mode 100644 stubs/pc_madt_cpu_entry.c
+
+diff --git a/hw/acpi/piix4.c b/hw/acpi/piix4.c
+index a4af8f0..21597c8 100644
+--- a/hw/acpi/piix4.c
++++ b/hw/acpi/piix4.c
+@@ -657,6 +657,7 @@ static void piix4_pm_class_init(ObjectClass *klass, void *data)
+     hc->unplug = piix4_device_unplug_cb;
+     adevc->ospm_status = piix4_ospm_status;
+     adevc->send_event = piix4_send_gpe;
++    adevc->madt_cpu = pc_madt_cpu_entry;
+ }
+ 
+ static const TypeInfo piix4_pm_info = {
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index f36e5b4..9b1674b 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -328,12 +328,38 @@ build_fadt(GArray *table_data, BIOSLinker *linker, AcpiPmInfo *pm,
+                  (void *)fadt, "FACP", sizeof(*fadt), 1, oem_id, oem_table_id);
+ }
+ 
++void pc_madt_cpu_entry(AcpiDeviceIf *adev, int uid,
++                       CPUArchIdList *apic_ids, GArray *entry)
++{
++    int apic_id;
++    AcpiMadtProcessorApic *apic = acpi_data_push(entry, sizeof *apic);
++
++    apic_id = apic_ids->cpus[uid].arch_id;
++    apic->type = ACPI_APIC_PROCESSOR;
++    apic->length = sizeof(*apic);
++    apic->processor_id = uid;
++    apic->local_apic_id = apic_id;
++    if (apic_ids->cpus[uid].cpu != NULL) {
++        apic->flags = cpu_to_le32(1);
++    } else {
++        /* ACPI spec says that LAPIC entry for non present
++         * CPU may be omitted from MADT or it must be marked
++         * as disabled. However omitting non present CPU from
++         * MADT breaks hotplug on linux. So possible CPUs
++         * should be put in MADT but kept disabled.
++         */
++        apic->flags = cpu_to_le32(0);
++    }
++}
++
+ static void
+ build_madt(GArray *table_data, BIOSLinker *linker, PCMachineState *pcms)
+ {
+     MachineClass *mc = MACHINE_GET_CLASS(pcms);
+     CPUArchIdList *apic_ids = mc->possible_cpu_arch_ids(MACHINE(pcms));
+     int madt_start = table_data->len;
++    AcpiDeviceIfClass *adevc = ACPI_DEVICE_IF_GET_CLASS(pcms->acpi_dev);
++    AcpiDeviceIf *adev = ACPI_DEVICE_IF(pcms->acpi_dev);
+ 
+     AcpiMultipleApicTable *madt;
+     AcpiMadtIoApic *io_apic;
+@@ -346,24 +372,7 @@ build_madt(GArray *table_data, BIOSLinker *linker, PCMachineState *pcms)
+     madt->flags = cpu_to_le32(1);
+ 
+     for (i = 0; i < apic_ids->len; i++) {
+-        AcpiMadtProcessorApic *apic = acpi_data_push(table_data, sizeof *apic);
+-        int apic_id = apic_ids->cpus[i].arch_id;
+-
+-        apic->type = ACPI_APIC_PROCESSOR;
+-        apic->length = sizeof(*apic);
+-        apic->processor_id = i;
+-        apic->local_apic_id = apic_id;
+-        if (apic_ids->cpus[i].cpu != NULL) {
+-            apic->flags = cpu_to_le32(1);
+-        } else {
+-            /* ACPI spec says that LAPIC entry for non present
+-             * CPU may be omitted from MADT or it must be marked
+-             * as disabled. However omitting non present CPU from
+-             * MADT breaks hotplug on linux. So possible CPUs
+-             * should be put in MADT but kept disabled.
+-             */
+-            apic->flags = cpu_to_le32(0);
+-        }
++        adevc->madt_cpu(adev, i, apic_ids, table_data);
+     }
+     g_free(apic_ids);
+ 
+diff --git a/hw/isa/lpc_ich9.c b/hw/isa/lpc_ich9.c
+index 86d4547..0aaaad3 100644
+--- a/hw/isa/lpc_ich9.c
++++ b/hw/isa/lpc_ich9.c
+@@ -713,6 +713,7 @@ static void ich9_lpc_class_init(ObjectClass *klass, void *data)
+     hc->unplug = ich9_pm_device_unplug_cb;
+     adevc->ospm_status = ich9_pm_ospm_status;
+     adevc->send_event = ich9_send_gpe;
++    adevc->madt_cpu = pc_madt_cpu_entry;
+ }
+ 
+ static const TypeInfo ich9_lpc_info = {
+diff --git a/include/hw/acpi/acpi_dev_interface.h b/include/hw/acpi/acpi_dev_interface.h
+index a0c4a33..da4ef7f 100644
+--- a/include/hw/acpi/acpi_dev_interface.h
++++ b/include/hw/acpi/acpi_dev_interface.h
+@@ -3,6 +3,7 @@
+ 
+ #include "qom/object.h"
+ #include "qapi-types.h"
++#include "hw/boards.h"
+ 
+ /* These values are part of guest ABI, and can not be changed */
+ typedef enum {
+@@ -37,6 +38,10 @@ void acpi_send_event(DeviceState *dev, AcpiEventStatusBits event);
+  * ospm_status: returns status of ACPI device objects, reported
+  *              via _OST method if device supports it.
+  * send_event: inject a specified event into guest
++ * madt_cpu: fills @entry with Interrupt Controller Structure
++ *           for CPU indexed by @uid in @apic_ids array,
++ *           returned structure types are:
++ *           0 - Local APIC, 9 - Local x2APIC, 0xB - GICC
+  *
+  * Interface is designed for providing unified interface
+  * to generic ACPI functionality that could be used without
+@@ -50,5 +55,7 @@ typedef struct AcpiDeviceIfClass {
+     /* <public> */
+     void (*ospm_status)(AcpiDeviceIf *adev, ACPIOSTInfoList ***list);
+     void (*send_event)(AcpiDeviceIf *adev, AcpiEventStatusBits ev);
++    void (*madt_cpu)(AcpiDeviceIf *adev, int uid,
++                     CPUArchIdList *apic_ids, GArray *entry);
+ } AcpiDeviceIfClass;
+ #endif
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index 6e1a17a..4b1189b 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -17,6 +17,7 @@
+ #include "hw/compat.h"
+ #include "hw/mem/pc-dimm.h"
+ #include "hw/mem/nvdimm.h"
++#include "hw/acpi/acpi_dev_interface.h"
+ 
+ #define HPET_INTCAP "hpet-intcap"
+ 
+@@ -345,6 +346,10 @@ void pc_system_firmware_init(MemoryRegion *rom_memory,
+ /* pvpanic.c */
+ uint16_t pvpanic_port(void);
+ 
++/* acpi-build.c */
++void pc_madt_cpu_entry(AcpiDeviceIf *adev, int uid,
++                       CPUArchIdList *apic_ids, GArray *entry);
++
+ /* e820 types */
+ #define E820_RAM        1
+ #define E820_RESERVED   2
+diff --git a/stubs/Makefile.objs b/stubs/Makefile.objs
+index 233b028..f5b8928 100644
+--- a/stubs/Makefile.objs
++++ b/stubs/Makefile.objs
+@@ -42,3 +42,4 @@ stub-obj-y += target-get-monitor-def.o
+ stub-obj-y += vhost.o
+ stub-obj-y += iohandler.o
+ stub-obj-y += ide-isa.o
++stub-obj-y += pc_madt_cpu_entry.o
+diff --git a/stubs/pc_madt_cpu_entry.c b/stubs/pc_madt_cpu_entry.c
+new file mode 100644
+index 0000000..427e772
+--- /dev/null
++++ b/stubs/pc_madt_cpu_entry.c
+@@ -0,0 +1,7 @@
++#include "qemu/osdep.h"
++#include "hw/i386/pc.h"
++
++void pc_madt_cpu_entry(AcpiDeviceIf *adev, int uid,
++                       CPUArchIdList *apic_ids, GArray *entry)
++{
++}
+-- 
+1.8.3.1
+

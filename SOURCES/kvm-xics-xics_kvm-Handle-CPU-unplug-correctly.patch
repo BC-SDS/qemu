@@ -1,0 +1,111 @@
+From dfbfcb867712a3d5250df86cc0d1e0f9c0cdc16e Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:40 +0200
+Subject: [PATCH 07/34] xics, xics_kvm: Handle CPU unplug correctly
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-8-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71127
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 07/27] xics, xics_kvm: Handle CPU unplug correctly
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+XICS is setup for each CPU during initialization. Provide a routine
+to undo the same when CPU is unplugged. While here, move ss->cs management
+into xics from xics_kvm since there is nothing KVM specific in it.
+Also ensure xics reset doesn't set irq for CPUs that are already unplugged.
+
+This allows reboot of a VM that has undergone CPU hotplug and unplug
+to work correctly.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 4a4b344c7ccdeac28c2e65e51ddbe3acfb41b883)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/intc/xics.c        | 14 ++++++++++++++
+ hw/intc/xics_kvm.c    |  8 ++++----
+ include/hw/ppc/xics.h |  1 +
+ 3 files changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/hw/intc/xics.c b/hw/intc/xics.c
+index 8659be0..cce7f3d 100644
+--- a/hw/intc/xics.c
++++ b/hw/intc/xics.c
+@@ -48,6 +48,18 @@ static int get_cpu_index_by_dt_id(int cpu_dt_id)
+     return -1;
+ }
+ 
++void xics_cpu_destroy(XICSState *icp, PowerPCCPU *cpu)
++{
++    CPUState *cs = CPU(cpu);
++    ICPState *ss = &icp->ss[cs->cpu_index];
++
++    assert(cs->cpu_index < icp->nr_servers);
++    assert(cs == ss->cs);
++
++    ss->output = NULL;
++    ss->cs = NULL;
++}
++
+ void xics_cpu_setup(XICSState *icp, PowerPCCPU *cpu)
+ {
+     CPUState *cs = CPU(cpu);
+@@ -57,6 +69,8 @@ void xics_cpu_setup(XICSState *icp, PowerPCCPU *cpu)
+ 
+     assert(cs->cpu_index < icp->nr_servers);
+ 
++    ss->cs = cs;
++
+     if (info->cpu_setup) {
+         info->cpu_setup(icp, cpu);
+     }
+diff --git a/hw/intc/xics_kvm.c b/hw/intc/xics_kvm.c
+index 9029d9e..a2daeae 100644
+--- a/hw/intc/xics_kvm.c
++++ b/hw/intc/xics_kvm.c
+@@ -113,8 +113,10 @@ static void icp_kvm_reset(DeviceState *dev)
+     icp->pending_priority = 0xff;
+     icp->mfrr = 0xff;
+ 
+-    /* Make all outputs are deasserted */
+-    qemu_set_irq(icp->output, 0);
++    /* Make all outputs as deasserted only if the CPU thread is in use */
++    if (icp->output) {
++        qemu_set_irq(icp->output, 0);
++    }
+ 
+     icp_set_kvm_state(icp, 1);
+ }
+@@ -347,8 +349,6 @@ static void xics_kvm_cpu_setup(XICSState *icp, PowerPCCPU *cpu)
+     if (icpkvm->kernel_xics_fd != -1) {
+         int ret;
+ 
+-        ss->cs = cs;
+-
+         ret = kvm_vcpu_enable_cap(cs, KVM_CAP_IRQ_XICS, 0,
+                                   icpkvm->kernel_xics_fd, kvm_arch_vcpu_id(cs));
+         if (ret < 0) {
+diff --git a/include/hw/ppc/xics.h b/include/hw/ppc/xics.h
+index f60b06a..9091054 100644
+--- a/include/hw/ppc/xics.h
++++ b/include/hw/ppc/xics.h
+@@ -167,5 +167,6 @@ int xics_alloc_block(XICSState *icp, int src, int num, bool lsi, bool align,
+ void xics_free(XICSState *icp, int irq, int num);
+ 
+ void xics_cpu_setup(XICSState *icp, PowerPCCPU *cpu);
++void xics_cpu_destroy(XICSState *icp, PowerPCCPU *cpu);
+ 
+ #endif /* __XICS_H__ */
+-- 
+1.8.3.1
+

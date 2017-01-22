@@ -1,0 +1,85 @@
+From b1f383919a98cc7509c751a22f2d6fb44d1f99d9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Fri, 17 Jun 2016 13:45:42 +0200
+Subject: [PATCH 09/25] vhost-net: save & restore vring enable state
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <1466171144-10377-9-git-send-email-marcandre.lureau@redhat.com>
+Patchwork-id: 70654
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 08/10] vhost-net: save & restore vring enable state
+Bugzilla: 1322087
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Marc-André Lureau <marcandre.lureau@redhat.com>
+
+A driver may change the vring enable state at run time but vhost-user
+backend may not be present (a contrived example is when the backend is
+disconnected and the device is reconfigured after driver rebinding)
+
+Restore the vring state when the vhost-user backend is started, so it
+can process the ring.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Tested-by: Yuanhan Liu <yuanhan.liu@linux.intel.com>
+Reviewed-by: Yuanhan Liu <yuanhan.liu@linux.intel.com>
+Reviewed-by: Victor Kaplansky <victork@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit bfc6cf31ce12649b32dae0430fcbdb456fe6faf8)
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/vhost_net.c | 11 +++++++++++
+ include/net/net.h  |  1 +
+ 2 files changed, 12 insertions(+)
+
+diff --git a/hw/net/vhost_net.c b/hw/net/vhost_net.c
+index b28881f..50f4dcd 100644
+--- a/hw/net/vhost_net.c
++++ b/hw/net/vhost_net.c
+@@ -329,6 +329,15 @@ int vhost_net_start(VirtIODevice *dev, NetClientState *ncs,
+         if (r < 0) {
+             goto err_start;
+         }
++
++        if (ncs[i].peer->vring_enable) {
++            /* restore vring enable state */
++            r = vhost_set_vring_enable(ncs[i].peer, ncs[i].peer->vring_enable);
++
++            if (r < 0) {
++                goto err_start;
++            }
++        }
+     }
+ 
+     return 0;
+@@ -422,6 +431,8 @@ int vhost_set_vring_enable(NetClientState *nc, int enable)
+     VHostNetState *net = get_vhost_net(nc);
+     const VhostOps *vhost_ops;
+ 
++    nc->vring_enable = enable;
++
+     if (!net) {
+         return 0;
+     }
+diff --git a/include/net/net.h b/include/net/net.h
+index 73e4c46..2c4b23a 100644
+--- a/include/net/net.h
++++ b/include/net/net.h
+@@ -92,6 +92,7 @@ struct NetClientState {
+     NetClientDestructor *destructor;
+     unsigned int queue_index;
+     unsigned rxfilter_notify_enabled:1;
++    int vring_enable;
+     QTAILQ_HEAD(NetFilterHead, NetFilterState) filters;
+ };
+ 
+-- 
+1.8.3.1
+

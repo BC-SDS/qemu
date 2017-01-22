@@ -1,0 +1,94 @@
+From 29a28f5e5e029f91cd2bc671e1ba2add3dfddde3 Mon Sep 17 00:00:00 2001
+From: Marcel Apfelbaum <marcel@redhat.com>
+Date: Sun, 24 Jul 2016 16:29:00 +0200
+Subject: [PATCH 20/35] q35: allow dynamic sysbus
+
+RH-Author: Marcel Apfelbaum <marcel@redhat.com>
+Message-id: <1469377743-9714-11-git-send-email-marcel@redhat.com>
+Patchwork-id: 71377
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 10/13] q35: allow dynamic sysbus
+Bugzilla: 1350196
+RH-Acked-by: Auger Eric <eric.auger@redhat.com>
+RH-Acked-by: Peter Xu <peterx@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+
+Allow adding sysbus devices with -device on Q35.
+
+At first Q35 will support only intel-iommu to be added this way,
+however the command line will support all sysbus devices.
+
+Mark with 'cannot_instantiate_with_device_add_yet' the ones
+causing immediate problems (e.g. crashes).
+
+  Conflicts:
+ 	hw/pci-host/piix.c
+        'cannot_instantiate_with_device_add_yet' was already set for RH
+
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit bf8d492405feaee2c1685b3b9d5e03228ed3e47f)
+Signed-off-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc_q35.c                    | 1 +
+ hw/pci-bridge/pci_expander_bridge.c | 2 ++
+ hw/pci-host/piix.c                  | 3 ++-
+ hw/pci-host/q35.c                   | 2 ++
+ 4 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/hw/i386/pc_q35.c b/hw/i386/pc_q35.c
+index af29b3e..881cef3 100644
+--- a/hw/i386/pc_q35.c
++++ b/hw/i386/pc_q35.c
+@@ -282,6 +282,7 @@ static void pc_q35_machine_options(MachineClass *m)
+     m->default_machine_opts = "firmware=bios-256k.bin";
+     m->default_display = "std";
+     m->no_floppy = 1;
++    m->has_dynamic_sysbus = true;
+ }
+ 
+ static void pc_q35_2_6_machine_options(MachineClass *m)
+diff --git a/hw/pci-bridge/pci_expander_bridge.c b/hw/pci-bridge/pci_expander_bridge.c
+index ba320bd..ab86121 100644
+--- a/hw/pci-bridge/pci_expander_bridge.c
++++ b/hw/pci-bridge/pci_expander_bridge.c
+@@ -149,6 +149,8 @@ static void pxb_host_class_init(ObjectClass *class, void *data)
+     PCIHostBridgeClass *hc = PCI_HOST_BRIDGE_CLASS(class);
+ 
+     dc->fw_name = "pci";
++    /* Reason: Internal part of the pxb/pxb-pcie device, not usable by itself */
++    dc->cannot_instantiate_with_device_add_yet = true;
+     sbc->explicit_ofw_unit_address = pxb_host_ofw_unit_address;
+     hc->root_bus_path = pxb_host_root_bus_path;
+ }
+diff --git a/hw/pci-host/piix.c b/hw/pci-host/piix.c
+index 43169bc..be37ff7 100644
+--- a/hw/pci-host/piix.c
++++ b/hw/pci-host/piix.c
+@@ -865,7 +865,8 @@ static void i440fx_pcihost_class_init(ObjectClass *klass, void *data)
+     dc->realize = i440fx_pcihost_realize;
+     dc->fw_name = "pci";
+     dc->props = i440fx_props;
+-    dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
++    /* Reason: needs to be wired up by pc_init1 */
++    dc->cannot_instantiate_with_device_add_yet = true;
+ }
+ 
+ static const TypeInfo i440fx_pcihost_info = {
+diff --git a/hw/pci-host/q35.c b/hw/pci-host/q35.c
+index d70bafa..da0d6fc 100644
+--- a/hw/pci-host/q35.c
++++ b/hw/pci-host/q35.c
+@@ -138,6 +138,8 @@ static void q35_host_class_init(ObjectClass *klass, void *data)
+     hc->root_bus_path = q35_host_root_bus_path;
+     dc->realize = q35_host_realize;
+     dc->props = mch_props;
++    /* Reason: needs to be wired up by pc_q35_init */
++    dc->cannot_instantiate_with_device_add_yet = true;
+     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
+     dc->fw_name = "pci";
+     dc->cannot_instantiate_with_device_add_yet = true; /* RH state preserve */
+-- 
+1.8.3.1
+

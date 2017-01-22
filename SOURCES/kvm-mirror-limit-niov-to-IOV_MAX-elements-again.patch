@@ -1,0 +1,54 @@
+From e5820b3a02d1e5c822215a7714432994535b75dd Mon Sep 17 00:00:00 2001
+From: John Snow <jsnow@redhat.com>
+Date: Fri, 8 Jul 2016 16:35:20 +0200
+Subject: [PATCH 10/11] mirror: limit niov to IOV_MAX elements, again
+
+RH-Author: John Snow <jsnow@redhat.com>
+Message-id: <1467995721-12563-3-git-send-email-jsnow@redhat.com>
+Patchwork-id: 71086
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 2/3] mirror: limit niov to IOV_MAX elements, again
+Bugzilla: 1336705
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Max Reitz <mreitz@redhat.com>
+
+During the refactor of mirror_iteration in e5b43573,
+we regressed the fix introduced in cae98cb8.
+
+This patch re-adds IOV_MAX checking to cases where we
+aren't checking alignment (and size) already.
+
+Signed-off-by: John Snow <jsnow@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Message-id: 1466625064-11280-3-git-send-email-jsnow@redhat.com
+Signed-off-by: Jeff Cody <jcody@redhat.com>
+(cherry picked from commit e4808881cbbe8ee9b587a49dd5fabd88375affd6)
+Signed-off-by: John Snow <jsnow@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ block/mirror.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/block/mirror.c b/block/mirror.c
+index c484187..d633548 100644
+--- a/block/mirror.c
++++ b/block/mirror.c
+@@ -230,11 +230,14 @@ static int mirror_do_read(MirrorBlockJob *s, int64_t sector_num,
+     int sectors_per_chunk, nb_chunks;
+     int ret;
+     MirrorOp *op;
++    int max_sectors;
+ 
+     sectors_per_chunk = s->granularity >> BDRV_SECTOR_BITS;
++    max_sectors = sectors_per_chunk * s->max_iov;
+ 
+     /* We can only handle as much as buf_size at a time. */
+     nb_sectors = MIN(s->buf_size >> BDRV_SECTOR_BITS, nb_sectors);
++    nb_sectors = MIN(max_sectors, nb_sectors);
+     assert(nb_sectors);
+     ret = nb_sectors;
+ 
+-- 
+1.8.3.1
+

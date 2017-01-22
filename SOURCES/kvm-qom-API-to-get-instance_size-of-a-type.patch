@@ -1,0 +1,71 @@
+From 7afc64d1e9ee37f51aed3d6d00ff42b60d5427b2 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:42 +0200
+Subject: [PATCH 09/34] qom: API to get instance_size of a type
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-10-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71129
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 09/27] qom: API to get instance_size of a type
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+Add an API object_type_get_size(const char *typename) that returns the
+instance_size of the give typename.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 3f97b53a682d2595747c926c00d78b9d406f1be0)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/qom/object.h | 8 +++++++-
+ qom/object.c         | 8 ++++++++
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/include/qom/object.h b/include/qom/object.h
+index 21bb5ff..310f39a 100644
+--- a/include/qom/object.h
++++ b/include/qom/object.h
+@@ -1608,5 +1608,11 @@ int object_child_foreach_recursive(Object *obj,
+  */
+ Object *container_get(Object *root, const char *path);
+ 
+-
++/**
++ * object_type_get_instance_size:
++ * @typename: Name of the Type whose instance_size is required
++ *
++ * Returns the instance_size of the given @typename.
++ */
++size_t object_type_get_instance_size(const char *typename);
+ #endif
+diff --git a/qom/object.c b/qom/object.c
+index 8e6e68d..fd7098a 100644
+--- a/qom/object.c
++++ b/qom/object.c
+@@ -202,6 +202,14 @@ static size_t type_object_get_size(TypeImpl *ti)
+     return 0;
+ }
+ 
++size_t object_type_get_instance_size(const char *typename)
++{
++    TypeImpl *type = type_get_by_name(typename);
++
++    g_assert(type != NULL);
++    return type_object_get_size(type);
++}
++
+ static bool type_is_ancestor(TypeImpl *type, TypeImpl *target_type)
+ {
+     assert(target_type);
+-- 
+1.8.3.1
+

@@ -1,0 +1,68 @@
+From 1e0038f318a82752f9766bee0704adc252238ad1 Mon Sep 17 00:00:00 2001
+From: Xiao Wang <jasowang@redhat.com>
+Date: Thu, 21 Jul 2016 06:40:33 +0200
+Subject: [PATCH 06/35] vmxnet3: Use generic function for DSN capability
+ definition
+
+RH-Author: Xiao Wang <jasowang@redhat.com>
+Message-id: <1469083246-12219-7-git-send-email-jasowang@redhat.com>
+Patchwork-id: 71253
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 06/19] vmxnet3: Use generic function for DSN capability definition
+Bugzilla: 1343092
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Dmitry Fleytman <dfleytma@redhat.com>
+
+From: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+
+Signed-off-by: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+Signed-off-by: Leonid Bloch <leonid.bloch@ravellosystems.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+(cherry picked from commit a4b387e623f4e17bd4784cf76e3f8c15800365dc)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/vmxnet3.c | 12 +++++-------
+ 1 file changed, 5 insertions(+), 7 deletions(-)
+
+diff --git a/hw/net/vmxnet3.c b/hw/net/vmxnet3.c
+index 093a71e..0a4db4d 100644
+--- a/hw/net/vmxnet3.c
++++ b/hw/net/vmxnet3.c
+@@ -2255,9 +2255,9 @@ static const MemoryRegionOps b1_ops = {
+     },
+ };
+ 
+-static uint8_t *vmxnet3_device_serial_num(VMXNET3State *s)
++static uint64_t vmxnet3_device_serial_num(VMXNET3State *s)
+ {
+-    static uint64_t dsn_payload;
++    uint64_t dsn_payload;
+     uint8_t *dsnp = (uint8_t *)&dsn_payload;
+ 
+     dsnp[0] = 0xfe;
+@@ -2268,7 +2268,7 @@ static uint8_t *vmxnet3_device_serial_num(VMXNET3State *s)
+     dsnp[5] = s->conf.macaddr.a[1];
+     dsnp[6] = s->conf.macaddr.a[2];
+     dsnp[7] = 0xff;
+-    return dsnp;
++    return dsn_payload;
+ }
+ 
+ static void vmxnet3_pci_realize(PCIDevice *pci_dev, Error **errp)
+@@ -2313,10 +2313,8 @@ static void vmxnet3_pci_realize(PCIDevice *pci_dev, Error **errp)
+             pcie_endpoint_cap_init(pci_dev, VMXNET3_EXP_EP_OFFSET);
+         }
+ 
+-        pcie_add_capability(pci_dev, PCI_EXT_CAP_ID_DSN, 0x1,
+-                            VMXNET3_DSN_OFFSET, PCI_EXT_CAP_DSN_SIZEOF);
+-        memcpy(pci_dev->config + VMXNET3_DSN_OFFSET + 4,
+-               vmxnet3_device_serial_num(s), sizeof(uint64_t));
++        pcie_dev_ser_num_init(pci_dev, VMXNET3_DSN_OFFSET,
++                              vmxnet3_device_serial_num(s));
+     }
+ 
+     register_savevm(dev, "vmxnet3-msix", -1, 1,
+-- 
+1.8.3.1
+

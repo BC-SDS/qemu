@@ -1,0 +1,298 @@
+From cb0ddda2b2b6a7e929a7de43efa2c3e3bab8ab75 Mon Sep 17 00:00:00 2001
+From: Xiao Wang <jasowang@redhat.com>
+Date: Fri, 8 Jul 2016 09:34:11 +0200
+Subject: [PATCH 09/16] tap: vhost busy polling support
+
+RH-Author: Xiao Wang <jasowang@redhat.com>
+Message-id: <1467970451-27245-1-git-send-email-jasowang@redhat.com>
+Patchwork-id: 71074
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH] tap: vhost busy polling support
+Bugzilla: 1345715
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+
+Bugzilla: 1353791
+Test status: Tested by myself
+Brew Build: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11323602
+
+This patch add the capability of basic vhost net busy polling which is
+supported by recent kernel. User could configure the maximum number of
+us that could be spent on busy polling through a new property of tap
+"poll-us".
+
+Cc: Greg Kurz <groug@kaod.org>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+(cherry picked from commit 69e87b32680a41d9761191443587c595b6f5fc3f)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/vhost_net.c                |  2 +-
+ hw/scsi/vhost-scsi.c              |  2 +-
+ hw/virtio/vhost-backend.c         |  8 ++++++++
+ hw/virtio/vhost.c                 | 40 ++++++++++++++++++++++++++++++++++++++-
+ include/hw/virtio/vhost-backend.h |  3 +++
+ include/hw/virtio/vhost.h         |  3 ++-
+ include/net/vhost_net.h           |  1 +
+ net/tap.c                         |  7 ++++++-
+ net/vhost-user.c                  |  1 +
+ qapi-schema.json                  |  6 +++++-
+ qemu-options.hx                   |  3 +++
+ 11 files changed, 70 insertions(+), 6 deletions(-)
+
+diff --git a/hw/net/vhost_net.c b/hw/net/vhost_net.c
+index 50f4dcd..11fabc0 100644
+--- a/hw/net/vhost_net.c
++++ b/hw/net/vhost_net.c
+@@ -172,7 +172,7 @@ struct vhost_net *vhost_net_init(VhostNetOptions *options)
+     }
+ 
+     r = vhost_dev_init(&net->dev, options->opaque,
+-                       options->backend_type);
++                       options->backend_type, options->busyloop_timeout);
+     if (r < 0) {
+         goto fail;
+     }
+diff --git a/hw/scsi/vhost-scsi.c b/hw/scsi/vhost-scsi.c
+index 9261d51..2a00f2f 100644
+--- a/hw/scsi/vhost-scsi.c
++++ b/hw/scsi/vhost-scsi.c
+@@ -248,7 +248,7 @@ static void vhost_scsi_realize(DeviceState *dev, Error **errp)
+     s->dev.backend_features = 0;
+ 
+     ret = vhost_dev_init(&s->dev, (void *)(uintptr_t)vhostfd,
+-                         VHOST_BACKEND_TYPE_KERNEL);
++                         VHOST_BACKEND_TYPE_KERNEL, 0);
+     if (ret < 0) {
+         error_setg(errp, "vhost-scsi: vhost initialization failed: %s",
+                    strerror(-ret));
+diff --git a/hw/virtio/vhost-backend.c b/hw/virtio/vhost-backend.c
+index b358902..d62372e 100644
+--- a/hw/virtio/vhost-backend.c
++++ b/hw/virtio/vhost-backend.c
+@@ -138,6 +138,12 @@ static int vhost_kernel_set_vring_call(struct vhost_dev *dev,
+     return vhost_kernel_call(dev, VHOST_SET_VRING_CALL, file);
+ }
+ 
++static int vhost_kernel_set_vring_busyloop_timeout(struct vhost_dev *dev,
++                                                   struct vhost_vring_state *s)
++{
++    return vhost_kernel_call(dev, VHOST_SET_VRING_BUSYLOOP_TIMEOUT, s);
++}
++
+ static int vhost_kernel_set_features(struct vhost_dev *dev,
+                                      uint64_t features)
+ {
+@@ -185,6 +191,8 @@ static const VhostOps kernel_ops = {
+         .vhost_get_vring_base = vhost_kernel_get_vring_base,
+         .vhost_set_vring_kick = vhost_kernel_set_vring_kick,
+         .vhost_set_vring_call = vhost_kernel_set_vring_call,
++        .vhost_set_vring_busyloop_timeout =
++                                vhost_kernel_set_vring_busyloop_timeout,
+         .vhost_set_features = vhost_kernel_set_features,
+         .vhost_get_features = vhost_kernel_get_features,
+         .vhost_set_owner = vhost_kernel_set_owner,
+diff --git a/hw/virtio/vhost.c b/hw/virtio/vhost.c
+index 4400718..ebf8b08 100644
+--- a/hw/virtio/vhost.c
++++ b/hw/virtio/vhost.c
+@@ -964,6 +964,28 @@ static void vhost_eventfd_del(MemoryListener *listener,
+ {
+ }
+ 
++static int vhost_virtqueue_set_busyloop_timeout(struct vhost_dev *dev,
++                                                int n, uint32_t timeout)
++{
++    int vhost_vq_index = dev->vhost_ops->vhost_get_vq_index(dev, n);
++    struct vhost_vring_state state = {
++        .index = vhost_vq_index,
++        .num = timeout,
++    };
++    int r;
++
++    if (!dev->vhost_ops->vhost_set_vring_busyloop_timeout) {
++        return -EINVAL;
++    }
++
++    r = dev->vhost_ops->vhost_set_vring_busyloop_timeout(dev, &state);
++    if (r) {
++        return r;
++    }
++
++    return 0;
++}
++
+ static int vhost_virtqueue_init(struct vhost_dev *dev,
+                                 struct vhost_virtqueue *vq, int n)
+ {
+@@ -994,7 +1016,7 @@ static void vhost_virtqueue_cleanup(struct vhost_virtqueue *vq)
+ }
+ 
+ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
+-                   VhostBackendType backend_type)
++                   VhostBackendType backend_type, uint32_t busyloop_timeout)
+ {
+     uint64_t features;
+     int i, r;
+@@ -1035,6 +1057,17 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
+             goto fail_vq;
+         }
+     }
++
++    if (busyloop_timeout) {
++        for (i = 0; i < hdev->nvqs; ++i) {
++            r = vhost_virtqueue_set_busyloop_timeout(hdev, hdev->vq_index + i,
++                                                     busyloop_timeout);
++            if (r < 0) {
++                goto fail_busyloop;
++            }
++        }
++    }
++
+     hdev->features = features;
+ 
+     hdev->memory_listener = (MemoryListener) {
+@@ -1077,6 +1110,11 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
+     hdev->memory_changed = false;
+     memory_listener_register(&hdev->memory_listener, &address_space_memory);
+     return 0;
++fail_busyloop:
++    while (--i >= 0) {
++        vhost_virtqueue_set_busyloop_timeout(hdev, hdev->vq_index + i, 0);
++    }
++    i = hdev->nvqs;
+ fail_vq:
+     while (--i >= 0) {
+         vhost_virtqueue_cleanup(hdev->vqs + i);
+diff --git a/include/hw/virtio/vhost-backend.h b/include/hw/virtio/vhost-backend.h
+index 95fcc96..84e1cb7 100644
+--- a/include/hw/virtio/vhost-backend.h
++++ b/include/hw/virtio/vhost-backend.h
+@@ -57,6 +57,8 @@ typedef int (*vhost_set_vring_kick_op)(struct vhost_dev *dev,
+                                        struct vhost_vring_file *file);
+ typedef int (*vhost_set_vring_call_op)(struct vhost_dev *dev,
+                                        struct vhost_vring_file *file);
++typedef int (*vhost_set_vring_busyloop_timeout_op)(struct vhost_dev *dev,
++                                                   struct vhost_vring_state *r);
+ typedef int (*vhost_set_features_op)(struct vhost_dev *dev,
+                                      uint64_t features);
+ typedef int (*vhost_get_features_op)(struct vhost_dev *dev,
+@@ -91,6 +93,7 @@ typedef struct VhostOps {
+     vhost_get_vring_base_op vhost_get_vring_base;
+     vhost_set_vring_kick_op vhost_set_vring_kick;
+     vhost_set_vring_call_op vhost_set_vring_call;
++    vhost_set_vring_busyloop_timeout_op vhost_set_vring_busyloop_timeout;
+     vhost_set_features_op vhost_set_features;
+     vhost_get_features_op vhost_get_features;
+     vhost_set_owner_op vhost_set_owner;
+diff --git a/include/hw/virtio/vhost.h b/include/hw/virtio/vhost.h
+index b60d758..2106ed8 100644
+--- a/include/hw/virtio/vhost.h
++++ b/include/hw/virtio/vhost.h
+@@ -64,7 +64,8 @@ struct vhost_dev {
+ };
+ 
+ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
+-                   VhostBackendType backend_type);
++                   VhostBackendType backend_type,
++                   uint32_t busyloop_timeout);
+ void vhost_dev_cleanup(struct vhost_dev *hdev);
+ int vhost_dev_start(struct vhost_dev *hdev, VirtIODevice *vdev);
+ void vhost_dev_stop(struct vhost_dev *hdev, VirtIODevice *vdev);
+diff --git a/include/net/vhost_net.h b/include/net/vhost_net.h
+index 0bd4877..5a08eff 100644
+--- a/include/net/vhost_net.h
++++ b/include/net/vhost_net.h
+@@ -10,6 +10,7 @@ typedef struct vhost_net VHostNetState;
+ typedef struct VhostNetOptions {
+     VhostBackendType backend_type;
+     NetClientState *net_backend;
++    uint32_t busyloop_timeout;
+     void *opaque;
+ } VhostNetOptions;
+ 
+diff --git a/net/tap.c b/net/tap.c
+index 6d3969f..b3957d8 100644
+--- a/net/tap.c
++++ b/net/tap.c
+@@ -676,6 +676,11 @@ static void net_init_tap_one(const NetdevTapOptions *tap, NetClientState *peer,
+ 
+         options.backend_type = VHOST_BACKEND_TYPE_KERNEL;
+         options.net_backend = &s->nc;
++        if (tap->has_poll_us) {
++            options.busyloop_timeout = tap->poll_us;
++        } else {
++            options.busyloop_timeout = 0;
++        }
+ 
+         if (vhostfdname) {
+             vhostfd = monitor_fd_param(cur_mon, vhostfdname, &err);
+@@ -700,7 +705,7 @@ static void net_init_tap_one(const NetdevTapOptions *tap, NetClientState *peer,
+             return;
+         }
+     } else if (vhostfdname) {
+-        error_setg(errp, "vhostfd= is not valid without vhost");
++        error_setg(errp, "vhostfd(s)= is not valid without vhost");
+     }
+ }
+ 
+diff --git a/net/vhost-user.c b/net/vhost-user.c
+index 9402b9c..eb9cbc9 100644
+--- a/net/vhost-user.c
++++ b/net/vhost-user.c
+@@ -91,6 +91,7 @@ static int vhost_user_start(int queues, NetClientState *ncs[])
+ 
+         options.net_backend = ncs[i];
+         options.opaque      = s->chr;
++        options.busyloop_timeout = 0;
+         s->vhost_net = vhost_net_init(&options);
+         if (!s->vhost_net) {
+             error_report("failed to init vhost_net for queue %d", i);
+diff --git a/qapi-schema.json b/qapi-schema.json
+index e42d19e..da6b050 100644
+--- a/qapi-schema.json
++++ b/qapi-schema.json
+@@ -2535,6 +2535,9 @@
+ #
+ # @queues: #optional number of queues to be created for multiqueue capable tap
+ #
++# @poll-us: #optional maximum number of microseconds that could
++# be spent on busy polling for tap (since 2.7)
++#
+ # Since 1.2
+ ##
+ { 'struct': 'NetdevTapOptions',
+@@ -2551,7 +2554,8 @@
+     '*vhostfd':    'str',
+     '*vhostfds':   'str',
+     '*vhostforce': 'bool',
+-    '*queues':     'uint32'} }
++    '*queues':     'uint32',
++    '*poll-us':    'uint32'} }
+ 
+ ##
+ # @NetdevSocketOptions
+diff --git a/qemu-options.hx b/qemu-options.hx
+index 0f90bd8..4f8a3cf 100644
+--- a/qemu-options.hx
++++ b/qemu-options.hx
+@@ -1564,6 +1564,7 @@ DEF("netdev", HAS_ARG, QEMU_OPTION_netdev,
+     "-netdev tap,id=str[,fd=h][,fds=x:y:...:z][,ifname=name][,script=file][,downscript=dfile]\n"
+     "         [,helper=helper][,sndbuf=nbytes][,vnet_hdr=on|off][,vhost=on|off]\n"
+     "         [,vhostfd=h][,vhostfds=x:y:...:z][,vhostforce=on|off][,queues=n]\n"
++    "         [,poll-us=n]\n"
+     "                configure a host TAP network backend with ID 'str'\n"
+     "                use network scripts 'file' (default=" DEFAULT_NETWORK_SCRIPT ")\n"
+     "                to configure it and 'dfile' (default=" DEFAULT_NETWORK_DOWN_SCRIPT ")\n"
+@@ -1583,6 +1584,8 @@ DEF("netdev", HAS_ARG, QEMU_OPTION_netdev,
+     "                use 'vhostfd=h' to connect to an already opened vhost net device\n"
+     "                use 'vhostfds=x:y:...:z to connect to multiple already opened vhost net devices\n"
+     "                use 'queues=n' to specify the number of queues to be created for multiqueue TAP\n"
++    "                use 'poll-us=n' to speciy the maximum number of microseconds that could be\n"
++    "                spent on busy polling for vhost net\n"
+     "-netdev bridge,id=str[,br=bridge][,helper=helper]\n"
+     "                configure a host TAP network backend with ID 'str' that is\n"
+     "                connected to a bridge (default=" DEFAULT_BRIDGE_INTERFACE ")\n"
+-- 
+1.8.3.1
+

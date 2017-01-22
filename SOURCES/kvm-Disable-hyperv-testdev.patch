@@ -1,0 +1,35 @@
+From 30e3beead9980539654b7dd578fa96859f585401 Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Wed, 22 Jun 2016 14:03:18 +0200
+Subject: [PATCH 05/16] Disable hyperv-testdev
+
+RH-Author: Miroslav Rezanina <mrezanin@redhat.com>
+Message-id: <dc1e60d112ad148c124f4a674f1eb117a6d4c0d9.1466603432.git.mrezanin@redhat.com>
+Patchwork-id: 70749
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCHv3 05/10] Disable hyperv-testdev
+Bugzilla: 1333282
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+From: Miroslav Rezanina <mrezanin@redhat.com>
+
+hyperv-testdev is device used for testing hyperv functionality. It's not
+intended for production use so we disable it.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ default-configs/x86_64-softmmu.mak | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/default-configs/x86_64-softmmu.mak b/default-configs/x86_64-softmmu.mak
+index acf9cd7..b06f8b5 100644
+--- a/default-configs/x86_64-softmmu.mak
++++ b/default-configs/x86_64-softmmu.mak
+@@ -49,4 +49,3 @@ CONFIG_XIO3130=y
+ CONFIG_IOH3420=y
+ CONFIG_I82801B11=y
+ CONFIG_SMBIOS=y
+-CONFIG_HYPERV_TESTDEV=$(CONFIG_KVM)
+-- 
+1.8.3.1
+

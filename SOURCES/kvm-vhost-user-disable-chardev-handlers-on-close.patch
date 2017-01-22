@@ -1,0 +1,52 @@
+From e6404e346d29db22e8ff904bcb82cab92e16ac4c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Mon, 4 Jul 2016 20:57:28 +0200
+Subject: [PATCH 08/16] vhost-user: disable chardev handlers on close
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160704205732.27022-2-marcandre.lureau@redhat.com>
+Patchwork-id: 70938
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 1/5] vhost-user: disable chardev handlers on close
+Bugzilla: 1347077
+RH-Acked-by: Xiao Wang <jasowang@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: Paolo Bonzini <pbonzini@redhat.com>
+
+This otherwise causes a use-after-free if network backend cleanup
+is performed before character device cleanup.
+
+Cc: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+
+(cherry picked from commit 25f0d2aa5e3d21caa1bc622b21368cc2e383f02c)
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ net/vhost-user.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/net/vhost-user.c b/net/vhost-user.c
+index d72ce9b..9402b9c 100644
+--- a/net/vhost-user.c
++++ b/net/vhost-user.c
+@@ -151,6 +151,11 @@ static void vhost_user_cleanup(NetClientState *nc)
+         vhost_net_cleanup(s->vhost_net);
+         s->vhost_net = NULL;
+     }
++    if (s->chr) {
++        qemu_chr_add_handlers(s->chr, NULL, NULL, NULL, NULL);
++        qemu_chr_fe_release(s->chr);
++        s->chr = NULL;
++    }
+ 
+     qemu_purge_queued_packets(nc);
+ }
+-- 
+1.8.3.1
+

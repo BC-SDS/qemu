@@ -1,0 +1,72 @@
+From ee7d722b85b34567dae4b9dc19fff01da70c1e84 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:22 +0200
+Subject: [PATCH 02/30] vhost: don't assume opaque is a fd, use backend cleanup
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-3-marcandre.lureau@redhat.com>
+Patchwork-id: 71918
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 02/28] vhost: don't assume opaque is a fd, use backend cleanup
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+vhost-dev opaque isn't necessarily an fd, it can be a chardev when using
+vhost-user. Goto fail, so vhost_backend_cleanup() is called to handle
+backend cleanup appropriately.
+
+vhost_set_backend_type() should never fail, use an assert().
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 7cb8a9b9f235098096c493cc1a1487cd8dbd6820)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/vhost.c | 16 +++++++---------
+ 1 file changed, 7 insertions(+), 9 deletions(-)
+
+diff --git a/hw/virtio/vhost.c b/hw/virtio/vhost.c
+index ebf8b08..f9c8249 100644
+--- a/hw/virtio/vhost.c
++++ b/hw/virtio/vhost.c
+@@ -1023,21 +1023,19 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
+ 
+     hdev->migration_blocker = NULL;
+ 
+-    if (vhost_set_backend_type(hdev, backend_type) < 0) {
+-        close((uintptr_t)opaque);
+-        return -1;
+-    }
++    r = vhost_set_backend_type(hdev, backend_type);
++    assert(r >= 0);
+ 
+-    if (hdev->vhost_ops->vhost_backend_init(hdev, opaque) < 0) {
+-        close((uintptr_t)opaque);
+-        return -errno;
++    r = hdev->vhost_ops->vhost_backend_init(hdev, opaque);
++    if (r < 0) {
++        goto fail;
+     }
+ 
+     if (used_memslots > hdev->vhost_ops->vhost_backend_memslots_limit(hdev)) {
+         fprintf(stderr, "vhost backend memory slots limit is less"
+                 " than current number of present memory slots\n");
+-        close((uintptr_t)opaque);
+-        return -1;
++        r = -1;
++        goto fail;
+     }
+     QLIST_INSERT_HEAD(&vhost_devices, hdev, entry);
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,109 @@
+From 0e8ab1be52e3cf75eeaadc9e66807d2b5b8ff8a5 Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Tue, 2 Aug 2016 14:31:18 +0200
+Subject: [PATCH 34/35] target-i386: Enable host-phys-bits on RHEL
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1469793688-10313-8-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 71519
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH v5 7/7] target-i386: Enable host-phys-bits on RHEL
+Bugzilla: 1339196
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+RH-Acked-by: Andrea Arcangeli <aarcange@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+Enable the 'host-phys-bits' property on RHEL machine types,
+now this is done we can get rid of Andrea's old host reading code.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+---
+ hw/i386/pc_piix.c    |  1 +
+ hw/i386/pc_q35.c     |  1 +
+ include/hw/i386/pc.h | 13 +++++++++++++
+ target-i386/cpu.c    | 13 -------------
+ 4 files changed, 15 insertions(+), 13 deletions(-)
+
+diff --git a/hw/i386/pc_piix.c b/hw/i386/pc_piix.c
+index 5ac8e9d..ca3edaa 100644
+--- a/hw/i386/pc_piix.c
++++ b/hw/i386/pc_piix.c
+@@ -1099,6 +1099,7 @@ static void pc_machine_rhel730_options(MachineClass *m)
+     m->is_default = 1;
+     m->default_machine_opts = "firmware=bios-256k.bin";
+     m->default_display = "std";
++    SET_MACHINE_COMPAT(m, PC_RHEL_COMPAT);
+ }
+ 
+ DEFINE_PC_MACHINE(rhel730, "pc-i440fx-rhel7.3.0", pc_init_rhel730,
+diff --git a/hw/i386/pc_q35.c b/hw/i386/pc_q35.c
+index cf94f2b..80c2a84 100644
+--- a/hw/i386/pc_q35.c
++++ b/hw/i386/pc_q35.c
+@@ -340,6 +340,7 @@ static void pc_q35_machine_rhel730_options(MachineClass *m)
+     m->default_display = "std";
+     m->no_floppy = 1;
+     m->has_dynamic_sysbus = true;
++    SET_MACHINE_COMPAT(m, PC_RHEL_COMPAT);
+ }
+ 
+ DEFINE_PC_MACHINE(q35_rhel730, "pc-q35-rhel7.3.0", pc_q35_init_rhel730,
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index dac0980..6e1a17a 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -862,7 +862,20 @@ bool e820_get_entry(int, uint32_t, uint64_t *, uint64_t *);
+ extern void igd_passthrough_isa_bridge_create(PCIBus *bus, uint16_t gpu_dev_id);
+ 
+ /* See include/hw/compat.h for shared compatibility lists */
++
++/* This macro is for changes to properties that are RHEL specific,
++ * different to the current upstream and to be applied to the latest
++ * machine type.
++ */
++#define PC_RHEL_COMPAT \
++        { /* PC_RHEL_COMPAT */ \
++            .driver = TYPE_X86_CPU,\
++            .property = "host-phys-bits",\
++            .value = "on",\
++        },
++
+ #define PC_RHEL7_2_COMPAT \
++        PC_RHEL_COMPAT \
+         HW_COMPAT_RHEL7_2 \
+ 	{\
+ 		.driver = "phenom" "-" TYPE_X86_CPU,\
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 65b8d56..e1ee1ff 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -2663,24 +2663,11 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
+         break;
+     case 0x80000008:
+         /* virtual & phys address size in low 2 bytes. */
+-#if 1
+-        /* ! This block gets removed later in the patch series ! */
+-        if (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM) {
+-            /* 64 bit processor */
+-            *eax = 0x00003028; /* 48 bits virtual, 40 bits physical */
+-            if (kvm_enabled()) {
+-                uint32_t _eax;
+-                host_cpuid(0x80000000, 0, &_eax, NULL, NULL, NULL);
+-                if (_eax >= 0x80000008)
+-                    host_cpuid(0x80000008, 0, eax, NULL, NULL, NULL);
+-            }
+-#else
+         if (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM) {
+             /* 64 bit processor, 48 bits virtual, configurable
+              * physical bits.
+              */
+             *eax = 0x00003000 + cpu->phys_bits;
+-#endif
+         } else {
+             *eax = cpu->phys_bits;
+         }
+-- 
+1.8.3.1
+

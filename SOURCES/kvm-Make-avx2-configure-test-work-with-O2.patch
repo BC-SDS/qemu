@@ -1,0 +1,44 @@
+From b6e5a0c2e8ac2d6fcbdb07df169f7970fdd394a8 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Fri, 17 Jun 2016 12:17:26 +0200
+Subject: [PATCH 11/13] Make avx2 configure test work with -O2
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1466165847-8766-2-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70644
+O-Subject: [RHEL-7.3 qemu-kvm-rehv PATCH 1/2] Make avx2 configure test work with -O2
+Bugzilla: 1323294
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Amit Shah <amit.shah@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+When configured with --extra-cflags=-O2 gcc optimised out the test
+and the readelf failed the check leaving avx2 disabled.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-Id: <1465557378-24105-2-git-send-email-dgilbert@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit fc6e1de9d885377e1e68e50e25ed5425540b9b81)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ configure | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/configure b/configure
+index 968d176..1b00ead 100755
+--- a/configure
++++ b/configure
+@@ -1791,7 +1791,7 @@ fi
+ cat > $TMPC << EOF
+ static void bar(void) {}
+ static void *bar_ifunc(void) {return (void*) bar;}
+-static void foo(void) __attribute__((ifunc("bar_ifunc")));
++void foo(void) __attribute__((ifunc("bar_ifunc")));
+ int main(void) { foo(); return 0; }
+ EOF
+ if compile_prog "-mavx2" "" ; then
+-- 
+1.8.3.1
+

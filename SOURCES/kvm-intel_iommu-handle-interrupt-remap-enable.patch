@@ -1,0 +1,67 @@
+From fe44935e35cbf077b3c5ecb114fb90150f4efe23 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:31 +0200
+Subject: [PATCH 13/37] intel_iommu: handle interrupt remap enable
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-13-git-send-email-peterx@redhat.com>
+Patchwork-id: 71997
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 12/34] intel_iommu: handle interrupt remap enable
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Handle writting to IRE bit in global command register.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 80de52ba87d44bf63157900b8dd5ccd5bd795fd4)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/intel_iommu.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index bf74533..6a6cb3b 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -1183,6 +1183,22 @@ static void vtd_handle_gcmd_te(IntelIOMMUState *s, bool en)
+     }
+ }
+ 
++/* Handle Interrupt Remap Enable/Disable */
++static void vtd_handle_gcmd_ire(IntelIOMMUState *s, bool en)
++{
++    VTD_DPRINTF(CSR, "Interrupt Remap Enable %s", (en ? "on" : "off"));
++
++    if (en) {
++        s->intr_enabled = true;
++        /* Ok - report back to driver */
++        vtd_set_clear_mask_long(s, DMAR_GSTS_REG, 0, VTD_GSTS_IRES);
++    } else {
++        s->intr_enabled = false;
++        /* Ok - report back to driver */
++        vtd_set_clear_mask_long(s, DMAR_GSTS_REG, VTD_GSTS_IRES, 0);
++    }
++}
++
+ /* Handle write to Global Command Register */
+ static void vtd_handle_gcmd_write(IntelIOMMUState *s)
+ {
+@@ -1207,6 +1223,10 @@ static void vtd_handle_gcmd_write(IntelIOMMUState *s)
+         /* Set/update the interrupt remapping root-table pointer */
+         vtd_handle_gcmd_sirtp(s);
+     }
++    if (changed & VTD_GCMD_IRE) {
++        /* Interrupt remap enable/disable */
++        vtd_handle_gcmd_ire(s, val & VTD_GCMD_IRE);
++    }
+ }
+ 
+ /* Handle write to Context Command Register */
+-- 
+1.8.3.1
+

@@ -1,0 +1,65 @@
+From 352eed754e3a368702e2276b54c6fed2dbd15af9 Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Wed, 10 Aug 2016 08:14:52 +0200
+Subject: [PATCH 03/17] ppc: Introduce a function to look up CPU alias strings
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1470816895-17800-3-git-send-email-thuth@redhat.com>
+Patchwork-id: 71894
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/5] ppc: Introduce a function to look up CPU alias strings
+Bugzilla: 1363812
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+We will need this function to look up the aliases in the
+spapr-cpu-core code, too.
+
+Signed-off-by: Thomas Huth <thuth@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit caf6316de90301e07444de95bd540c93ce9d333a)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-ppc/cpu.h            |  1 +
+ target-ppc/translate_init.c | 13 +++++++++++++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/target-ppc/cpu.h b/target-ppc/cpu.h
+index 9442081..4bcc8be 100644
+--- a/target-ppc/cpu.h
++++ b/target-ppc/cpu.h
+@@ -1220,6 +1220,7 @@ do {                                            \
+ /*****************************************************************************/
+ PowerPCCPU *cpu_ppc_init(const char *cpu_model);
+ void ppc_translate_init(void);
++const char *ppc_cpu_lookup_alias(const char *alias);
+ void gen_update_current_nip(void *opaque);
+ /* you can call this signal handler from your SIGBUS and SIGSEGV
+    signal handlers to inform the virtual CPU of exceptions. non zero
+diff --git a/target-ppc/translate_init.c b/target-ppc/translate_init.c
+index 845b2ed..5db2676 100644
+--- a/target-ppc/translate_init.c
++++ b/target-ppc/translate_init.c
+@@ -9699,6 +9699,19 @@ static ObjectClass *ppc_cpu_class_by_name(const char *name)
+     return NULL;
+ }
+ 
++const char *ppc_cpu_lookup_alias(const char *alias)
++{
++    int ai;
++
++    for (ai = 0; ppc_cpu_aliases[ai].alias != NULL; ai++) {
++        if (strcmp(ppc_cpu_aliases[ai].alias, alias) == 0) {
++            return ppc_cpu_aliases[ai].model;
++        }
++    }
++
++    return NULL;
++}
++
+ PowerPCCPU *cpu_ppc_init(const char *cpu_model)
+ {
+     return POWERPC_CPU(cpu_generic_init(TYPE_POWERPC_CPU, cpu_model));
+-- 
+1.8.3.1
+

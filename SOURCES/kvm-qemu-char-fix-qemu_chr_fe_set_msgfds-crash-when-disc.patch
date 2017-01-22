@@ -1,0 +1,62 @@
+From 477316c3f0f6e92e85c2e69e0b3474d6c8d35d26 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:32 +0200
+Subject: [PATCH 12/30] qemu-char: fix qemu_chr_fe_set_msgfds() crash when
+ disconnected
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-13-marcandre.lureau@redhat.com>
+Patchwork-id: 71928
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 12/28] qemu-char: fix qemu_chr_fe_set_msgfds() crash when disconnected
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Calling qemu_chr_fe_set_msgfds() on unconnected socket leads to crash
+since s->ioc is NULL in this case. Return an error earlier instead.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 5c7eaabf65ba936f718ef4dfcfc551ffc9d4f35c)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ qemu-char.c | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/qemu-char.c b/qemu-char.c
+index 0cbb6a1ea..d3b385b 100644
+--- a/qemu-char.c
++++ b/qemu-char.c
+@@ -2762,14 +2762,16 @@ static int tcp_set_msgfds(CharDriverState *chr, int *fds, int num)
+ {
+     TCPCharDriver *s = chr->opaque;
+ 
+-    if (!qio_channel_has_feature(s->ioc,
+-                                 QIO_CHANNEL_FEATURE_FD_PASS)) {
+-        return -1;
+-    }
+     /* clear old pending fd array */
+     g_free(s->write_msgfds);
+     s->write_msgfds = NULL;
+ 
++    if (!s->connected ||
++        !qio_channel_has_feature(s->ioc,
++                                 QIO_CHANNEL_FEATURE_FD_PASS)) {
++        return -1;
++    }
++
+     if (num) {
+         s->write_msgfds = g_new(int, num);
+         memcpy(s->write_msgfds, fds, num * sizeof(int));
+-- 
+1.8.3.1
+

@@ -1,0 +1,45 @@
+From 8c5f8a5b21486e89f41844b66946af7a96b7d594 Mon Sep 17 00:00:00 2001
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Mon, 1 Aug 2016 19:07:41 +0200
+Subject: [PATCH 35/35] pc: Fix rhel6.3.0 compat_props setting
+
+RH-Author: Eduardo Habkost <ehabkost@redhat.com>
+Message-id: <1470078461-3838-1-git-send-email-ehabkost@redhat.com>
+Patchwork-id: 71709
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH] pc: Fix rhel6.3.0 compat_props setting
+Bugzilla: 1362264
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1362264
+Brew build: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11475176
+Upstream status: not applicable
+
+In commit caaa2b731cf73681fe49ec96c2b817b22335679c (machine-type
+code rebase), the rhel6.3.0 machine-type code was changed to use
+the wrong PC_RHEL6_*_COMPAT macro (PC_RHEL6_6_COMPAT instead of
+PC_RHEL6_3_COMPAT). Fix that.
+
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc_piix.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hw/i386/pc_piix.c b/hw/i386/pc_piix.c
+index ca3edaa..9101c1a 100644
+--- a/hw/i386/pc_piix.c
++++ b/hw/i386/pc_piix.c
+@@ -1681,7 +1681,7 @@ static void pc_machine_rhel630_options(MachineClass *m)
+     pc_machine_rhel640_options(m);
+     m->family = "pc_piix_Z";
+     m->desc = "RHEL 6.3.0 PC";
+-    SET_MACHINE_COMPAT(m, PC_RHEL6_6_COMPAT);
++    SET_MACHINE_COMPAT(m, PC_RHEL6_3_COMPAT);
+ }
+ 
+ DEFINE_PC_MACHINE(rhel630, "rhel6.3.0", pc_init_rhel630,
+-- 
+1.8.3.1
+

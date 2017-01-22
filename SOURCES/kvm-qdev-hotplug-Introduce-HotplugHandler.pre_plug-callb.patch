@@ -1,0 +1,127 @@
+From da6705c5a512c6968af0429137c541ad679bab2e Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:38 +0200
+Subject: [PATCH 05/34] qdev: hotplug: Introduce HotplugHandler.pre_plug()
+ callback
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-6-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71125
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 05/27] qdev: hotplug: Introduce HotplugHandler.pre_plug() callback
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Igor Mammedov <imammedo@redhat.com>
+
+pre_plug callback is to be called before device.realize() is executed.
+This would allow to check/set device's properties from HotplugHandler.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 41346263c4039fd2edca61c031c9396577693036)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/core/hotplug.c    | 11 +++++++++++
+ hw/core/qdev.c       |  9 ++++++++-
+ include/hw/hotplug.h | 14 +++++++++++++-
+ 3 files changed, 32 insertions(+), 2 deletions(-)
+
+diff --git a/hw/core/hotplug.c b/hw/core/hotplug.c
+index 645cfca..17ac986 100644
+--- a/hw/core/hotplug.c
++++ b/hw/core/hotplug.c
+@@ -13,6 +13,17 @@
+ #include "hw/hotplug.h"
+ #include "qemu/module.h"
+ 
++void hotplug_handler_pre_plug(HotplugHandler *plug_handler,
++                              DeviceState *plugged_dev,
++                              Error **errp)
++{
++    HotplugHandlerClass *hdc = HOTPLUG_HANDLER_GET_CLASS(plug_handler);
++
++    if (hdc->pre_plug) {
++        hdc->pre_plug(plug_handler, plugged_dev, errp);
++    }
++}
++
+ void hotplug_handler_plug(HotplugHandler *plug_handler,
+                           DeviceState *plugged_dev,
+                           Error **errp)
+diff --git a/hw/core/qdev.c b/hw/core/qdev.c
+index db41aa1..a0b3aad 100644
+--- a/hw/core/qdev.c
++++ b/hw/core/qdev.c
+@@ -1062,6 +1062,14 @@ static void device_set_realized(Object *obj, bool value, Error **errp)
+             g_free(name);
+         }
+ 
++        hotplug_ctrl = qdev_get_hotplug_handler(dev);
++        if (hotplug_ctrl) {
++            hotplug_handler_pre_plug(hotplug_ctrl, dev, &local_err);
++            if (local_err != NULL) {
++                goto fail;
++            }
++        }
++
+         if (dc->realize) {
+             dc->realize(dev, &local_err);
+         }
+@@ -1072,7 +1080,6 @@ static void device_set_realized(Object *obj, bool value, Error **errp)
+ 
+         DEVICE_LISTENER_CALL(realize, Forward, dev);
+ 
+-        hotplug_ctrl = qdev_get_hotplug_handler(dev);
+         if (hotplug_ctrl) {
+             hotplug_handler_plug(hotplug_ctrl, dev, &local_err);
+         }
+diff --git a/include/hw/hotplug.h b/include/hw/hotplug.h
+index da1d0e4..c0db869 100644
+--- a/include/hw/hotplug.h
++++ b/include/hw/hotplug.h
+@@ -45,7 +45,8 @@ typedef void (*hotplug_fn)(HotplugHandler *plug_handler,
+  * hardware (un)plug functions.
+  *
+  * @parent: Opaque parent interface.
+- * @plug: plug callback.
++ * @pre_plug: pre plug callback called at start of device.realize(true)
++ * @plug: plug callback called at end of device.realize(true).
+  * @unplug_request: unplug request callback.
+  *                  Used as a means to initiate device unplug for devices that
+  *                  require asynchronous unplug handling.
+@@ -58,6 +59,7 @@ typedef struct HotplugHandlerClass {
+     InterfaceClass parent;
+ 
+     /* <public> */
++    hotplug_fn pre_plug;
+     hotplug_fn plug;
+     hotplug_fn unplug_request;
+     hotplug_fn unplug;
+@@ -73,6 +75,16 @@ void hotplug_handler_plug(HotplugHandler *plug_handler,
+                           Error **errp);
+ 
+ /**
++ * hotplug_handler_pre_plug:
++ *
++ * Call #HotplugHandlerClass.pre_plug callback of @plug_handler.
++ */
++void hotplug_handler_pre_plug(HotplugHandler *plug_handler,
++                              DeviceState *plugged_dev,
++                              Error **errp);
++
++
++/**
+  * hotplug_handler_unplug_request:
+  *
+  * Calls #HotplugHandlerClass.unplug_request callback of @plug_handler.
+-- 
+1.8.3.1
+

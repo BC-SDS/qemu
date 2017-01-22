@@ -1,0 +1,83 @@
+From 2b6eba8ca5c14e54e73486d421cdc438b97f9e5a Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:09 +0200
+Subject: [PATCH 09/99] tests: acpi: report names of expected files in verbose
+ mode
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-5-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71620
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 04/78] tests: acpi: report names of expected files in verbose mode
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+print expected file name if it doesn't exists if
+verbose mode is enabled*. It helps to avoid running
+bios-tables-test under debugger to figure out missing
+file name.
+
+*)
+verbose mode is enabled if "V" env. variable is set
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+(cherry picked from commit d19587db9e8b87f845494bcb903ccdb2509beb42)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ tests/bios-tables-test.c | 18 +++++++++++++-----
+ 1 file changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/tests/bios-tables-test.c b/tests/bios-tables-test.c
+index 0352814..f0493f8 100644
+--- a/tests/bios-tables-test.c
++++ b/tests/bios-tables-test.c
+@@ -464,7 +464,6 @@ static GArray *load_expected_aml(test_data *data)
+ {
+     int i;
+     AcpiSdtTable *sdt;
+-    gchar *aml_file = NULL;
+     GError *error = NULL;
+     gboolean ret;
+ 
+@@ -472,6 +471,7 @@ static GArray *load_expected_aml(test_data *data)
+     for (i = 0; i < data->tables->len; ++i) {
+         AcpiSdtTable exp_sdt;
+         uint32_t signature;
++        gchar *aml_file = NULL;
+         const char *ext = data->variant ? data->variant : "";
+ 
+         sdt = &g_array_index(data->tables, AcpiSdtTable, i);
+@@ -484,13 +484,21 @@ static GArray *load_expected_aml(test_data *data)
+ try_again:
+         aml_file = g_strdup_printf("%s/%s/%.4s%s", data_dir, data->machine,
+                                    (gchar *)&signature, ext);
+-        if (data->variant && !g_file_test(aml_file, G_FILE_TEST_EXISTS)) {
+-            g_free(aml_file);
++        if (getenv("V")) {
++            fprintf(stderr, "\nLooking for expected file '%s'\n", aml_file);
++        }
++        if (g_file_test(aml_file, G_FILE_TEST_EXISTS)) {
++            exp_sdt.aml_file = aml_file;
++        } else if (*ext != '\0') {
++            /* try fallback to generic (extention less) expected file */
+             ext = "";
++            g_free(aml_file);
+             goto try_again;
+         }
+-        exp_sdt.aml_file = aml_file;
+-        g_assert(g_file_test(aml_file, G_FILE_TEST_EXISTS));
++        g_assert(exp_sdt.aml_file);
++        if (getenv("V")) {
++            fprintf(stderr, "\nUsing expected file '%s'\n", aml_file);
++        }
+         ret = g_file_get_contents(aml_file, &exp_sdt.aml,
+                                   &exp_sdt.aml_len, &error);
+         g_assert(ret);
+-- 
+1.8.3.1
+

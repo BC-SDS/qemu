@@ -1,0 +1,47 @@
+From 5f5f538f7f64f047193997bdab8d908df106e968 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:09 +0200
+Subject: [PATCH 02/27] spapr_iommu: Finish renaming vfio_accel to need_vfio
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-3-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71089
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 02/16] spapr_iommu: Finish renaming vfio_accel to need_vfio
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Alexey Kardashevskiy <aik@ozlabs.ru>
+
+6a81dd17 "spapr_iommu: Rename vfio_accel parameter" renamed vfio_accel
+flag everywhere but one spot was missed.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit f94819d6012fbc2a6022eeacd65608e58dacbada)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-ppc/kvm_ppc.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/target-ppc/kvm_ppc.h b/target-ppc/kvm_ppc.h
+index 513fd92..20bfb59 100644
+--- a/target-ppc/kvm_ppc.h
++++ b/target-ppc/kvm_ppc.h
+@@ -164,7 +164,7 @@ static inline bool kvmppc_spapr_use_multitce(void)
+ 
+ static inline void *kvmppc_create_spapr_tce(uint32_t liobn,
+                                             uint32_t window_size, int *fd,
+-                                            bool vfio_accel)
++                                            bool need_vfio)
+ {
+     return NULL;
+ }
+-- 
+1.8.3.1
+

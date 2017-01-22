@@ -1,0 +1,144 @@
+From 7a92cb0f582e03bd365e3f84a5cf014fbc8fa9ae Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:30 +0200
+Subject: [PATCH 10/30] vhost: add missing VHOST_OPS_DEBUG
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-11-marcandre.lureau@redhat.com>
+Patchwork-id: 71926
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 10/28] vhost: add missing VHOST_OPS_DEBUG
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Add missing VHOST_OPS_DEBUG() logs, for completeness.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit c640969216d6212ddcb8613330832b044d768996)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/vhost.c | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/hw/virtio/vhost.c b/hw/virtio/vhost.c
+index 638cb53..d223781 100644
+--- a/hw/virtio/vhost.c
++++ b/hw/virtio/vhost.c
+@@ -668,6 +668,7 @@ static int vhost_virtqueue_set_addr(struct vhost_dev *dev,
+     };
+     int r = dev->vhost_ops->vhost_set_vring_addr(dev, &addr);
+     if (r < 0) {
++        VHOST_OPS_DEBUG("vhost_set_vring_addr failed");
+         return -errno;
+     }
+     return 0;
+@@ -681,6 +682,9 @@ static int vhost_dev_set_features(struct vhost_dev *dev, bool enable_log)
+         features |= 0x1ULL << VHOST_F_LOG_ALL;
+     }
+     r = dev->vhost_ops->vhost_set_features(dev, features);
++    if (r < 0) {
++        VHOST_OPS_DEBUG("vhost_set_features failed");
++    }
+     return r < 0 ? -errno : 0;
+ }
+ 
+@@ -808,6 +812,7 @@ static int vhost_virtqueue_set_vring_endian_legacy(struct vhost_dev *dev,
+         return 0;
+     }
+ 
++    VHOST_OPS_DEBUG("vhost_set_vring_endian failed");
+     if (errno == ENOTTY) {
+         error_report("vhost does not support cross-endian");
+         return -ENOSYS;
+@@ -836,12 +841,14 @@ static int vhost_virtqueue_start(struct vhost_dev *dev,
+     vq->num = state.num = virtio_queue_get_num(vdev, idx);
+     r = dev->vhost_ops->vhost_set_vring_num(dev, &state);
+     if (r) {
++        VHOST_OPS_DEBUG("vhost_set_vring_num failed");
+         return -errno;
+     }
+ 
+     state.num = virtio_queue_get_last_avail_idx(vdev, idx);
+     r = dev->vhost_ops->vhost_set_vring_base(dev, &state);
+     if (r) {
++        VHOST_OPS_DEBUG("vhost_set_vring_base failed");
+         return -errno;
+     }
+ 
+@@ -893,6 +900,7 @@ static int vhost_virtqueue_start(struct vhost_dev *dev,
+     file.fd = event_notifier_get_fd(virtio_queue_get_host_notifier(vvq));
+     r = dev->vhost_ops->vhost_set_vring_kick(dev, &file);
+     if (r) {
++        VHOST_OPS_DEBUG("vhost_set_vring_kick failed");
+         r = -errno;
+         goto fail_kick;
+     }
+@@ -940,8 +948,7 @@ static void vhost_virtqueue_stop(struct vhost_dev *dev,
+ 
+     r = dev->vhost_ops->vhost_get_vring_base(dev, &state);
+     if (r < 0) {
+-        fprintf(stderr, "vhost VQ %d ring restore failed: %d\n", idx, r);
+-        fflush(stderr);
++        VHOST_OPS_DEBUG("vhost VQ %d ring restore failed: %d", idx, r);
+     }
+     virtio_queue_set_last_avail_idx(vdev, idx, state.num);
+     virtio_queue_invalidate_signalled_used(vdev, idx);
+@@ -993,6 +1000,7 @@ static int vhost_virtqueue_set_busyloop_timeout(struct vhost_dev *dev,
+ 
+     r = dev->vhost_ops->vhost_set_vring_busyloop_timeout(dev, &state);
+     if (r) {
++        VHOST_OPS_DEBUG("vhost_set_vring_busyloop_timeout failed");
+         return r;
+     }
+ 
+@@ -1014,6 +1022,7 @@ static int vhost_virtqueue_init(struct vhost_dev *dev,
+     file.fd = event_notifier_get_fd(&vq->masked_notifier);
+     r = dev->vhost_ops->vhost_set_vring_call(dev, &file);
+     if (r) {
++        VHOST_OPS_DEBUG("vhost_set_vring_call failed");
+         r = -errno;
+         goto fail_call;
+     }
+@@ -1053,11 +1062,13 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
+ 
+     r = hdev->vhost_ops->vhost_set_owner(hdev);
+     if (r < 0) {
++        VHOST_OPS_DEBUG("vhost_set_owner failed");
+         goto fail;
+     }
+ 
+     r = hdev->vhost_ops->vhost_get_features(hdev, &features);
+     if (r < 0) {
++        VHOST_OPS_DEBUG("vhost_get_features failed");
+         goto fail;
+     }
+ 
+@@ -1289,6 +1300,7 @@ int vhost_dev_start(struct vhost_dev *hdev, VirtIODevice *vdev)
+     }
+     r = hdev->vhost_ops->vhost_set_mem_table(hdev, hdev->mem);
+     if (r < 0) {
++        VHOST_OPS_DEBUG("vhost_set_mem_table failed");
+         r = -errno;
+         goto fail_mem;
+     }
+@@ -1313,6 +1325,7 @@ int vhost_dev_start(struct vhost_dev *hdev, VirtIODevice *vdev)
+                                                 hdev->log_size ? log_base : 0,
+                                                 hdev->log);
+         if (r < 0) {
++            VHOST_OPS_DEBUG("vhost_set_log_base failed");
+             r = -errno;
+             goto fail_log;
+         }
+-- 
+1.8.3.1
+

@@ -1,0 +1,61 @@
+From 6124360bb49f6a7b3126fbd576e73a12f9403f76 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Fri, 5 Aug 2016 10:44:40 +0200
+Subject: [PATCH 07/99] target-i386: Move TCG initialization to realize time
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-3-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71618
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 02/78] target-i386: Move TCG initialization to realize time
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Eduardo Habkost <ehabkost@redhat.com>
+
+QOM instance_init functions are not supposed to have any side-effects,
+as new objects may be created at any moment for querying property
+information (see qmp_device_list_properties()).
+
+Move TCG initialization to realize time so it won't be called when just
+doing object_new() on a X86CPU subclass.
+
+Reviewed-by: Igor Mammedov <imammedo@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 57f2453ab48a771b30aeced01b329ee85853bb7b)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/cpu.c | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index def63ed..2db0967 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -3077,6 +3077,10 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
+         }
+     }
+ 
++    if (tcg_enabled()) {
++        tcg_x86_init();
++    }
++
+ #ifndef CONFIG_USER_ONLY
+     qemu_register_reset(x86_cpu_machine_reset_cb, cpu);
+ 
+@@ -3311,11 +3315,6 @@ static void x86_cpu_initfn(Object *obj)
+     }
+ 
+     x86_cpu_load_def(cpu, xcc->cpu_def, &error_abort);
+-
+-    /* init various static tables used in TCG mode */
+-    if (tcg_enabled()) {
+-        tcg_x86_init();
+-    }
+ }
+ 
+ static int64_t x86_cpu_get_arch_id(CPUState *cs)
+-- 
+1.8.3.1
+

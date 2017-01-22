@@ -1,0 +1,65 @@
+From 3fc0d351ebe090e7bdd1f3df54538725cd4895aa Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 24 Jun 2016 18:55:49 +0200
+Subject: [PATCH 20/33] acpi: add aml_object_type
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466794559-27963-13-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70779
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 12/22] acpi: add aml_object_type
+Bugzilla: 1270345
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+
+Implement ObjectType which is used by NVDIMM _DSM method in
+later patch
+
+Signed-off-by: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+Reviewed-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit b265f27c5a31c0b2d5017e99f52db45aa0559909)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/aml-build.c         | 8 ++++++++
+ include/hw/acpi/aml-build.h | 1 +
+ 2 files changed, 9 insertions(+)
+
+diff --git a/hw/acpi/aml-build.c b/hw/acpi/aml-build.c
+index 87def65..ba6eb3c 100644
+--- a/hw/acpi/aml-build.c
++++ b/hw/acpi/aml-build.c
+@@ -1471,6 +1471,14 @@ Aml *aml_concatenate(Aml *source1, Aml *source2, Aml *target)
+                                  target);
+ }
+ 
++/* ACPI 1.0b: 16.2.5.4 Type 2 Opcodes Encoding: DefObjectType */
++Aml *aml_object_type(Aml *object)
++{
++    Aml *var = aml_opcode(0x8E /* ObjectTypeOp */);
++    aml_append(var, object);
++    return var;
++}
++
+ void
+ build_header(BIOSLinker *linker, GArray *table_data,
+              AcpiTableHeader *h, const char *sig, int len, uint8_t rev,
+diff --git a/include/hw/acpi/aml-build.h b/include/hw/acpi/aml-build.h
+index 29d188e..305edcf 100644
+--- a/include/hw/acpi/aml-build.h
++++ b/include/hw/acpi/aml-build.h
+@@ -355,6 +355,7 @@ Aml *aml_unicode(const char *str);
+ Aml *aml_derefof(Aml *arg);
+ Aml *aml_sizeof(Aml *arg);
+ Aml *aml_concatenate(Aml *source1, Aml *source2, Aml *target);
++Aml *aml_object_type(Aml *object);
+ 
+ void
+ build_header(BIOSLinker *linker, GArray *table_data,
+-- 
+1.8.3.1
+

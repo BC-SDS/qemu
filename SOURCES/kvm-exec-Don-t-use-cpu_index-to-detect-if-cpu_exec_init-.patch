@@ -1,0 +1,60 @@
+From b97f2bcf142440f86fa80d7a4a3e231fbcf26d5f Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:17 +0200
+Subject: [PATCH 77/99] exec: Don't use cpu_index to detect if
+ cpu_exec_init()'s been called
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-73-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71688
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 72/78] exec: Don't use cpu_index to detect if cpu_exec_init()'s been called
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Instead use QTAIL's tqe_prev field to detect if cpu's been
+placed in list by cpu_exec_init() which is always set if
+QTAIL element is in list.
+
+Fixes SIGSEGV on failure path in case cpu_index is assigned
+by board and cpu.relalize() fails before cpu_exec_init() is called.
+
+In follow up patches, cpu_index will be assigned by boards that
+support cpu hot(un)plug and need stable cpu_index that doesn't
+depend on order cpus are created/removed.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reported-by: David Gibson <david@gibson.dropbear.id.au>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 8b1b835035fda831b405c1947210efcf758a7ca8)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ exec.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/exec.c b/exec.c
+index f453f88..79db83d 100644
+--- a/exec.c
++++ b/exec.c
+@@ -640,13 +640,14 @@ void cpu_exec_exit(CPUState *cpu)
+     CPUClass *cc = CPU_GET_CLASS(cpu);
+ 
+     cpu_list_lock();
+-    if (cpu->cpu_index == -1) {
+-        /* cpu_index was never allocated by this @cpu or was already freed. */
++    if (cpu->node.tqe_prev == NULL) {
++        /* there is nothing to undo since cpu_exec_init() hasn't been called */
+         cpu_list_unlock();
+         return;
+     }
+ 
+     QTAILQ_REMOVE(&cpus, cpu, node);
++    cpu->node.tqe_prev = NULL;
+     cpu_release_index(cpu);
+     cpu->cpu_index = -1;
+     cpu_list_unlock();
+-- 
+1.8.3.1
+

@@ -1,0 +1,68 @@
+From b65a2e8f5076b1bd0e11a18d13b1d6e0225e047f Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:42:00 +0200
+Subject: [PATCH 27/34] spapr: fix core unplug crash
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-28-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71147
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 27/27] spapr: fix core unplug crash
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Greg Kurz <groug@kaod.org>
+
+If the host has 8 threads/core and the guest is started with:
+
+-smp cores=1,threads=4,maxcpus=12
+
+It is possible to crash QEMU by doing:
+
+(qemu) device_add host-spapr-cpu-core,core-id=16,id=foo
+(qemu) device_del foo
+Segmentation fault
+
+This happens because spapr_core_unplug() assumes cpu_dt_id == core_id.
+As long as cpu_dt_id is derived from the non-table cpu_index, this is
+only true when you plug cores with contiguous ids.
+
+It is safer to be consistent: the DR connector was created with an
+index that is immediately written to cc->core_id, and spapr_core_plug()
+also relies on cc->core_id.
+
+Let's use it also in spapr_core_unplug().
+
+Signed-off-by: Greg Kurz <groug@kaod.org>
+Reviewed-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 44d691f7d9b6ebab102a31aa87fe59da8f7feff9)
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_cpu_core.c | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index 106557d..733512a 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -126,11 +126,9 @@ static void spapr_core_release(DeviceState *dev, void *opaque)
+ void spapr_core_unplug(HotplugHandler *hotplug_dev, DeviceState *dev,
+                        Error **errp)
+ {
+-    sPAPRCPUCore *core = SPAPR_CPU_CORE(OBJECT(dev));
+-    PowerPCCPU *cpu = POWERPC_CPU(core->threads);
+-    int id = ppc_get_vcpu_dt_id(cpu);
++    CPUCore *cc = CPU_CORE(dev);
+     sPAPRDRConnector *drc =
+-        spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, id);
++        spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, cc->core_id);
+     sPAPRDRConnectorClass *drck;
+     Error *local_err = NULL;
+ 
+-- 
+1.8.3.1
+

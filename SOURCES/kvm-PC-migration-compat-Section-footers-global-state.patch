@@ -1,0 +1,61 @@
+From 89528b3749ba0c28f913b840e7414cc92bc0a574 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Thu, 2 Jun 2016 15:11:47 +0200
+Subject: [PATCH 21/24] PC migration compat: Section footers/global state
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1464880310-29953-4-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70541
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 3/6] PC migration compat: Section footers/global state
+Bugzilla: 1342015
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Bandan Das <bsd@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+Section footers and the global state data came in somewhere
+between 2.3 and 2.5 and need turning off for old machine types.
+This is already done for power in cc59ce72.
+
+The upstream equivalents for those machine types are:
+  37fb569 Disable section footers on older machine types
+  13d1681 global_state: Make section optional
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc_piix.c | 2 ++
+ hw/i386/pc_q35.c  | 3 ++-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/hw/i386/pc_piix.c b/hw/i386/pc_piix.c
+index 10dd567..6fb8134 100644
+--- a/hw/i386/pc_piix.c
++++ b/hw/i386/pc_piix.c
+@@ -1090,6 +1090,8 @@ DEFINE_PC_MACHINE(rhel730, "pc-i440fx-rhel7.3.0", pc_init_rhel730,
+ 
+ static void pc_compat_rhel720(MachineState *machine)
+ {
++    savevm_skip_section_footers();
++    global_state_set_optional();
+ }
+ 
+ static void pc_init_rhel720(MachineState *machine)
+diff --git a/hw/i386/pc_q35.c b/hw/i386/pc_q35.c
+index de337ac..f0e3e38 100644
+--- a/hw/i386/pc_q35.c
++++ b/hw/i386/pc_q35.c
+@@ -323,7 +323,8 @@ DEFINE_Q35_MACHINE(v2_4, "pc-q35-2.4", NULL,
+ 
+ static void pc_q35_compat_rhel720(MachineState *machine)
+ {
+-
++    savevm_skip_section_footers();
++    global_state_set_optional();
+ }
+ 
+ static void pc_q35_init_rhel720(MachineState *machine)
+-- 
+1.8.3.1
+

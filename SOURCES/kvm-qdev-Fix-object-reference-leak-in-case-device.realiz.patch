@@ -1,0 +1,86 @@
+From 0753ed8d2b93a1427ec7e16ac6941962f31d5531 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:19 +0200
+Subject: [PATCH 79/99] qdev: Fix object reference leak in case
+ device.realize() fails
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-75-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71690
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 74/78] qdev: Fix object reference leak in case device.realize() fails
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+If device doesn't have parent assined before its realize
+is called, device_set_realized() will implicitly set parent
+to '/machine/unattached'.
+
+However device_set_realized() may fail after that point at
+several other points leaving not realized object dangling
+in '/machine/unattached' and as result caller of
+
+  obj = object_new()
+    obj->ref == 1
+  object_property_set_bool(obj,..., true, "realized",...)
+    obj->ref == 2
+  if (fail)
+      object_unref(obj);
+      obj->ref == 1
+
+will get object leak instead of expected object destruction.
+
+Fix it by making device_set_realized() to cleanup after itself
+in case of failure.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 69382d8b3e8600b349c191394d761dcb480502cf)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/core/qdev.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/hw/core/qdev.c b/hw/core/qdev.c
+index a0b3aad..e096334 100644
+--- a/hw/core/qdev.c
++++ b/hw/core/qdev.c
+@@ -1045,6 +1045,8 @@ static void device_set_realized(Object *obj, bool value, Error **errp)
+     HotplugHandler *hotplug_ctrl;
+     BusState *bus;
+     Error *local_err = NULL;
++    bool unattached_parent = false;
++    static int unattached_count;
+ 
+     if (dev->hotplugged && !dc->hotpluggable) {
+         error_setg(errp, QERR_DEVICE_NO_HOTPLUG, object_get_typename(obj));
+@@ -1053,12 +1055,12 @@ static void device_set_realized(Object *obj, bool value, Error **errp)
+ 
+     if (value && !dev->realized) {
+         if (!obj->parent) {
+-            static int unattached_count;
+             gchar *name = g_strdup_printf("device[%d]", unattached_count++);
+ 
+             object_property_add_child(container_get(qdev_get_machine(),
+                                                     "/unattached"),
+                                       name, obj, &error_abort);
++            unattached_parent = true;
+             g_free(name);
+         }
+ 
+@@ -1147,6 +1149,10 @@ post_realize_fail:
+ 
+ fail:
+     error_propagate(errp, local_err);
++    if (unattached_parent) {
++        object_unparent(OBJECT(dev));
++        unattached_count--;
++    }
+ }
+ 
+ static bool device_get_hotpluggable(Object *obj, Error **errp)
+-- 
+1.8.3.1
+

@@ -1,0 +1,48 @@
+From 7db332b270080daff3c5d45531c694d0a19df406 Mon Sep 17 00:00:00 2001
+From: Auger Eric <eric.auger@redhat.com>
+Date: Sun, 3 Jul 2016 15:24:50 +0200
+Subject: [PATCH 02/16] hw/arm/virt: fix limit of 64-bit ACPI/ECAM PCI MMIO
+ range
+
+RH-Author: Auger Eric <eric.auger@redhat.com>
+Message-id: <1467559490-13786-1-git-send-email-eric.auger@redhat.com>
+Patchwork-id: 70924
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH BZ 1349337] hw/arm/virt: fix limit of 64-bit ACPI/ECAM PCI MMIO range
+Bugzilla: 1349337
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Wei Huang <wei@redhat.com>
+
+From: Ard Biesheuvel <ard.biesheuvel@linaro.org>
+
+(cherry picked from commit e40c3d2e7f4b58669a1b4e5dfb684e57c0bf62ce)
+Signed-off-by: Eric Auger <eric.auger@redhat.com>
+
+Set the MMIO range limit field to 'base + size - 1' as required.
+
+Signed-off-by: Ard Biesheuvel <ard.biesheuvel@linaro.org>
+Reviewed-by: Shannon Zhao <shannon.zhao@linaro.org>
+Message-id: 1463856217-17969-1-git-send-email-ard.biesheuvel@linaro.org
+Signed-off-by: Peter Maydell <peter.maydell@linaro.org>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/arm/virt-acpi-build.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/hw/arm/virt-acpi-build.c b/hw/arm/virt-acpi-build.c
+index 819033f..ac6be35 100644
+--- a/hw/arm/virt-acpi-build.c
++++ b/hw/arm/virt-acpi-build.c
+@@ -230,7 +230,8 @@ static void acpi_dsdt_add_pci(Aml *scope, const MemMapEntry *memmap,
+         aml_append(rbuf,
+             aml_qword_memory(AML_POS_DECODE, AML_MIN_FIXED, AML_MAX_FIXED,
+                              AML_NON_CACHEABLE, AML_READ_WRITE, 0x0000,
+-                             base_mmio_high, base_mmio_high, 0x0000,
++                             base_mmio_high,
++                             base_mmio_high + size_mmio_high - 1, 0x0000,
+                              size_mmio_high));
+     }
+ 
+-- 
+1.8.3.1
+

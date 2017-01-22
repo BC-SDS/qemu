@@ -1,0 +1,54 @@
+From 3bb8ecfaa3e98e9be6cd683bbfe6eea46d429ddd Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:33 +0200
+Subject: [PATCH 15/37] intel_iommu: add IR translation faults defines
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-15-git-send-email-peterx@redhat.com>
+Patchwork-id: 71999
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 14/34] intel_iommu: add IR translation faults defines
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Adding translation fault definitions for interrupt remapping. Please
+refer to VT-d spec section 7.1.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit a4ca297e848a3eda39acaec6941fed4eb35916df)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/intel_iommu_internal.h | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/hw/i386/intel_iommu_internal.h b/hw/i386/intel_iommu_internal.h
+index 309833f..2a9987f 100644
+--- a/hw/i386/intel_iommu_internal.h
++++ b/hw/i386/intel_iommu_internal.h
+@@ -271,6 +271,19 @@ typedef enum VTDFaultReason {
+      * context-entry.
+      */
+     VTD_FR_CONTEXT_ENTRY_TT,
++
++    /* Interrupt remapping transition faults */
++    VTD_FR_IR_REQ_RSVD = 0x20, /* One or more IR request reserved
++                                * fields set */
++    VTD_FR_IR_INDEX_OVER = 0x21, /* Index value greater than max */
++    VTD_FR_IR_ENTRY_P = 0x22,    /* Present (P) not set in IRTE */
++    VTD_FR_IR_ROOT_INVAL = 0x23, /* IR Root table invalid */
++    VTD_FR_IR_IRTE_RSVD = 0x24,  /* IRTE Rsvd field non-zero with
++                                  * Present flag set */
++    VTD_FR_IR_REQ_COMPAT = 0x25, /* Encountered compatible IR
++                                  * request while disabled */
++    VTD_FR_IR_SID_ERR = 0x26,   /* Invalid Source-ID */
++
+     /* This is not a normal fault reason. We use this to indicate some faults
+      * that are not referenced by the VT-d specification.
+      * Fault event with such reason should not be recorded.
+-- 
+1.8.3.1
+

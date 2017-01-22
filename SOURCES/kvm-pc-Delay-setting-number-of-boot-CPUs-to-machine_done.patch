@@ -1,0 +1,81 @@
+From 19c6340468692c8df202e074e84d9d92f1751f5f Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:03 +0200
+Subject: [PATCH 63/99] pc: Delay setting number of boot CPUs to machine_done
+ time
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-59-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71674
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 58/78] pc: Delay setting number of boot CPUs to machine_done time
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Currently present CPUs counter in CMOS only contains
+smp_cpus (i.e. initial CPUs specified with -smp X) and
+doesn't account for CPUs created with -device.
+If VM is started with additional CPUs added with
+ -device, it will hang in BIOS waiting for condition
+   smp_cpus == counted_cpus
+forever as counted_cpus will include -device CPUs as well
+and be more than smp_cpus.
+
+Make present CPUs counter in CMOS to count all CPUs
+(initial and coldplugged with -device) by delaying
+it to machine done time when it possible to count
+CPUs added with -device.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+(cherry picked from commit ba157b696c4a82234ef1b43e98a7c74455538263)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc.c | 17 ++++++++++++++---
+ 1 file changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index e024fde..0df00c8 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -472,9 +472,6 @@ void pc_cmos_init(PCMachineState *pcms,
+     rtc_set_memory(s, 0x5d, val >> 16);
+     rtc_set_memory(s, 0x5e, val >> 24);
+ 
+-    /* set the number of CPU */
+-    rtc_set_memory(s, 0x5f, smp_cpus - 1);
+-
+     object_property_add_link(OBJECT(pcms), "rtc_state",
+                              TYPE_ISA_DEVICE,
+                              (Object **)&pcms->rtc,
+@@ -1042,6 +1039,17 @@ void pc_acpi_smi_interrupt(void *opaque, int irq, int level)
+     }
+ }
+ 
++static int pc_present_cpus_count(PCMachineState *pcms)
++{
++    int i, boot_cpus = 0;
++    for (i = 0; i < pcms->possible_cpus->len; i++) {
++        if (pcms->possible_cpus->cpus[i].cpu) {
++            boot_cpus++;
++        }
++    }
++    return boot_cpus;
++}
++
+ static X86CPU *pc_new_cpu(const char *typename, int64_t apic_id,
+                           Error **errp)
+ {
+@@ -1172,6 +1180,9 @@ void pc_machine_done(Notifier *notifier, void *data)
+                                         PCMachineState, machine_done);
+     PCIBus *bus = pcms->bus;
+ 
++    /* set the number of CPUs */
++    rtc_set_memory(pcms->rtc, 0x5f, pc_present_cpus_count(pcms) - 1);
++
+     if (bus) {
+         int extra_hosts = 0;
+ 
+-- 
+1.8.3.1
+

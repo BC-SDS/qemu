@@ -1,0 +1,157 @@
+From 1e3d79131bae014270897d29ea152ee497fa4b42 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:46 +0200
+Subject: [PATCH 28/37] kvm-irqchip: do explicit commit when update irq
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-28-git-send-email-peterx@redhat.com>
+Patchwork-id: 72012
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 27/34] kvm-irqchip: do explicit commit when update irq
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+In the past, we are doing gsi route commit for each irqchip route
+update. This is not efficient if we are updating lots of routes in the
+same time. This patch removes the committing phase in
+kvm_irqchip_update_msi_route(). Instead, we do explicit commit after all
+routes updated.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 3f1fea0fb5bfd78ede2ceae5dae0b24c0380f423)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/kvm/pci-assign.c | 2 ++
+ hw/misc/ivshmem.c        | 1 +
+ hw/vfio/pci.c            | 1 +
+ hw/virtio/virtio-pci.c   | 1 +
+ include/sysemu/kvm.h     | 2 +-
+ kvm-all.c                | 2 --
+ kvm-stub.c               | 4 ++++
+ target-i386/kvm.c        | 1 +
+ 8 files changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/hw/i386/kvm/pci-assign.c b/hw/i386/kvm/pci-assign.c
+index 630d355..026d2c2 100644
+--- a/hw/i386/kvm/pci-assign.c
++++ b/hw/i386/kvm/pci-assign.c
+@@ -1019,6 +1019,7 @@ static void assigned_dev_update_msi_msg(PCIDevice *pci_dev)
+ 
+     kvm_irqchip_update_msi_route(kvm_state, assigned_dev->msi_virq[0],
+                                  msi_get_message(pci_dev, 0), pci_dev);
++    kvm_irqchip_commit_routes(kvm_state);
+ }
+ 
+ static bool assigned_dev_msix_masked(MSIXTableEntry *entry)
+@@ -1605,6 +1606,7 @@ static void assigned_dev_msix_mmio_write(void *opaque, hwaddr addr,
+                 if (ret) {
+                     error_report("Error updating irq routing entry (%d)", ret);
+                 }
++                kvm_irqchip_commit_routes(kvm_state);
+             }
+         }
+     }
+diff --git a/hw/misc/ivshmem.c b/hw/misc/ivshmem.c
+index debdc29..b9d495c 100644
+--- a/hw/misc/ivshmem.c
++++ b/hw/misc/ivshmem.c
+@@ -325,6 +325,7 @@ static int ivshmem_vector_unmask(PCIDevice *dev, unsigned vector,
+     if (ret < 0) {
+         return ret;
+     }
++    kvm_irqchip_commit_routes(kvm_state);
+ 
+     return kvm_irqchip_add_irqfd_notifier_gsi(kvm_state, n, NULL, v->virq);
+ }
+diff --git a/hw/vfio/pci.c b/hw/vfio/pci.c
+index 9577587..18cac7e 100644
+--- a/hw/vfio/pci.c
++++ b/hw/vfio/pci.c
+@@ -459,6 +459,7 @@ static void vfio_update_kvm_msi_virq(VFIOMSIVector *vector, MSIMessage msg,
+                                      PCIDevice *pdev)
+ {
+     kvm_irqchip_update_msi_route(kvm_state, vector->virq, msg, pdev);
++    kvm_irqchip_commit_routes(kvm_state);
+ }
+ 
+ static int vfio_msix_vector_do_use(PCIDevice *pdev, unsigned int nr,
+diff --git a/hw/virtio/virtio-pci.c b/hw/virtio/virtio-pci.c
+index 91be337..c9c0b5a 100644
+--- a/hw/virtio/virtio-pci.c
++++ b/hw/virtio/virtio-pci.c
+@@ -872,6 +872,7 @@ static int virtio_pci_vq_vector_unmask(VirtIOPCIProxy *proxy,
+             if (ret < 0) {
+                 return ret;
+             }
++            kvm_irqchip_commit_routes(kvm_state);
+         }
+     }
+ 
+diff --git a/include/sysemu/kvm.h b/include/sysemu/kvm.h
+index 74acff8..9544a2c 100644
+--- a/include/sysemu/kvm.h
++++ b/include/sysemu/kvm.h
+@@ -368,7 +368,6 @@ int kvm_set_irq(KVMState *s, int irq, int level);
+ int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg);
+ 
+ void kvm_irqchip_add_irq_route(KVMState *s, int gsi, int irqchip, int pin);
+-void kvm_irqchip_commit_routes(KVMState *s);
+ 
+ void kvm_put_apic_state(DeviceState *d, struct kvm_lapic_state *kapic);
+ void kvm_get_apic_state(DeviceState *d, struct kvm_lapic_state *kapic);
+@@ -491,6 +490,7 @@ static inline void cpu_synchronize_post_init(CPUState *cpu)
+ int kvm_irqchip_add_msi_route(KVMState *s, int vector, PCIDevice *dev);
+ int kvm_irqchip_update_msi_route(KVMState *s, int virq, MSIMessage msg,
+                                  PCIDevice *dev);
++void kvm_irqchip_commit_routes(KVMState *s);
+ void kvm_irqchip_release_virq(KVMState *s, int virq);
+ 
+ int kvm_irqchip_add_adapter_route(KVMState *s, AdapterInfo *adapter);
+diff --git a/kvm-all.c b/kvm-all.c
+index a830f8e..508ea9c 100644
+--- a/kvm-all.c
++++ b/kvm-all.c
+@@ -1088,8 +1088,6 @@ static int kvm_update_routing_entry(KVMState *s,
+ 
+         *entry = *new_entry;
+ 
+-        kvm_irqchip_commit_routes(s);
+-
+         return 0;
+     }
+ 
+diff --git a/kvm-stub.c b/kvm-stub.c
+index 0435cfc..39aa7c3 100644
+--- a/kvm-stub.c
++++ b/kvm-stub.c
+@@ -136,6 +136,10 @@ int kvm_irqchip_update_msi_route(KVMState *s, int virq, MSIMessage msg,
+     return -ENOSYS;
+ }
+ 
++void kvm_irqchip_commit_routes(KVMState *s)
++{
++}
++
+ int kvm_irqchip_add_adapter_route(KVMState *s, AdapterInfo *adapter)
+ {
+     return -ENOSYS;
+diff --git a/target-i386/kvm.c b/target-i386/kvm.c
+index 32757f0..8db3699 100644
+--- a/target-i386/kvm.c
++++ b/target-i386/kvm.c
+@@ -3426,6 +3426,7 @@ static void kvm_update_msi_routes_all(void *private, bool global,
+         kvm_irqchip_update_msi_route(kvm_state, entry->virq,
+                                      msg, entry->dev);
+     }
++    kvm_irqchip_commit_routes(kvm_state);
+     trace_kvm_x86_update_msi_routes(cnt);
+ }
+ 
+-- 
+1.8.3.1
+

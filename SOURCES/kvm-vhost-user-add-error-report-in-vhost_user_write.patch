@@ -1,0 +1,70 @@
+From 57732cf9fc6df193078c2f62e5c5c89eacc1793b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:44 +0200
+Subject: [PATCH 24/30] vhost-user: add error report in vhost_user_write()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-25-marcandre.lureau@redhat.com>
+Patchwork-id: 71940
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 24/28] vhost-user: add error report in vhost_user_write()
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Similar to vhost_user_read() error report, it is useful to have early
+error report.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit f6b8571041eea057b9e55fad51357e8d8ac9b1c0)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/vhost-user.c | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/hw/virtio/vhost-user.c b/hw/virtio/vhost-user.c
+index e71357e..5331a79 100644
+--- a/hw/virtio/vhost-user.c
++++ b/hw/virtio/vhost-user.c
+@@ -177,7 +177,7 @@ static int vhost_user_write(struct vhost_dev *dev, VhostUserMsg *msg,
+                             int *fds, int fd_num)
+ {
+     CharDriverState *chr = dev->opaque;
+-    int size = VHOST_USER_HDR_SIZE + msg->size;
++    int ret, size = VHOST_USER_HDR_SIZE + msg->size;
+ 
+     /*
+      * For non-vring specific requests, like VHOST_USER_SET_MEM_TABLE,
+@@ -189,11 +189,18 @@ static int vhost_user_write(struct vhost_dev *dev, VhostUserMsg *msg,
+     }
+ 
+     if (qemu_chr_fe_set_msgfds(chr, fds, fd_num) < 0) {
++        error_report("Failed to set msg fds.");
+         return -1;
+     }
+ 
+-    return qemu_chr_fe_write_all(chr, (const uint8_t *) msg, size) == size ?
+-            0 : -1;
++    ret = qemu_chr_fe_write_all(chr, (const uint8_t *) msg, size);
++    if (ret != size) {
++        error_report("Failed to write msg."
++                     " Wrote %d instead of %d.", ret, size);
++        return -1;
++    }
++
++    return 0;
+ }
+ 
+ static int vhost_user_set_log_base(struct vhost_dev *dev, uint64_t base,
+-- 
+1.8.3.1
+

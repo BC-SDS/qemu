@@ -1,0 +1,73 @@
+From 23c015a42e13be6be003603a361407ad614e0724 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:20 +0200
+Subject: [PATCH 02/37] ioapic: keep RO bits for IOAPIC entry
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-2-git-send-email-peterx@redhat.com>
+Patchwork-id: 71986
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 01/34] ioapic: keep RO bits for IOAPIC entry
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Currently IOAPIC RO bits can be written. To be better aligned with
+hardware, we should let them read-only.
+
+Reviewed-by: Radim Krčmář <rkrcmar@redhat.com>
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Message-Id: <1462875682-1349-2-git-send-email-peterx@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit 479c2a1cb7fb82d23e66eab78b00fc5b0638439b)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/intc/ioapic.c                  | 4 ++++
+ include/hw/i386/ioapic_internal.h | 5 +++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/hw/intc/ioapic.c b/hw/intc/ioapic.c
+index 10da90d..ef9421d 100644
+--- a/hw/intc/ioapic.c
++++ b/hw/intc/ioapic.c
+@@ -280,6 +280,7 @@ ioapic_mem_write(void *opaque, hwaddr addr, uint64_t val,
+         default:
+             index = (s->ioregsel - IOAPIC_REG_REDTBL_BASE) >> 1;
+             if (index >= 0 && index < IOAPIC_NUM_PINS) {
++                uint64_t ro_bits = s->ioredtbl[index] & IOAPIC_RO_BITS;
+                 if (s->ioregsel & 1) {
+                     s->ioredtbl[index] &= 0xffffffff;
+                     s->ioredtbl[index] |= (uint64_t)val << 32;
+@@ -287,6 +288,9 @@ ioapic_mem_write(void *opaque, hwaddr addr, uint64_t val,
+                     s->ioredtbl[index] &= ~0xffffffffULL;
+                     s->ioredtbl[index] |= val;
+                 }
++                /* restore RO bits */
++                s->ioredtbl[index] &= IOAPIC_RW_BITS;
++                s->ioredtbl[index] |= ro_bits;
+                 ioapic_service(s);
+             }
+         }
+diff --git a/include/hw/i386/ioapic_internal.h b/include/hw/i386/ioapic_internal.h
+index 797ed47..cab9e67 100644
+--- a/include/hw/i386/ioapic_internal.h
++++ b/include/hw/i386/ioapic_internal.h
+@@ -47,6 +47,11 @@
+ #define IOAPIC_LVT_DEST_MODE            (1 << IOAPIC_LVT_DEST_MODE_SHIFT)
+ #define IOAPIC_LVT_DELIV_MODE           (7 << IOAPIC_LVT_DELIV_MODE_SHIFT)
+ 
++/* Bits that are read-only for IOAPIC entry */
++#define IOAPIC_RO_BITS                  (IOAPIC_LVT_REMOTE_IRR | \
++                                         IOAPIC_LVT_DELIV_STATUS)
++#define IOAPIC_RW_BITS                  (~(uint64_t)IOAPIC_RO_BITS)
++
+ #define IOAPIC_TRIGGER_EDGE             0
+ #define IOAPIC_TRIGGER_LEVEL            1
+ 
+-- 
+1.8.3.1
+

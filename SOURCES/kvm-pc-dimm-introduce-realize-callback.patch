@@ -1,0 +1,80 @@
+From 02f6efa56c179403880d1100aa7b3e7c90e4824e Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 24 Jun 2016 18:55:46 +0200
+Subject: [PATCH 17/33] pc-dimm: introduce realize callback
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466794559-27963-10-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70776
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 09/22] pc-dimm: introduce realize callback
+Bugzilla: 1270345
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+
+nvdimm needs to  check if the backend memory is large enough to contain
+label data and init its memory region when the device is realized, so
+introduce realize callback which is called after common dimm has been
+realize
+
+Signed-off-by: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Reviewed-by: Stefan Hajnoczi <stefanha@redhat.com>
+(cherry picked from commit 9f318f8f7e689b9653b42bac73047f9719a1f34e)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/mem/pc-dimm.c         | 5 +++++
+ include/hw/mem/pc-dimm.h | 3 +++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/hw/mem/pc-dimm.c b/hw/mem/pc-dimm.c
+index 70b9451..6de2275 100644
+--- a/hw/mem/pc-dimm.c
++++ b/hw/mem/pc-dimm.c
+@@ -400,6 +400,7 @@ static void pc_dimm_init(Object *obj)
+ static void pc_dimm_realize(DeviceState *dev, Error **errp)
+ {
+     PCDIMMDevice *dimm = PC_DIMM(dev);
++    PCDIMMDeviceClass *ddc = PC_DIMM_GET_CLASS(dimm);
+ 
+     if (!dimm->hostmem) {
+         error_setg(errp, "'" PC_DIMM_MEMDEV_PROP "' property is not set");
+@@ -412,6 +413,10 @@ static void pc_dimm_realize(DeviceState *dev, Error **errp)
+                    dimm->node, nb_numa_nodes ? nb_numa_nodes : 1);
+         return;
+     }
++
++    if (ddc->realize) {
++        ddc->realize(dimm, errp);
++    }
+ }
+ 
+ static MemoryRegion *pc_dimm_get_memory_region(PCDIMMDevice *dimm)
+diff --git a/include/hw/mem/pc-dimm.h b/include/hw/mem/pc-dimm.h
+index 827f1bc..e7b7e5a 100644
+--- a/include/hw/mem/pc-dimm.h
++++ b/include/hw/mem/pc-dimm.h
+@@ -60,6 +60,8 @@ typedef struct PCDIMMDevice {
+ 
+ /**
+  * PCDIMMDeviceClass:
++ * @realize: called after common dimm is realized so that the dimm based
++ * devices get the chance to do specified operations.
+  * @get_memory_region: returns #MemoryRegion associated with @dimm which
+  * is directly mapped into the physical address space of guest
+  */
+@@ -68,6 +70,7 @@ typedef struct PCDIMMDeviceClass {
+     DeviceClass parent_class;
+ 
+     /* public */
++    void (*realize)(PCDIMMDevice *dimm, Error **errp);
+     MemoryRegion *(*get_memory_region)(PCDIMMDevice *dimm);
+ } PCDIMMDeviceClass;
+ 
+-- 
+1.8.3.1
+

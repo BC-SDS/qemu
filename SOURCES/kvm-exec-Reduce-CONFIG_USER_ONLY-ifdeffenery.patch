@@ -1,0 +1,155 @@
+From b1ce2a820406b598e37465903804c7e7164a819e Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:16 +0200
+Subject: [PATCH 76/99] exec: Reduce CONFIG_USER_ONLY ifdeffenery
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-72-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71687
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 71/78] exec: Reduce CONFIG_USER_ONLY ifdeffenery
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 1bc7e522d9cf1b58f2de9c8f1737be0bb5129c35)
+
+ Conflicts:
+	exec.c - due to missing commit:
+          741da0d3 hw: cannot include hw/hw.h from user emulation
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ bsd-user/qemu.h         |  2 --
+ exec.c                  | 24 +++++++-----------------
+ include/exec/exec-all.h | 12 ++++++++++++
+ linux-user/qemu.h       |  2 --
+ 4 files changed, 19 insertions(+), 21 deletions(-)
+
+diff --git a/bsd-user/qemu.h b/bsd-user/qemu.h
+index 03b502a..87b4dc5 100644
+--- a/bsd-user/qemu.h
++++ b/bsd-user/qemu.h
+@@ -208,8 +208,6 @@ abi_long target_mremap(abi_ulong old_addr, abi_ulong old_size,
+                        abi_ulong new_addr);
+ int target_msync(abi_ulong start, abi_ulong len, int flags);
+ extern unsigned long last_brk;
+-void cpu_list_lock(void);
+-void cpu_list_unlock(void);
+ #if defined(CONFIG_USE_NPTL)
+ void mmap_fork_start(void);
+ void mmap_fork_end(int child);
+diff --git a/exec.c b/exec.c
+index 199ec63..f453f88 100644
+--- a/exec.c
++++ b/exec.c
+@@ -639,23 +639,17 @@ void cpu_exec_exit(CPUState *cpu)
+ {
+     CPUClass *cc = CPU_GET_CLASS(cpu);
+ 
+-#if defined(CONFIG_USER_ONLY)
+     cpu_list_lock();
+-#endif
+     if (cpu->cpu_index == -1) {
+         /* cpu_index was never allocated by this @cpu or was already freed. */
+-#if defined(CONFIG_USER_ONLY)
+         cpu_list_unlock();
+-#endif
+         return;
+     }
+ 
+     QTAILQ_REMOVE(&cpus, cpu, node);
+     cpu_release_index(cpu);
+     cpu->cpu_index = -1;
+-#if defined(CONFIG_USER_ONLY)
+     cpu_list_unlock();
+-#endif
+ 
+     if (cc->vmsd != NULL) {
+         vmstate_unregister(NULL, cc->vmsd, cpu);
+@@ -667,8 +661,7 @@ void cpu_exec_exit(CPUState *cpu)
+ 
+ void cpu_exec_init(CPUState *cpu, Error **errp)
+ {
+-    CPUClass *cc = CPU_GET_CLASS(cpu);
+-    int cpu_index;
++    CPUClass *cc ATTRIBUTE_UNUSED = CPU_GET_CLASS(cpu);
+     Error *local_err = NULL;
+ 
+     cpu->as = NULL;
+@@ -692,27 +685,24 @@ void cpu_exec_init(CPUState *cpu, Error **errp)
+     object_ref(OBJECT(cpu->memory));
+ #endif
+ 
+-#if defined(CONFIG_USER_ONLY)
+     cpu_list_lock();
+-#endif
+-    cpu_index = cpu->cpu_index = cpu_get_free_index(&local_err);
++    cpu->cpu_index = cpu_get_free_index(&local_err);
+     if (local_err) {
+         error_propagate(errp, local_err);
+-#if defined(CONFIG_USER_ONLY)
+         cpu_list_unlock();
+-#endif
+         return;
+     }
+     QTAILQ_INSERT_TAIL(&cpus, cpu, node);
+-#if defined(CONFIG_USER_ONLY)
+     cpu_list_unlock();
+-#endif
++
++#ifndef CONFIG_USER_ONLY
+     if (qdev_get_vmsd(DEVICE(cpu)) == NULL) {
+-        vmstate_register(NULL, cpu_index, &vmstate_cpu_common, cpu);
++        vmstate_register(NULL, cpu->cpu_index, &vmstate_cpu_common, cpu);
+     }
+     if (cc->vmsd != NULL) {
+-        vmstate_register(NULL, cpu_index, cc->vmsd, cpu);
++        vmstate_register(NULL, cpu->cpu_index, cc->vmsd, cpu);
+     }
++#endif
+ }
+ 
+ #if defined(CONFIG_USER_ONLY)
+diff --git a/include/exec/exec-all.h b/include/exec/exec-all.h
+index 7362095..a66cc4b 100644
+--- a/include/exec/exec-all.h
++++ b/include/exec/exec-all.h
+@@ -78,6 +78,18 @@ void QEMU_NORETURN cpu_io_recompile(CPUState *cpu, uintptr_t retaddr);
+ TranslationBlock *tb_gen_code(CPUState *cpu,
+                               target_ulong pc, target_ulong cs_base, int flags,
+                               int cflags);
++#if defined(CONFIG_USER_ONLY)
++void cpu_list_lock(void);
++void cpu_list_unlock(void);
++#else
++static inline void cpu_list_unlock(void)
++{
++}
++static inline void cpu_list_lock(void)
++{
++}
++#endif
++
+ void cpu_exec_init(CPUState *cpu, Error **errp);
+ void QEMU_NORETURN cpu_loop_exit(CPUState *cpu);
+ void QEMU_NORETURN cpu_loop_exit_restore(CPUState *cpu, uintptr_t pc);
+diff --git a/linux-user/qemu.h b/linux-user/qemu.h
+index 26b0ba2..af1d6e7 100644
+--- a/linux-user/qemu.h
++++ b/linux-user/qemu.h
+@@ -250,8 +250,6 @@ int target_msync(abi_ulong start, abi_ulong len, int flags);
+ extern unsigned long last_brk;
+ extern abi_ulong mmap_next_start;
+ abi_ulong mmap_find_vma(abi_ulong, abi_ulong);
+-void cpu_list_lock(void);
+-void cpu_list_unlock(void);
+ void mmap_fork_start(void);
+ void mmap_fork_end(int child);
+ 
+-- 
+1.8.3.1
+

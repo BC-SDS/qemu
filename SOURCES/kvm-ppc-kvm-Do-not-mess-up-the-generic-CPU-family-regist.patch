@@ -1,0 +1,65 @@
+From c601aa7a544a81cf7c10a9ab56b202095ec5c335 Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Wed, 10 Aug 2016 08:14:54 +0200
+Subject: [PATCH 05/17] ppc/kvm: Do not mess up the generic CPU family
+ registration
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1470816895-17800-5-git-send-email-thuth@redhat.com>
+Patchwork-id: 71896
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 4/5] ppc/kvm: Do not mess up the generic CPU family registration
+Bugzilla: 1363812
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+The code for registering the sPAPR CPU host core type has been
+added inbetween the generic CPU host core type and the generic
+CPU family type. That way the instance_init and the class_init
+information got lost when registering the generic CPU family
+type. Fix it by moving the generic family registration before
+the spapr cpu core registration code.
+
+Signed-off-by: Thomas Huth <thuth@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 9c83fc2e8e1630e4d0fb10055563844b6e2cf2e0)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-ppc/kvm.c | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/target-ppc/kvm.c b/target-ppc/kvm.c
+index 60ab724..9cdc1b1 100644
+--- a/target-ppc/kvm.c
++++ b/target-ppc/kvm.c
+@@ -2395,6 +2395,13 @@ static int kvm_ppc_register_host_cpu_type(void)
+     type_info.parent = object_class_get_name(OBJECT_CLASS(pvr_pcc));
+     type_register(&type_info);
+ 
++    /* Register generic family CPU class for a family */
++    pvr_pcc = ppc_cpu_get_family_class(pvr_pcc);
++    dc = DEVICE_CLASS(pvr_pcc);
++    type_info.parent = object_class_get_name(OBJECT_CLASS(pvr_pcc));
++    type_info.name = g_strdup_printf("%s-"TYPE_POWERPC_CPU, dc->desc);
++    type_register(&type_info);
++
+ #if defined(TARGET_PPC64)
+     type_info.name = g_strdup_printf("%s-"TYPE_SPAPR_CPU_CORE, "host");
+     type_info.parent = TYPE_SPAPR_CPU_CORE,
+@@ -2407,13 +2414,6 @@ static int kvm_ppc_register_host_cpu_type(void)
+     type_info.instance_init = NULL;
+ #endif
+ 
+-    /* Register generic family CPU class for a family */
+-    pvr_pcc = ppc_cpu_get_family_class(pvr_pcc);
+-    dc = DEVICE_CLASS(pvr_pcc);
+-    type_info.parent = object_class_get_name(OBJECT_CLASS(pvr_pcc));
+-    type_info.name = g_strdup_printf("%s-"TYPE_POWERPC_CPU, dc->desc);
+-    type_register(&type_info);
+-
+     return 0;
+ }
+ 
+-- 
+1.8.3.1
+

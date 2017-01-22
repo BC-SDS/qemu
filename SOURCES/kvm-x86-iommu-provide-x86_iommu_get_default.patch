@@ -1,0 +1,115 @@
+From 4fb1e84bc491efc3074d8b6f5958511788a4e760 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:24 +0200
+Subject: [PATCH 06/37] x86-iommu: provide x86_iommu_get_default
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-6-git-send-email-peterx@redhat.com>
+Patchwork-id: 71990
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 05/34] x86-iommu: provide x86_iommu_get_default
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Instead of searching the device tree every time, one static variable is
+declared for the default system x86 IOMMU device.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 1cf5fd573f536de1eb601ed69127a324e940d37f)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/acpi-build.c        |  9 ++-------
+ hw/i386/x86-iommu.c         | 23 +++++++++++++++++++++++
+ include/hw/i386/x86-iommu.h |  6 ++++++
+ 3 files changed, 31 insertions(+), 7 deletions(-)
+
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index da6b9fa..1bd3713 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -53,7 +53,7 @@
+ #include "hw/i386/ich9.h"
+ #include "hw/pci/pci_bus.h"
+ #include "hw/pci-host/q35.h"
+-#include "hw/i386/intel_iommu.h"
++#include "hw/i386/x86-iommu.h"
+ #include "hw/timer/hpet.h"
+ 
+ #include "hw/acpi/aml-build.h"
+@@ -2605,12 +2605,7 @@ static bool acpi_get_mcfg(AcpiMcfgInfo *mcfg)
+ 
+ static bool acpi_has_iommu(void)
+ {
+-    bool ambiguous;
+-    Object *intel_iommu;
+-
+-    intel_iommu = object_resolve_path_type("", TYPE_INTEL_IOMMU_DEVICE,
+-                                           &ambiguous);
+-    return intel_iommu && !ambiguous;
++    return !!x86_iommu_get_default();
+ }
+ 
+ static
+diff --git a/hw/i386/x86-iommu.c b/hw/i386/x86-iommu.c
+index d739afb..f395139 100644
+--- a/hw/i386/x86-iommu.c
++++ b/hw/i386/x86-iommu.c
+@@ -21,6 +21,28 @@
+ #include "hw/sysbus.h"
+ #include "hw/boards.h"
+ #include "hw/i386/x86-iommu.h"
++#include "qemu/error-report.h"
++
++/* Default X86 IOMMU device */
++static X86IOMMUState *x86_iommu_default = NULL;
++
++static void x86_iommu_set_default(X86IOMMUState *x86_iommu)
++{
++    assert(x86_iommu);
++
++    if (x86_iommu_default) {
++        error_report("QEMU does not support multiple vIOMMUs "
++                     "for x86 yet.");
++        exit(1);
++    }
++
++    x86_iommu_default = x86_iommu;
++}
++
++X86IOMMUState *x86_iommu_get_default(void)
++{
++    return x86_iommu_default;
++}
+ 
+ static void x86_iommu_realize(DeviceState *dev, Error **errp)
+ {
+@@ -28,6 +50,7 @@ static void x86_iommu_realize(DeviceState *dev, Error **errp)
+     if (x86_class->realize) {
+         x86_class->realize(dev, errp);
+     }
++    x86_iommu_set_default(X86_IOMMU_DEVICE(dev));
+ }
+ 
+ static void x86_iommu_class_init(ObjectClass *klass, void *data)
+diff --git a/include/hw/i386/x86-iommu.h b/include/hw/i386/x86-iommu.h
+index fac693d..b2401a6 100644
+--- a/include/hw/i386/x86-iommu.h
++++ b/include/hw/i386/x86-iommu.h
+@@ -45,4 +45,10 @@ struct X86IOMMUState {
+     SysBusDevice busdev;
+ };
+ 
++/**
++ * x86_iommu_get_default - get default IOMMU device
++ * @return: pointer to default IOMMU device
++ */
++X86IOMMUState *x86_iommu_get_default(void);
++
+ #endif
+-- 
+1.8.3.1
+

@@ -1,0 +1,93 @@
+From fa18f27f4a5cf3dbd08ef742feeda1c5ac6079a9 Mon Sep 17 00:00:00 2001
+From: John Snow <jsnow@redhat.com>
+Date: Fri, 16 Sep 2016 22:06:28 +0200
+Subject: [PATCH 16/18] blockdev: ignore cache options for empty CDROM drives
+
+RH-Author: John Snow <jsnow@redhat.com>
+Message-id: <1474063588-6370-2-git-send-email-jsnow@redhat.com>
+Patchwork-id: 72377
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 1/1] blockdev: ignore cache options for empty CDROM drives
+Bugzilla: 1342999
+RH-Acked-by: Max Reitz <mreitz@redhat.com>
+RH-Acked-by: Kevin Wolf <kwolf@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1342999
+Brew: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11768839
+Upstream: N/A
+
+In qemu-kvm-rhev-2.3.0, QEMU will accept cache options for empty CDROM
+devices, but silently ignore them as they will be overwritten when the
+next CDROM is inserted.
+
+Libvirt and VMM are capable of generating XML configurations which
+attempt to specify these cache options to QEMU, though they don't have
+any effect.
+
+Upstream, a refactoring of cache option mechanisms means that we have
+started rejecting invalid configurations where cache options are supplied
+without any target to actually apply them to.
+
+This means that there are combinations of QEMU and libvirt that will fail
+to start a VM if a user selects a cache option.
+
+This patch is a downstream-only workaround until libvirt can stop
+supplying cache settings for empty CDROMs and/or until libvirt can take
+advantage of the new QMP tray/medium manipulation mechanisms that will
+allow proper cache specification for removable media.
+
+Signed-off-by: John Snow <jsnow@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ blockdev.c | 28 +++++++++++++++++++++++++++-
+ 1 file changed, 27 insertions(+), 1 deletion(-)
+
+diff --git a/blockdev.c b/blockdev.c
+index 9bd00f1..d7ac4cc 100644
+--- a/blockdev.c
++++ b/blockdev.c
+@@ -463,6 +463,32 @@ static void extract_common_blockdev_options(QemuOpts *opts, int *bdrv_flags,
+     }
+ }
+ 
++/**
++ * libvirt expects to be able to pass cache options for CDROM drives without
++ * inserted media. Historically, QEMU eventually ignores these cache options as
++ * they are lost when media is inserted. Recently, QEMU started rejecting these
++ * configurations. Libvirt however still generates such configurations.
++ *
++ * To prevent QEMU from being unable to start, pretend there are no options
++ * present if the only options present are cache options for the BDS.
++ */
++static bool __redhat_com_has_bs_opts(QDict *bs_opts)
++{
++    size_t n, s;
++    s = qdict_size(bs_opts);
++
++    if (s == 0) {
++        return false;
++    } else if (s > 2) {
++        return true;
++    }
++
++    n = qdict_haskey(bs_opts, BDRV_OPT_CACHE_DIRECT);
++    n += qdict_haskey(bs_opts, BDRV_OPT_CACHE_NO_FLUSH);
++
++    return s != n;
++}
++
+ /* Takes the ownership of bs_opts */
+ static BlockBackend *blockdev_init(const char *file, QDict *bs_opts,
+                                    Error **errp)
+@@ -568,7 +594,7 @@ static BlockBackend *blockdev_init(const char *file, QDict *bs_opts,
+     }
+ 
+     /* init */
+-    if ((!file || !*file) && !qdict_size(bs_opts)) {
++    if ((!file || !*file) && !__redhat_com_has_bs_opts(bs_opts)) {
+         BlockBackendRootState *blk_rs;
+ 
+         blk = blk_new(errp);
+-- 
+1.8.3.1
+

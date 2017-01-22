@@ -1,0 +1,75 @@
+From 6b9f22fe632d4c305decf5e55218d7fd9a62a53a Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:48 +0200
+Subject: [PATCH 30/37] kvm-all: add trace events for kvm irqchip ops
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-30-git-send-email-peterx@redhat.com>
+Patchwork-id: 72014
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 29/34] kvm-all: add trace events for kvm irqchip ops
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+These will help us monitoring irqchip route activities more easily.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 54a6c11b20bb635ac5bb5d9369782bf00d0c7e19)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ kvm-all.c    | 5 +++++
+ trace-events | 3 +++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/kvm-all.c b/kvm-all.c
+index 508ea9c..beb99c8 100644
+--- a/kvm-all.c
++++ b/kvm-all.c
+@@ -1042,6 +1042,7 @@ void kvm_irqchip_commit_routes(KVMState *s)
+     int ret;
+ 
+     s->irq_routes->flags = 0;
++    trace_kvm_irqchip_commit_routes();
+     ret = kvm_vm_ioctl(s, KVM_SET_GSI_ROUTING, s->irq_routes);
+     assert(ret == 0);
+ }
+@@ -1265,6 +1266,8 @@ int kvm_irqchip_add_msi_route(KVMState *s, int vector, PCIDevice *dev)
+         return -EINVAL;
+     }
+ 
++    trace_kvm_irqchip_add_msi_route(virq);
++
+     kvm_add_routing_entry(s, &kroute);
+     kvm_arch_add_msi_route_post(&kroute, vector, dev);
+     kvm_irqchip_commit_routes(s);
+@@ -1295,6 +1298,8 @@ int kvm_irqchip_update_msi_route(KVMState *s, int virq, MSIMessage msg,
+         return -EINVAL;
+     }
+ 
++    trace_kvm_irqchip_update_msi_route(virq);
++
+     return kvm_update_routing_entry(s, &kroute);
+ }
+ 
+diff --git a/trace-events b/trace-events
+index c12911b..a0ae2b3 100644
+--- a/trace-events
++++ b/trace-events
+@@ -1612,6 +1612,9 @@ kvm_run_exit(int cpu_index, uint32_t reason) "cpu_index %d, reason %d"
+ kvm_device_ioctl(int fd, int type, void *arg) "dev fd %d, type 0x%x, arg %p"
+ kvm_failed_reg_get(uint64_t id, const char *msg) "Warning: Unable to retrieve ONEREG %" PRIu64 " from KVM: %s"
+ kvm_failed_reg_set(uint64_t id, const char *msg) "Warning: Unable to set ONEREG %" PRIu64 " to KVM: %s"
++kvm_irqchip_commit_routes(void) ""
++kvm_irqchip_add_msi_route(int virq) "Adding MSI route virq=%d"
++kvm_irqchip_update_msi_route(int virq) "Updating MSI route virq=%d"
+ 
+ # target-ppc/kvm.c
+ kvm_failed_spr_set(int str, const char *msg) "Warning: Unable to set SPR %d to KVM: %s"
+-- 
+1.8.3.1
+

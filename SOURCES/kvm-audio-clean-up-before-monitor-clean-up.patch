@@ -1,0 +1,193 @@
+From 630912e914008f54c8cffc274076f0079661f721 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Wed, 10 Aug 2016 20:01:44 +0200
+Subject: [PATCH 09/17] audio: clean up before monitor clean up
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160810200144.31810-3-marcandre.lureau@redhat.com>
+Patchwork-id: 71915
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 2/2] audio: clean up before monitor clean up
+Bugzilla: 1355704
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Since aa5cb7f5e, the chardevs are being cleaned up when leaving qemu,
+before the atexit() handlers. audio_cleanup() may use the monitor to
+notify of changes. For compatibility reasons, let's clean up audio
+before the monitor so it keeps emitting monitor events.
+
+The audio_atexit() function is made idempotent (so it can be called
+multiple times), and renamed to audio_cleanup(). Since coreaudio
+backend is using a 'isAtexit' code path, change it to check
+audio_is_cleaning_up() instead, so the path is taken during normal
+exit.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-Id: <20160801112343.29082-3-marcandre.lureau@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Gerd Hoffmann <kraxel@redhat.com>
+Signed-off-by: Markus Armbruster <armbru@redhat.com>
+
+(cherry picked from commit a384c205acaa4b6fe6d4d392af47b49b2c448eb4)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355704
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ audio/audio.c     | 26 ++++++++++++++++++--------
+ audio/audio.h     |  2 ++
+ audio/coreaudio.c | 12 ++----------
+ vl.c              |  1 +
+ 4 files changed, 23 insertions(+), 18 deletions(-)
+
+diff --git a/audio/audio.c b/audio/audio.c
+index e60c124..a138f0f 100644
+--- a/audio/audio.c
++++ b/audio/audio.c
+@@ -1745,13 +1745,21 @@ static void audio_vm_change_state_handler (void *opaque, int running,
+     audio_reset_timer (s);
+ }
+ 
+-static void audio_atexit (void)
++static bool is_cleaning_up;
++
++bool audio_is_cleaning_up(void)
++{
++    return is_cleaning_up;
++}
++
++void audio_cleanup(void)
+ {
+     AudioState *s = &glob_audio_state;
+-    HWVoiceOut *hwo = NULL;
+-    HWVoiceIn *hwi = NULL;
++    HWVoiceOut *hwo, *hwon;
++    HWVoiceIn *hwi, *hwin;
+ 
+-    while ((hwo = audio_pcm_hw_find_any_out (hwo))) {
++    is_cleaning_up = true;
++    QLIST_FOREACH_SAFE(hwo, &glob_audio_state.hw_head_out, entries, hwon) {
+         SWVoiceCap *sc;
+ 
+         if (hwo->enabled) {
+@@ -1767,17 +1775,20 @@ static void audio_atexit (void)
+                 cb->ops.destroy (cb->opaque);
+             }
+         }
++        QLIST_REMOVE(hwo, entries);
+     }
+ 
+-    while ((hwi = audio_pcm_hw_find_any_in (hwi))) {
++    QLIST_FOREACH_SAFE(hwi, &glob_audio_state.hw_head_in, entries, hwin) {
+         if (hwi->enabled) {
+             hwi->pcm_ops->ctl_in (hwi, VOICE_DISABLE);
+         }
+         hwi->pcm_ops->fini_in (hwi);
++        QLIST_REMOVE(hwi, entries);
+     }
+ 
+     if (s->drv) {
+         s->drv->fini (s->drv_opaque);
++        s->drv = NULL;
+     }
+ }
+ 
+@@ -1805,7 +1816,7 @@ static void audio_init (void)
+     QLIST_INIT (&s->hw_head_out);
+     QLIST_INIT (&s->hw_head_in);
+     QLIST_INIT (&s->cap_head);
+-    atexit (audio_atexit);
++    atexit(audio_cleanup);
+ 
+     s->ts = timer_new_ns(QEMU_CLOCK_VIRTUAL, audio_timer, s);
+ 
+@@ -1972,8 +1983,7 @@ CaptureVoiceOut *AUD_add_capture (
+         QLIST_INSERT_HEAD (&s->cap_head, cap, entries);
+         QLIST_INSERT_HEAD (&cap->cb_head, cb, entries);
+ 
+-        hw = NULL;
+-        while ((hw = audio_pcm_hw_find_any_out (hw))) {
++        QLIST_FOREACH(hw, &glob_audio_state.hw_head_out, entries) {
+             audio_attach_capture (hw);
+         }
+         return cap;
+diff --git a/audio/audio.h b/audio/audio.h
+index b41a970..9241f3b 100644
+--- a/audio/audio.h
++++ b/audio/audio.h
+@@ -162,4 +162,6 @@ static inline void *advance (void *p, int incr)
+ int wav_start_capture (CaptureState *s, const char *path, int freq,
+                        int bits, int nchannels);
+ 
++bool audio_is_cleaning_up(void);
++void audio_cleanup(void);
+ #endif  /* audio.h */
+diff --git a/audio/coreaudio.c b/audio/coreaudio.c
+index d4ad224..c751420 100644
+--- a/audio/coreaudio.c
++++ b/audio/coreaudio.c
+@@ -36,8 +36,6 @@
+ #define MAC_OS_X_VERSION_10_6 1060
+ #endif
+ 
+-static int isAtexit;
+-
+ typedef struct {
+     int buffer_frames;
+     int nbuffers;
+@@ -378,11 +376,6 @@ static inline UInt32 isPlaying (AudioDeviceID outputDeviceID)
+     return result;
+ }
+ 
+-static void coreaudio_atexit (void)
+-{
+-    isAtexit = 1;
+-}
+-
+ static int coreaudio_lock (coreaudioVoiceOut *core, const char *fn_name)
+ {
+     int err;
+@@ -630,7 +623,7 @@ static void coreaudio_fini_out (HWVoiceOut *hw)
+     int err;
+     coreaudioVoiceOut *core = (coreaudioVoiceOut *) hw;
+ 
+-    if (!isAtexit) {
++    if (!audio_is_cleaning_up()) {
+         /* stop playback */
+         if (isPlaying(core->outputDeviceID)) {
+             status = AudioDeviceStop(core->outputDeviceID, core->ioprocid);
+@@ -673,7 +666,7 @@ static int coreaudio_ctl_out (HWVoiceOut *hw, int cmd, ...)
+ 
+     case VOICE_DISABLE:
+         /* stop playback */
+-        if (!isAtexit) {
++        if (!audio_is_cleaning_up()) {
+             if (isPlaying(core->outputDeviceID)) {
+                 status = AudioDeviceStop(core->outputDeviceID,
+                                          core->ioprocid);
+@@ -697,7 +690,6 @@ static void *coreaudio_audio_init (void)
+     CoreaudioConf *conf = g_malloc(sizeof(CoreaudioConf));
+     *conf = glob_conf;
+ 
+-    atexit(coreaudio_atexit);
+     return conf;
+ }
+ 
+diff --git a/vl.c b/vl.c
+index e342942..3ccffaa 100644
+--- a/vl.c
++++ b/vl.c
+@@ -4687,6 +4687,7 @@ int main(int argc, char **argv, char **envp)
+ #endif
+     net_cleanup();
+ 
++    audio_cleanup();
+     monitor_cleanup();
+     qemu_chr_cleanup();
+ 
+-- 
+1.8.3.1
+

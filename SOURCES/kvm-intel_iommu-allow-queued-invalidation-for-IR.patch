@@ -1,0 +1,66 @@
+From ca7369dc495e8f7e49fde03070f604b041928cb7 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:27 +0200
+Subject: [PATCH 09/37] intel_iommu: allow queued invalidation for IR
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-9-git-send-email-peterx@redhat.com>
+Patchwork-id: 71993
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 08/34] intel_iommu: allow queued invalidation for IR
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Queued invalidation is required for IR. This patch add basic support for
+interrupt cache invalidate requests. Since we currently have no IR cache
+implemented yet, we can just skip all interrupt cache invalidation
+requests for now.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit b79104722fc77974a222929f5590c3bea2941dd7)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/intel_iommu.c          | 9 +++++++++
+ hw/i386/intel_iommu_internal.h | 2 ++
+ 2 files changed, 11 insertions(+)
+
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index 3ee5782..26e322a 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -1404,6 +1404,15 @@ static bool vtd_process_inv_desc(IntelIOMMUState *s)
+         }
+         break;
+ 
++    case VTD_INV_DESC_IEC:
++        VTD_DPRINTF(INV, "Interrupt Entry Cache Invalidation "
++                    "not implemented yet");
++        /*
++         * Since currently we do not cache interrupt entries, we can
++         * just mark this descriptor as "good" and move on.
++         */
++        break;
++
+     default:
+         VTD_DPRINTF(GENERAL, "error: unkonw Invalidation Descriptor type "
+                     "hi 0x%"PRIx64 " lo 0x%"PRIx64 " type %"PRIu8,
+diff --git a/hw/i386/intel_iommu_internal.h b/hw/i386/intel_iommu_internal.h
+index e5f514c..b648e69 100644
+--- a/hw/i386/intel_iommu_internal.h
++++ b/hw/i386/intel_iommu_internal.h
+@@ -286,6 +286,8 @@ typedef struct VTDInvDesc VTDInvDesc;
+ #define VTD_INV_DESC_TYPE               0xf
+ #define VTD_INV_DESC_CC                 0x1 /* Context-cache Invalidate Desc */
+ #define VTD_INV_DESC_IOTLB              0x2
++#define VTD_INV_DESC_IEC                0x4 /* Interrupt Entry Cache
++                                               Invalidate Descriptor */
+ #define VTD_INV_DESC_WAIT               0x5 /* Invalidation Wait Descriptor */
+ #define VTD_INV_DESC_NONE               0   /* Not an Invalidate Descriptor */
+ 
+-- 
+1.8.3.1
+

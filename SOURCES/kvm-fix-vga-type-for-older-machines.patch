@@ -1,0 +1,50 @@
+From dc393638a6b00d76fde2202e19cba374a2ad286c Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Thu, 16 Jun 2016 09:44:33 +0200
+Subject: [PATCH 09/13] fix vga type for older machines
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1466070273-5859-4-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70634
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH v2 3/3] fix vga type for older machines
+Bugzilla: 1344320
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+7.1.0 and older use cirrus.
+
+In the 7.2.0 and older worlds this came from the .default_display
+field that was only set in rhel720 (to std) and the others
+used the default.  But the new qemu default is std where
+we want our older types to use cirrus so we can't leave it blank;
+be explicit.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+---
+ hw/i386/pc_piix.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc_piix.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/hw/i386/pc_piix.c b/hw/i386/pc_piix.c
+index 9679c33..3778257 100644
+--- a/hw/i386/pc_piix.c
++++ b/hw/i386/pc_piix.c
+@@ -1168,6 +1168,7 @@ static void pc_machine_rhel710_options(MachineClass *m)
+     pc_machine_rhel720_options(m);
+     m->family = "pc_piix_Y";
+     m->desc = "RHEL 7.1.0 PC (i440FX + PIIX, 1996)";
++    m->default_display = "cirrus";
+     SET_MACHINE_COMPAT(m, PC_RHEL7_1_COMPAT);
+ }
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,97 @@
+From 6afae05109fd8a7067d4751810651eb112fefe17 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:37 +0200
+Subject: [PATCH 04/34] cpu: Add a sync version of cpu_remove()
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-5-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71124
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 04/27] cpu: Add a sync version of cpu_remove()
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+This sync API will be used by the CPU hotplug code to wait for the CPU to
+completely get removed before flagging the failure to the device_add
+command.
+
+Sync version of this call is needed to correctly recover from CPU
+realization failures when ->plug() handler fails.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 2c579042e3be50bb40a233a6986348b4f40ed026)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ cpus.c            | 12 ++++++++++++
+ include/qom/cpu.h |  8 ++++++++
+ 2 files changed, 20 insertions(+)
+
+diff --git a/cpus.c b/cpus.c
+index 25ecf3d..c826954 100644
+--- a/cpus.c
++++ b/cpus.c
+@@ -1082,6 +1082,8 @@ static void *qemu_kvm_cpu_thread_fn(void *arg)
+     } while (!cpu->unplug || cpu_can_run(cpu));
+ 
+     qemu_kvm_destroy_vcpu(cpu);
++    cpu->created = false;
++    qemu_cond_signal(&qemu_cpu_cond);
+     qemu_mutex_unlock_iothread();
+     return NULL;
+ }
+@@ -1182,6 +1184,8 @@ static void *qemu_tcg_cpu_thread_fn(void *arg)
+         }
+         if (remove_cpu) {
+             qemu_tcg_destroy_vcpu(remove_cpu);
++            cpu->created = false;
++            qemu_cond_signal(&qemu_cpu_cond);
+             remove_cpu = NULL;
+         }
+     }
+@@ -1347,6 +1351,14 @@ void cpu_remove(CPUState *cpu)
+     qemu_cpu_kick(cpu);
+ }
+ 
++void cpu_remove_sync(CPUState *cpu)
++{
++    cpu_remove(cpu);
++    while (cpu->created) {
++        qemu_cond_wait(&qemu_cpu_cond, &qemu_global_mutex);
++    }
++}
++
+ /* For temporary buffers for forming a name */
+ #define VCPU_THREAD_NAME_SIZE 16
+ 
+diff --git a/include/qom/cpu.h b/include/qom/cpu.h
+index 911bc9f..9c544f6 100644
+--- a/include/qom/cpu.h
++++ b/include/qom/cpu.h
+@@ -763,6 +763,14 @@ void cpu_resume(CPUState *cpu);
+  */
+ void cpu_remove(CPUState *cpu);
+ 
++ /**
++ * cpu_remove_sync:
++ * @cpu: The CPU to remove.
++ *
++ * Requests the CPU to be removed and waits till it is removed.
++ */
++void cpu_remove_sync(CPUState *cpu);
++
+ /**
+  * qemu_init_vcpu:
+  * @cpu: The vCPU to initialize.
+-- 
+1.8.3.1
+

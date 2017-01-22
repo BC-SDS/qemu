@@ -1,0 +1,72 @@
+From 16c3d25e309a53d8cb6a6d7116ef4b6b19f007be Mon Sep 17 00:00:00 2001
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Mon, 4 Jul 2016 00:19:58 +0200
+Subject: [PATCH 04/16] target-i386: Remove SSE4a from qemu64 CPU model
+
+RH-Author: Eduardo Habkost <ehabkost@redhat.com>
+Message-id: <1467591601-12091-2-git-send-email-ehabkost@redhat.com>
+Patchwork-id: 70926
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 1/4] target-i386: Remove SSE4a from qemu64 CPU model
+Bugzilla: 1318386 1321139
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1321139
+Upstream: commit 0909ad24b2769368716c85f79fbb995dbb7041a9
+
+(The upstream commit was already in QEMU 2.6.0, but the change was
+overwritten by the rebased RHEL-7 code.)
+
+SSE4a is not available in any Intel CPU, and we want to make the default
+CPU runnable in most hosts, so it doesn't make sense to enable it by
+default in KVM mode.
+
+We should eventually have all features supported by TCG enabled by
+default in TCG mode, but as we don't have a good mechanism today to
+ensure we have different defaults in KVM and TCG mode, disable SSE4a in
+the qemu64 CPU model entirely.
+
+(cherry picked from commit 0909ad24b2769368716c85f79fbb995dbb7041a9)
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/i386/pc.h | 8 +++++++-
+ target-i386/cpu.c    | 2 +-
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index d30bc1c..c86c826 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -888,7 +888,13 @@ extern void igd_passthrough_isa_bridge_create(PCIBus *bus, uint16_t gpu_dev_id);
+ 		.driver = "Opteron_G5" "-" TYPE_X86_CPU,\
+ 		.property = "rdtscp",\
+ 		.value = "off",\
+-	},
++	},\
++        { /* PC_RHEL7_2_COMPAT */ \
++            .driver   = "qemu64" "-" TYPE_X86_CPU,\
++            .property = "sse4a",\
++            .value    = "on",\
++        },
++
+ 
+ #define PC_RHEL7_1_COMPAT \
+         PC_RHEL7_2_COMPAT \
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index bbeff4b..6bcbf9b 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -708,7 +708,7 @@ static X86CPUDefinition builtin_x86_defs[] = {
+              CPUID_EXT2_PGE | CPUID_EXT2_SYSCALL | CPUID_EXT2_APIC |
+              CPUID_EXT2_CX8 | CPUID_EXT2_MCE | CPUID_EXT2_PAE | CPUID_EXT2_MSR | CPUID_EXT2_TSC |
+              CPUID_EXT2_PSE | CPUID_EXT2_DE | CPUID_EXT2_FPU,
+-        .features[FEAT_8000_0001_ECX] = CPUID_EXT3_SSE4A | CPUID_EXT3_ABM |
++        .features[FEAT_8000_0001_ECX] = CPUID_EXT3_ABM |
+              CPUID_EXT3_SVM | CPUID_EXT3_LAHF_LM,
+         .xlevel = 0x8000000A,
+     },
+-- 
+1.8.3.1
+

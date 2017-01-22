@@ -1,0 +1,57 @@
+From 2f9d4a26b5244e024298f0e339978cf69dd75c92 Mon Sep 17 00:00:00 2001
+From: Xiao Wang <jasowang@redhat.com>
+Date: Thu, 21 Jul 2016 06:40:29 +0200
+Subject: [PATCH 02/35] msix: make msix_clr_pending() visible for clients
+
+RH-Author: Xiao Wang <jasowang@redhat.com>
+Message-id: <1469083246-12219-3-git-send-email-jasowang@redhat.com>
+Patchwork-id: 71249
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 02/19] msix: make msix_clr_pending() visible for clients
+Bugzilla: 1343092
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Dmitry Fleytman <dfleytma@redhat.com>
+
+From: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+
+This function will be used by e1000e device code.
+
+Signed-off-by: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+Signed-off-by: Leonid Bloch <leonid.bloch@ravellosystems.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+(cherry picked from commit 3bdfaabbcf0e91d16e90691cf8bd4a836c67279a)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/pci/msix.c         | 2 +-
+ include/hw/pci/msix.h | 1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/hw/pci/msix.c b/hw/pci/msix.c
+index b75f0e9..0ec1cb1 100644
+--- a/hw/pci/msix.c
++++ b/hw/pci/msix.c
+@@ -72,7 +72,7 @@ void msix_set_pending(PCIDevice *dev, unsigned int vector)
+     *msix_pending_byte(dev, vector) |= msix_pending_mask(vector);
+ }
+ 
+-static void msix_clr_pending(PCIDevice *dev, int vector)
++void msix_clr_pending(PCIDevice *dev, int vector)
+ {
+     *msix_pending_byte(dev, vector) &= ~msix_pending_mask(vector);
+ }
+diff --git a/include/hw/pci/msix.h b/include/hw/pci/msix.h
+index 72e5f93..048a29d 100644
+--- a/include/hw/pci/msix.h
++++ b/include/hw/pci/msix.h
+@@ -29,6 +29,7 @@ int msix_present(PCIDevice *dev);
+ 
+ bool msix_is_masked(PCIDevice *dev, unsigned vector);
+ void msix_set_pending(PCIDevice *dev, unsigned vector);
++void msix_clr_pending(PCIDevice *dev, int vector);
+ 
+ int msix_vector_use(PCIDevice *dev, unsigned vector);
+ void msix_vector_unuse(PCIDevice *dev, unsigned vector);
+-- 
+1.8.3.1
+

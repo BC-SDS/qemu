@@ -1,0 +1,41 @@
+From a41119d7095beeb6819d32a0070d22e78213a0f9 Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Wed, 22 Jun 2016 14:03:21 +0200
+Subject: [PATCH 07/16] Disable igd-passthrough-i440FX
+
+RH-Author: Miroslav Rezanina <mrezanin@redhat.com>
+Message-id: <7103944038111eab2e2628bfa2b1b2c503c76801.1466603432.git.mrezanin@redhat.com>
+Patchwork-id: 70754
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCHv3 08/10] Disable igd-passthrough-i440FX
+Bugzilla: 1333282
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+From: Miroslav Rezanina <mrezanin@redhat.com>
+
+There's no default-configs option for igd-passthrough-i440FX device and we
+can't skip file with it so we disable type registration instead.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/pci-host/piix.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/hw/pci-host/piix.c b/hw/pci-host/piix.c
+index c189011..43169bc 100644
+--- a/hw/pci-host/piix.c
++++ b/hw/pci-host/piix.c
+@@ -879,7 +879,9 @@ static const TypeInfo i440fx_pcihost_info = {
+ static void i440fx_register_types(void)
+ {
+     type_register_static(&i440fx_info);
++#if 0 /*  Disabled in Red Hat Enterprise Linux */
+     type_register_static(&igd_passthrough_i440fx_info);
++#endif
+     type_register_static(&piix3_pci_type_info);
+     type_register_static(&piix3_info);
+     type_register_static(&piix3_xen_info);
+-- 
+1.8.3.1
+

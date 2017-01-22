@@ -1,0 +1,204 @@
+From d15927597a9f2b2aa7c8ef0164dbe4bae771a16b Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 9 Aug 2016 02:34:43 +0200
+Subject: [PATCH 10/10] spapr: Correctly set query_hotpluggable_cpus hook based
+ on machine version
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1470710083-17172-3-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71888
+O-Subject: [PATCH 2/2] spapr: Correctly set query_hotpluggable_cpus hook based on machine version
+Bugzilla: 1362019
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+
+From: David Gibson <david@gibson.dropbear.id.au>
+
+Prior to c8721d3 "spapr: Error out when CPU hotplug is attempted on older
+pseries machines", attempting to use query-hotpluggable-cpus on pseries-2.6
+and earlier machine types would SEGV.
+
+That change fixed that, but due to some unexpected interactions in init
+order and a brown-paper-bag worthy failure to test, it accidentally
+disabled query-hotpluggable-cpus for all pseries machine types, including
+the current one which should allow it.
+
+In fact, query_hotpluggable_cpus needs to be non-NULL when and only when
+the dr_cpu_enabled flag in sPAPRMachineClass is set, which makes
+dr_cpu_enabled itself redundant.
+
+This patch removes dr_cpu_enabled, instead directly setting
+query_hotpluggable_cpus from the machine class_init functions, and using
+that to determine the availability of CPU hotplug when necessary.
+
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 3c0c47e3464f3c54bd3f1cc6d4da2cbf7465e295)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	hw/ppc/spapr.c
+
+Adapt machine type changes from the upstream machine types to the RHEL
+specific machine types.
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1362019
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+---
+ hw/ppc/spapr.c          | 22 +++++++++-------------
+ hw/ppc/spapr_cpu_core.c |  7 ++-----
+ include/hw/ppc/spapr.h  |  1 -
+ 3 files changed, 11 insertions(+), 19 deletions(-)
+
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index 7604f20..764fe40 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -916,6 +916,7 @@ static void spapr_finalize_fdt(sPAPRMachineState *spapr,
+                                hwaddr rtas_size)
+ {
+     MachineState *machine = MACHINE(qdev_get_machine());
++    MachineClass *mc = MACHINE_GET_CLASS(machine);
+     sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(machine);
+     const char *boot_device = machine->boot_order;
+     int ret, i;
+@@ -998,7 +999,7 @@ static void spapr_finalize_fdt(sPAPRMachineState *spapr,
+         _FDT(spapr_drc_populate_dt(fdt, 0, NULL, SPAPR_DR_CONNECTOR_TYPE_LMB));
+     }
+ 
+-    if (smc->dr_cpu_enabled) {
++    if (mc->query_hotpluggable_cpus) {
+         int offset = fdt_path_offset(fdt, "/cpus");
+         ret = spapr_drc_populate_dt(fdt, offset, NULL,
+                                     SPAPR_DR_CONNECTOR_TYPE_CPU);
+@@ -1690,6 +1691,7 @@ static void spapr_validate_node_memory(MachineState *machine, Error **errp)
+ static void ppc_spapr_init(MachineState *machine)
+ {
+     sPAPRMachineState *spapr = SPAPR_MACHINE(machine);
++    MachineClass *mc = MACHINE_GET_CLASS(machine);
+     sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(machine);
+     const char *kernel_filename = machine->kernel_filename;
+     const char *kernel_cmdline = machine->kernel_cmdline;
+@@ -1711,7 +1713,7 @@ static void ppc_spapr_init(MachineState *machine)
+     int spapr_cores = smp_cpus / smp_threads;
+     int spapr_max_cores = max_cpus / smp_threads;
+ 
+-    if (smc->dr_cpu_enabled) {
++    if (mc->query_hotpluggable_cpus) {
+         if (smp_cpus % smp_threads) {
+             error_report("smp_cpus (%u) must be multiple of threads (%u)",
+                          smp_cpus, smp_threads);
+@@ -1781,7 +1783,7 @@ static void ppc_spapr_init(MachineState *machine)
+         machine->cpu_model = kvm_enabled() ? "host" : "POWER7";
+     }
+ 
+-    if (smc->dr_cpu_enabled) {
++    if (mc->query_hotpluggable_cpus) {
+         char *type = spapr_get_cpu_core_type(machine->cpu_model);
+ 
+         spapr->cores = g_new0(Object *, spapr_max_cores);
+@@ -2290,12 +2292,12 @@ static void spapr_machine_device_plug(HotplugHandler *hotplug_dev,
+ static void spapr_machine_device_unplug(HotplugHandler *hotplug_dev,
+                                       DeviceState *dev, Error **errp)
+ {
+-    sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(qdev_get_machine());
++    MachineClass *mc = MACHINE_GET_CLASS(qdev_get_machine());
+ 
+     if (object_dynamic_cast(OBJECT(dev), TYPE_PC_DIMM)) {
+         error_setg(errp, "Memory hot unplug not supported by sPAPR");
+     } else if (object_dynamic_cast(OBJECT(dev), TYPE_SPAPR_CPU_CORE)) {
+-        if (!smc->dr_cpu_enabled) {
++        if (!mc->query_hotpluggable_cpus) {
+             error_setg(errp, "CPU hot unplug not supported on this machine");
+             return;
+         }
+@@ -2333,11 +2335,8 @@ static HotpluggableCPUList *spapr_query_hotpluggable_cpus(MachineState *machine)
+     int i;
+     HotpluggableCPUList *head = NULL;
+     sPAPRMachineState *spapr = SPAPR_MACHINE(machine);
+-    sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(machine);
+     int spapr_max_cores = max_cpus / smp_threads;
+ 
+-    g_assert(smc->dr_cpu_enabled);
+-
+     for (i = 0; i < spapr_max_cores; i++) {
+         HotpluggableCPUList *list_item = g_new0(typeof(*list_item), 1);
+         HotpluggableCPU *cpu_item = g_new0(typeof(*cpu_item), 1);
+@@ -2392,12 +2391,9 @@ static void spapr_machine_class_init(ObjectClass *oc, void *data)
+     hc->plug = spapr_machine_device_plug;
+     hc->unplug = spapr_machine_device_unplug;
+     mc->cpu_index_to_socket_id = spapr_cpu_index_to_socket_id;
+-    if (smc->dr_cpu_enabled) {
+-        mc->query_hotpluggable_cpus = spapr_query_hotpluggable_cpus;
+-    }
+ 
+     smc->dr_lmb_enabled = true;
+-    smc->dr_cpu_enabled = true;
++    mc->query_hotpluggable_cpus = spapr_query_hotpluggable_cpus;
+     fwc->get_dev_path = spapr_get_fw_dev_path;
+     nc->nmi_monitor_handler = spapr_nmi;
+ }
+@@ -2628,7 +2624,7 @@ static void spapr_machine_rhel720_class_options(MachineClass *mc)
+ 
+     spapr_machine_rhel730_class_options(mc);
+     smc->use_ohci_by_default = true;
+-    smc->dr_cpu_enabled = false;
++    mc->query_hotpluggable_cpus = NULL;
+     SET_MACHINE_COMPAT(mc, SPAPR_COMPAT_RHEL7_2);
+ }
+ 
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index 0774375..ab392e4 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -153,7 +153,6 @@ void spapr_core_unplug(HotplugHandler *hotplug_dev, DeviceState *dev,
+ void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+                      Error **errp)
+ {
+-    sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(OBJECT(hotplug_dev));
+     sPAPRMachineState *spapr = SPAPR_MACHINE(OBJECT(hotplug_dev));
+     sPAPRCPUCore *core = SPAPR_CPU_CORE(OBJECT(dev));
+     CPUCore *cc = CPU_CORE(dev);
+@@ -166,8 +165,6 @@ void spapr_core_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+     int index = cc->core_id / smp_threads;
+     int smt = kvmppc_smt_threads();
+ 
+-    g_assert(smc->dr_cpu_enabled);
+-
+     drc = spapr_dr_connector_by_id(SPAPR_DR_CONNECTOR_TYPE_CPU, index * smt);
+     spapr->cores[index] = OBJECT(dev);
+ 
+@@ -209,7 +206,7 @@ void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+                          Error **errp)
+ {
+     MachineState *machine = MACHINE(OBJECT(hotplug_dev));
+-    sPAPRMachineClass *smc = SPAPR_MACHINE_GET_CLASS(OBJECT(hotplug_dev));
++    MachineClass *mc = MACHINE_GET_CLASS(hotplug_dev);
+     sPAPRMachineState *spapr = SPAPR_MACHINE(OBJECT(hotplug_dev));
+     int spapr_max_cores = max_cpus / smp_threads;
+     int index;
+@@ -218,7 +215,7 @@ void spapr_core_pre_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
+     char *base_core_type = spapr_get_cpu_core_type(machine->cpu_model);
+     const char *type = object_get_typename(OBJECT(dev));
+ 
+-    if (!smc->dr_cpu_enabled) {
++    if (!mc->query_hotpluggable_cpus) {
+         error_setg(&local_err, "CPU hotplug not supported for this machine");
+         goto out;
+     }
+diff --git a/include/hw/ppc/spapr.h b/include/hw/ppc/spapr.h
+index 3c910ba..2ad4ce8 100644
+--- a/include/hw/ppc/spapr.h
++++ b/include/hw/ppc/spapr.h
+@@ -38,7 +38,6 @@ struct sPAPRMachineClass {
+ 
+     /*< public >*/
+     bool dr_lmb_enabled;       /* enable dynamic-reconfig/hotplug of LMBs */
+-    bool dr_cpu_enabled;       /* enable dynamic-reconfig/hotplug of CPUs */
+     bool use_ohci_by_default;  /* use USB-OHCI instead of XHCI */
+ };
+ 
+-- 
+1.8.3.1
+

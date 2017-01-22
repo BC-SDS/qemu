@@ -1,0 +1,271 @@
+From df8d85f51719ec92c63c2ad7940e0e7b6f4e7a35 Mon Sep 17 00:00:00 2001
+From: Maxime Coquelin <maxime.coquelin@redhat.com>
+Date: Wed, 14 Sep 2016 07:49:41 +0200
+Subject: [PATCH 04/18] virtio-bus: Plug devices after features are negotiated
+
+RH-Author: Maxime Coquelin <maxime.coquelin@redhat.com>
+Message-id: <1473839381-4477-3-git-send-email-maxime.coquelin@redhat.com>
+Patchwork-id: 72305
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/2] virtio-bus: Plug devices after features are negotiated
+Bugzilla: 1370005
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: wexu@redhat.com
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+Currently, devices are plugged before features are negotiated.
+If the backend doesn't support VIRTIO_F_VERSION_1, the transport
+needs to rewind some settings.
+
+This is the case for CCW, for which a post_plugged callback had
+been introduced, where max_rev field is just updated if
+VIRTIO_F_VERSION_1 is not supported by the backend.
+For PCI, implementing post_plugged would be much more
+complicated, so it needs to know whether the backend supports
+VIRTIO_F_VERSION_1 at plug time.
+
+Currently, nothing is done for PCI. Modern capabilities get
+exposed to the guest even if VIRTIO_F_VERSION_1 is not supported
+by the backend, which confuses the guest.
+
+This patch replaces existing post_plugged solution with an
+approach that fits with both transports.
+Features negotiation is performed before ->device_plugged() call.
+A pre_plugged callback is introduced so that the transports can
+set their supported features.
+
+Cc: Michael S. Tsirkin <mst@redhat.com>
+Cc: qemu-stable@nongnu.org
+Tested-by: Cornelia Huck <cornelia.huck@de.ibm.com> [ccw]
+Reviewed-by: Cornelia Huck <cornelia.huck@de.ibm.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+(cherry picked from commit 5fbff9cca5f20432d3fdb4eee27387a9beb94e17)
+Signed-off-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/s390x/virtio-ccw.c          | 30 +++++++++++++++---------------
+ hw/virtio/virtio-bus.c         |  9 +++++----
+ hw/virtio/virtio-pci.c         | 36 ++++++++++++++++++++++++++++++++----
+ hw/virtio/virtio-pci.h         |  5 +++++
+ include/hw/virtio/virtio-bus.h | 10 +++++-----
+ 5 files changed, 62 insertions(+), 28 deletions(-)
+
+diff --git a/hw/s390x/virtio-ccw.c b/hw/s390x/virtio-ccw.c
+index d51642d..d58c971 100644
+--- a/hw/s390x/virtio-ccw.c
++++ b/hw/s390x/virtio-ccw.c
+@@ -1466,6 +1466,16 @@ static int virtio_ccw_load_config(DeviceState *d, QEMUFile *f)
+     return 0;
+ }
+ 
++static void virtio_ccw_pre_plugged(DeviceState *d, Error **errp)
++{
++   VirtioCcwDevice *dev = VIRTIO_CCW_DEVICE(d);
++   VirtIODevice *vdev = virtio_bus_get_device(&dev->bus);
++
++    if (dev->max_rev >= 1) {
++        virtio_add_feature(&vdev->host_features, VIRTIO_F_VERSION_1);
++    }
++}
++
+ /* This is called by virtio-bus just after the device is plugged. */
+ static void virtio_ccw_device_plugged(DeviceState *d, Error **errp)
+ {
+@@ -1474,6 +1484,10 @@ static void virtio_ccw_device_plugged(DeviceState *d, Error **errp)
+     SubchDev *sch = dev->sch;
+     int n = virtio_get_num_queues(vdev);
+ 
++    if (!virtio_has_feature(vdev->host_features, VIRTIO_F_VERSION_1)) {
++        dev->max_rev = 0;
++    }
++
+     if (virtio_get_num_queues(vdev) > VIRTIO_CCW_QUEUE_MAX) {
+         error_setg(errp, "The nubmer of virtqueues %d "
+                    "exceeds ccw limit %d", n,
+@@ -1487,25 +1501,11 @@ static void virtio_ccw_device_plugged(DeviceState *d, Error **errp)
+ 
+     sch->id.cu_model = virtio_bus_get_vdev_id(&dev->bus);
+ 
+-    if (dev->max_rev >= 1) {
+-        virtio_add_feature(&vdev->host_features, VIRTIO_F_VERSION_1);
+-    }
+ 
+     css_generate_sch_crws(sch->cssid, sch->ssid, sch->schid,
+                           d->hotplugged, 1);
+ }
+ 
+-static void virtio_ccw_post_plugged(DeviceState *d, Error **errp)
+-{
+-   VirtioCcwDevice *dev = VIRTIO_CCW_DEVICE(d);
+-   VirtIODevice *vdev = virtio_bus_get_device(&dev->bus);
+-
+-   if (!virtio_host_has_feature(vdev, VIRTIO_F_VERSION_1)) {
+-        /* A backend didn't support modern virtio. */
+-       dev->max_rev = 0;
+-   }
+-}
+-
+ static void virtio_ccw_device_unplugged(DeviceState *d)
+ {
+     VirtioCcwDevice *dev = VIRTIO_CCW_DEVICE(d);
+@@ -1841,8 +1841,8 @@ static void virtio_ccw_bus_class_init(ObjectClass *klass, void *data)
+     k->load_queue = virtio_ccw_load_queue;
+     k->save_config = virtio_ccw_save_config;
+     k->load_config = virtio_ccw_load_config;
++    k->pre_plugged = virtio_ccw_pre_plugged;
+     k->device_plugged = virtio_ccw_device_plugged;
+-    k->post_plugged = virtio_ccw_post_plugged;
+     k->device_unplugged = virtio_ccw_device_unplugged;
+ }
+ 
+diff --git a/hw/virtio/virtio-bus.c b/hw/virtio/virtio-bus.c
+index 574f0e2..5e6a11c 100644
+--- a/hw/virtio/virtio-bus.c
++++ b/hw/virtio/virtio-bus.c
+@@ -49,16 +49,17 @@ void virtio_bus_device_plugged(VirtIODevice *vdev, Error **errp)
+ 
+     DPRINTF("%s: plug device.\n", qbus->name);
+ 
+-    if (klass->device_plugged != NULL) {
+-        klass->device_plugged(qbus->parent, errp);
++    if (klass->pre_plugged != NULL) {
++        klass->pre_plugged(qbus->parent, errp);
+     }
+ 
+     /* Get the features of the plugged device. */
+     assert(vdc->get_features != NULL);
+     vdev->host_features = vdc->get_features(vdev, vdev->host_features,
+                                             errp);
+-    if (klass->post_plugged != NULL) {
+-        klass->post_plugged(qbus->parent, errp);
++
++    if (klass->device_plugged != NULL) {
++        klass->device_plugged(qbus->parent, errp);
+     }
+ }
+ 
+diff --git a/hw/virtio/virtio-pci.c b/hw/virtio/virtio-pci.c
+index 8e5ef9f..abc1221 100644
+--- a/hw/virtio/virtio-pci.c
++++ b/hw/virtio/virtio-pci.c
+@@ -1617,18 +1617,48 @@ static void virtio_pci_modern_io_region_unmap(VirtIOPCIProxy *proxy,
+                                 &region->mr);
+ }
+ 
++static void virtio_pci_pre_plugged(DeviceState *d, Error **errp)
++{
++    VirtIOPCIProxy *proxy = VIRTIO_PCI(d);
++    VirtIODevice *vdev = virtio_bus_get_device(&proxy->bus);
++
++    if (virtio_pci_modern(proxy)) {
++        virtio_add_feature(&vdev->host_features, VIRTIO_F_VERSION_1);
++    }
++
++    virtio_add_feature(&vdev->host_features, VIRTIO_F_BAD_FEATURE);
++}
++
+ /* This is called by virtio-bus just after the device is plugged. */
+ static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
+ {
+     VirtIOPCIProxy *proxy = VIRTIO_PCI(d);
+     VirtioBusState *bus = &proxy->bus;
+     bool legacy = virtio_pci_legacy(proxy);
+-    bool modern = virtio_pci_modern(proxy);
++    bool modern;
+     bool modern_pio = proxy->flags & VIRTIO_PCI_FLAG_MODERN_PIO_NOTIFY;
+     uint8_t *config;
+     uint32_t size;
+     VirtIODevice *vdev = virtio_bus_get_device(&proxy->bus);
+ 
++    /*
++     * Virtio capabilities present without
++     * VIRTIO_F_VERSION_1 confuses guests
++     */
++    if (!virtio_has_feature(vdev->host_features, VIRTIO_F_VERSION_1)) {
++        virtio_pci_disable_modern(proxy);
++
++        if (!legacy) {
++            error_setg(errp, "Device doesn't support modern mode, and legacy"
++                             " mode is disabled");
++            error_append_hint(errp, "Set disable-legacy to off\n");
++
++            return;
++        }
++    }
++
++    modern = virtio_pci_modern(proxy);
++
+     config = proxy->pci_dev.config;
+     if (proxy->class_code) {
+         pci_config_set_class(config, proxy->class_code);
+@@ -1670,7 +1700,6 @@ static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
+ 
+         struct virtio_pci_cfg_cap *cfg_mask;
+ 
+-        virtio_add_feature(&vdev->host_features, VIRTIO_F_VERSION_1);
+         virtio_pci_modern_regions_init(proxy);
+ 
+         virtio_pci_modern_mem_region_map(proxy, &proxy->common, &cap);
+@@ -1735,8 +1764,6 @@ static void virtio_pci_device_plugged(DeviceState *d, Error **errp)
+     if (!kvm_has_many_ioeventfds()) {
+         proxy->flags &= ~VIRTIO_PCI_FLAG_USE_IOEVENTFD;
+     }
+-
+-    virtio_add_feature(&vdev->host_features, VIRTIO_F_BAD_FEATURE);
+ }
+ 
+ static void virtio_pci_device_unplugged(DeviceState *d)
+@@ -2501,6 +2528,7 @@ static void virtio_pci_bus_class_init(ObjectClass *klass, void *data)
+     k->set_host_notifier = virtio_pci_set_host_notifier;
+     k->set_guest_notifiers = virtio_pci_set_guest_notifiers;
+     k->vmstate_change = virtio_pci_vmstate_change;
++    k->pre_plugged = virtio_pci_pre_plugged;
+     k->device_plugged = virtio_pci_device_plugged;
+     k->device_unplugged = virtio_pci_device_unplugged;
+     k->query_nvectors = virtio_pci_query_nvectors;
+diff --git a/hw/virtio/virtio-pci.h b/hw/virtio/virtio-pci.h
+index 25fbf8a..4e976b3 100644
+--- a/hw/virtio/virtio-pci.h
++++ b/hw/virtio/virtio-pci.h
+@@ -172,6 +172,11 @@ static inline void virtio_pci_force_virtio_1(VirtIOPCIProxy *proxy)
+     proxy->disable_legacy = ON_OFF_AUTO_ON;
+ }
+ 
++static inline void virtio_pci_disable_modern(VirtIOPCIProxy *proxy)
++{
++    proxy->disable_modern = true;
++}
++
+ /*
+  * virtio-scsi-pci: This extends VirtioPCIProxy.
+  */
+diff --git a/include/hw/virtio/virtio-bus.h b/include/hw/virtio/virtio-bus.h
+index 3f2c136..c34c1e5 100644
+--- a/include/hw/virtio/virtio-bus.h
++++ b/include/hw/virtio/virtio-bus.h
+@@ -55,16 +55,16 @@ typedef struct VirtioBusClass {
+     int (*set_host_notifier)(DeviceState *d, int n, bool assigned);
+     void (*vmstate_change)(DeviceState *d, bool running);
+     /*
++     * Expose the features the transport layer supports before
++     * the negotiation takes place.
++     */
++    void (*pre_plugged)(DeviceState *d, Error **errp);
++    /*
+      * transport independent init function.
+      * This is called by virtio-bus just after the device is plugged.
+      */
+     void (*device_plugged)(DeviceState *d, Error **errp);
+     /*
+-     * Re-evaluate setup after feature bits have been validated
+-     * by the device backend.
+-     */
+-    void (*post_plugged)(DeviceState *d, Error **errp);
+-    /*
+      * transport independent exit function.
+      * This is called by virtio-bus just before the device is unplugged.
+      */
+-- 
+1.8.3.1
+

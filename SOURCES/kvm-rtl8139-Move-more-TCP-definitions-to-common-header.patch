@@ -1,0 +1,65 @@
+From 621c1ccde19defb21ec88f6b062adddff9959816 Mon Sep 17 00:00:00 2001
+From: Xiao Wang <jasowang@redhat.com>
+Date: Thu, 21 Jul 2016 06:40:38 +0200
+Subject: [PATCH 11/35] rtl8139: Move more TCP definitions to common header
+
+RH-Author: Xiao Wang <jasowang@redhat.com>
+Message-id: <1469083246-12219-12-git-send-email-jasowang@redhat.com>
+Patchwork-id: 71258
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 11/19] rtl8139: Move more TCP definitions to common header
+Bugzilla: 1343092
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Dmitry Fleytman <dfleytma@redhat.com>
+
+From: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+
+Signed-off-by: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+Signed-off-by: Leonid Bloch <leonid.bloch@ravellosystems.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+(cherry picked from commit 66409b7c8bd0ebb075a6af8cbc7846fc0a95107d)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/rtl8139.c  | 5 -----
+ include/net/eth.h | 8 ++++++++
+ 2 files changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/hw/net/rtl8139.c b/hw/net/rtl8139.c
+index 959a48d..32d6673 100644
+--- a/hw/net/rtl8139.c
++++ b/hw/net/rtl8139.c
+@@ -1867,11 +1867,6 @@ static int rtl8139_transmit_one(RTL8139State *s, int descriptor)
+     return 1;
+ }
+ 
+-/* structures and macros for task offloading */
+-#define TCP_HEADER_DATA_OFFSET(tcp) (((be16_to_cpu(tcp->th_offset_flags) >> 12)&0xf) << 2)
+-#define TCP_FLAGS_ONLY(flags) ((flags)&0x3f)
+-#define TCP_HEADER_FLAGS(tcp) TCP_FLAGS_ONLY(be16_to_cpu(tcp->th_offset_flags))
+-
+ #define TCP_HEADER_CLEAR_FLAGS(tcp, off) ((tcp)->th_offset_flags &= cpu_to_be16(~TCP_FLAGS_ONLY(off)))
+ 
+ /* produces ones' complement sum of data */
+diff --git a/include/net/eth.h b/include/net/eth.h
+index 18d0be3..5a32259 100644
+--- a/include/net/eth.h
++++ b/include/net/eth.h
+@@ -67,6 +67,14 @@ typedef struct tcp_header {
+     uint16_t th_urp;            /* urgent pointer */
+ } tcp_header;
+ 
++#define TCP_FLAGS_ONLY(flags) ((flags) & 0x3f)
++
++#define TCP_HEADER_FLAGS(tcp) \
++    TCP_FLAGS_ONLY(be16_to_cpu((tcp)->th_offset_flags))
++
++#define TCP_HEADER_DATA_OFFSET(tcp) \
++    (((be16_to_cpu((tcp)->th_offset_flags) >> 12) & 0xf) << 2)
++
+ typedef struct udp_header {
+     uint16_t uh_sport; /* source port */
+     uint16_t uh_dport; /* destination port */
+-- 
+1.8.3.1
+

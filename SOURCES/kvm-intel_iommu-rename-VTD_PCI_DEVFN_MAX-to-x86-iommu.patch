@@ -1,0 +1,104 @@
+From 743b8fb0ec6aa7345fcbacf09e0bcbddf176f9eb Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:23 +0200
+Subject: [PATCH 05/37] intel_iommu: rename VTD_PCI_DEVFN_MAX to x86-iommu
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-5-git-send-email-peterx@redhat.com>
+Patchwork-id: 71989
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 04/34] intel_iommu: rename VTD_PCI_DEVFN_MAX to x86-iommu
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 04af0e18bc93c49faa94921b4326ef9261a2fa27)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/intel_iommu.c         | 11 +++++++----
+ include/hw/i386/intel_iommu.h |  1 -
+ include/hw/i386/x86-iommu.h   |  2 ++
+ 3 files changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index a430d7d..3ee5782 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -26,6 +26,8 @@
+ #include "hw/pci/pci.h"
+ #include "hw/pci/pci_bus.h"
+ #include "hw/i386/pc.h"
++#include "hw/boards.h"
++#include "hw/i386/x86-iommu.h"
+ 
+ /*#define DEBUG_INTEL_IOMMU*/
+ #ifdef DEBUG_INTEL_IOMMU
+@@ -192,7 +194,7 @@ static void vtd_reset_context_cache(IntelIOMMUState *s)
+ 
+     VTD_DPRINTF(CACHE, "global context_cache_gen=1");
+     while (g_hash_table_iter_next (&bus_it, NULL, (void**)&vtd_bus)) {
+-        for (devfn_it = 0; devfn_it < VTD_PCI_DEVFN_MAX; ++devfn_it) {
++        for (devfn_it = 0; devfn_it < X86_IOMMU_PCI_DEVFN_MAX; ++devfn_it) {
+             vtd_as = vtd_bus->dev_as[devfn_it];
+             if (!vtd_as) {
+                 continue;
+@@ -964,7 +966,7 @@ static void vtd_context_device_invalidate(IntelIOMMUState *s,
+     vtd_bus = vtd_find_as_from_bus_num(s, VTD_SID_TO_BUS(source_id));
+     if (vtd_bus) {
+         devfn = VTD_SID_TO_DEVFN(source_id);
+-        for (devfn_it = 0; devfn_it < VTD_PCI_DEVFN_MAX; ++devfn_it) {
++        for (devfn_it = 0; devfn_it < X86_IOMMU_PCI_DEVFN_MAX; ++devfn_it) {
+             vtd_as = vtd_bus->dev_as[devfn_it];
+             if (vtd_as && ((devfn_it & mask) == (devfn & mask))) {
+                 VTD_DPRINTF(INV, "invalidate context-cahce of devfn 0x%"PRIx16,
+@@ -1916,7 +1918,8 @@ VTDAddressSpace *vtd_find_add_as(IntelIOMMUState *s, PCIBus *bus, int devfn)
+ 
+     if (!vtd_bus) {
+         /* No corresponding free() */
+-        vtd_bus = g_malloc0(sizeof(VTDBus) + sizeof(VTDAddressSpace *) * VTD_PCI_DEVFN_MAX);
++        vtd_bus = g_malloc0(sizeof(VTDBus) + sizeof(VTDAddressSpace *) * \
++                            X86_IOMMU_PCI_DEVFN_MAX);
+         vtd_bus->bus = bus;
+         key = (uintptr_t)bus;
+         g_hash_table_insert(s->vtd_as_by_busptr, &key, vtd_bus);
+@@ -2032,7 +2035,7 @@ static AddressSpace *vtd_host_dma_iommu(PCIBus *bus, void *opaque, int devfn)
+     IntelIOMMUState *s = opaque;
+     VTDAddressSpace *vtd_as;
+ 
+-    assert(0 <= devfn && devfn <= VTD_PCI_DEVFN_MAX);
++    assert(0 <= devfn && devfn <= X86_IOMMU_PCI_DEVFN_MAX);
+ 
+     vtd_as = vtd_find_add_as(s, bus, devfn);
+     return &vtd_as->as;
+diff --git a/include/hw/i386/intel_iommu.h b/include/hw/i386/intel_iommu.h
+index 680a0c4..0794309 100644
+--- a/include/hw/i386/intel_iommu.h
++++ b/include/hw/i386/intel_iommu.h
+@@ -35,7 +35,6 @@
+ #define VTD_PCI_BUS_MAX             256
+ #define VTD_PCI_SLOT_MAX            32
+ #define VTD_PCI_FUNC_MAX            8
+-#define VTD_PCI_DEVFN_MAX           256
+ #define VTD_PCI_SLOT(devfn)         (((devfn) >> 3) & 0x1f)
+ #define VTD_PCI_FUNC(devfn)         ((devfn) & 0x07)
+ #define VTD_SID_TO_BUS(sid)         (((sid) >> 8) & 0xff)
+diff --git a/include/hw/i386/x86-iommu.h b/include/hw/i386/x86-iommu.h
+index 924f39a..fac693d 100644
+--- a/include/hw/i386/x86-iommu.h
++++ b/include/hw/i386/x86-iommu.h
+@@ -30,6 +30,8 @@
+ #define  X86_IOMMU_GET_CLASS(obj) \
+     OBJECT_GET_CLASS(X86IOMMUClass, obj, TYPE_X86_IOMMU_DEVICE)
+ 
++#define X86_IOMMU_PCI_DEVFN_MAX           256
++
+ typedef struct X86IOMMUState X86IOMMUState;
+ typedef struct X86IOMMUClass X86IOMMUClass;
+ 
+-- 
+1.8.3.1
+

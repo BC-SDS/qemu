@@ -1,0 +1,59 @@
+From ce615b0b7bb3ef996e3505fe3d9f9ce409738419 Mon Sep 17 00:00:00 2001
+From: Fam Zheng <famz@redhat.com>
+Date: Wed, 22 Jun 2016 03:07:57 +0200
+Subject: [PATCH 25/25] block: process before_write_notifiers in
+ bdrv_co_discard
+
+RH-Author: Fam Zheng <famz@redhat.com>
+Message-id: <20160622030757.21852-4-famz@redhat.com>
+Patchwork-id: 70739
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 3/3] block: process before_write_notifiers in bdrv_co_discard
+Bugzilla: 1348763
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+
+From: Denis V. Lunev <den@openvz.org>
+
+This is mandatory for correct backup creation. In the other case the
+content under this area would be lost.
+
+Dirty bits are set exactly like in bdrv_aligned_pwritev, i.e. they are set
+even if notifier has returned a error.
+
+Signed-off-by: Denis V. Lunev <den@openvz.org>
+Reviewed-by: Vladimir Sementsov-Ogievskiy<vsementsov@virtuozzo.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Message-id: 1466093381-6120-4-git-send-email-den@openvz.org
+CC: Fam Zheng <famz@redhat.com>
+CC: Stefan Hajnoczi <stefanha@redhat.com>
+CC: Kevin Wolf <kwolf@redhat.com>
+CC: Max Reitz <mreitz@redhat.com>
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+(cherry picked from commit ec050f77a549b300ee444634bccd9ec05d134c4d)
+Signed-off-by: Fam Zheng <famz@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ block/io.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/block/io.c b/block/io.c
+index fda2e32..83c4367 100644
+--- a/block/io.c
++++ b/block/io.c
+@@ -2517,6 +2517,11 @@ int coroutine_fn bdrv_co_discard(BlockDriverState *bs, int64_t sector_num,
+     tracked_request_begin(&req, bs, sector_num << BDRV_SECTOR_BITS,
+                           nb_sectors << BDRV_SECTOR_BITS, BDRV_TRACKED_DISCARD);
+ 
++    ret = notifier_with_return_list_notify(&bs->before_write_notifiers, &req);
++    if (ret < 0) {
++        goto out;
++    }
++
+     max_discard = MIN_NON_ZERO(bs->bl.max_discard, BDRV_REQUEST_MAX_SECTORS);
+     while (nb_sectors > 0) {
+         int ret;
+-- 
+1.8.3.1
+

@@ -1,0 +1,57 @@
+From 2ed198fe224e7f0bf32c34b83df55a411c03929c Mon Sep 17 00:00:00 2001
+From: Maxime Coquelin <maxime.coquelin@redhat.com>
+Date: Wed, 14 Sep 2016 07:49:40 +0200
+Subject: [PATCH 03/18] virtio-pci: error out when both legacy and modern modes
+ are disabled
+
+RH-Author: Maxime Coquelin <maxime.coquelin@redhat.com>
+Message-id: <1473839381-4477-2-git-send-email-maxime.coquelin@redhat.com>
+Patchwork-id: 72304
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/2] virtio-pci: error out when both legacy and modern modes are disabled
+Bugzilla: 1370005
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: wexu@redhat.com
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Greg Kurz <gkurz@linux.vnet.ibm.com>
+
+Without presuming if we got there because of a user mistake or some
+more subtle bug in the tooling, it really does not make sense to
+implement a non-functional device.
+
+Signed-off-by: Greg Kurz <gkurz@linux.vnet.ibm.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+Reviewed-by: Cornelia Huck <cornelia.huck@de.ibm.com>
+Signed-off-by: Greg Kurz <groug@kaod.org>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 3eff376977c457475272a34d243dac6af7cd6a47)
+Signed-off-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/virtio/virtio-pci.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/hw/virtio/virtio-pci.c b/hw/virtio/virtio-pci.c
+index c9c0b5a..8e5ef9f 100644
+--- a/hw/virtio/virtio-pci.c
++++ b/hw/virtio/virtio-pci.c
+@@ -1818,6 +1818,14 @@ static void virtio_pci_realize(PCIDevice *pci_dev, Error **errp)
+         proxy->disable_legacy = pcie_port ? ON_OFF_AUTO_ON : ON_OFF_AUTO_OFF;
+     }
+ 
++    if (!(virtio_pci_modern(proxy) || virtio_pci_legacy(proxy))) {
++        error_setg(errp, "device cannot work as neither modern nor legacy mode"
++                   " is enabled");
++        error_append_hint(errp, "Set either disable-modern or disable-legacy"
++                          " to off\n");
++        return;
++    }
++
+     if (pcie_port && pci_is_express(pci_dev)) {
+         int pos;
+ 
+-- 
+1.8.3.1
+

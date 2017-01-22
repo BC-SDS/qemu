@@ -1,0 +1,63 @@
+From 1248029833460646f269d9f811a3537331eb2f41 Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Mon, 13 Jun 2016 07:56:54 +0200
+Subject: [PATCH 4/6] Disable spapr-rng
+
+RH-Author: Miroslav Rezanina <mrezanin@redhat.com>
+Message-id: <1465804614-30712-1-git-send-email-mrezanin@redhat.com>
+Patchwork-id: 70585
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH] Disable spapr-rng
+Bugzilla: 1343891
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+
+From: Miroslav Rezanina <mrezanin@redhat.com>
+
+spapr-rng does not have much benefits to virtio-rng device and we
+do not want to support it.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/Makefile.objs | 2 +-
+ hw/ppc/spapr.c       | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/hw/ppc/Makefile.objs b/hw/ppc/Makefile.objs
+index 67e4285..15c9013 100644
+--- a/hw/ppc/Makefile.objs
++++ b/hw/ppc/Makefile.objs
+@@ -3,7 +3,7 @@ obj-y += ppc.o ppc_booke.o
+ # IBM pSeries (sPAPR)
+ obj-$(CONFIG_PSERIES) += spapr.o spapr_vio.o spapr_events.o
+ obj-$(CONFIG_PSERIES) += spapr_hcall.o spapr_iommu.o spapr_rtas.o
+-obj-$(CONFIG_PSERIES) += spapr_pci.o spapr_rtc.o spapr_drc.o spapr_rng.o
++obj-$(CONFIG_PSERIES) += spapr_pci.o spapr_rtc.o spapr_drc.o
+ ifeq ($(CONFIG_PCI)$(CONFIG_PSERIES)$(CONFIG_LINUX), yyy)
+ obj-y += spapr_pci_vfio.o
+ endif
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index 3653be7..0c69882 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -929,7 +929,7 @@ static void spapr_finalize_fdt(sPAPRMachineState *spapr,
+         fprintf(stderr, "couldn't setup vio devices in fdt\n");
+         exit(1);
+     }
+-
++#if 0 /* Disabled in Red Hat Enterprise Linux */
+     if (object_resolve_path_type("", TYPE_SPAPR_RNG, NULL)) {
+         ret = spapr_rng_populate_dt(fdt);
+         if (ret < 0) {
+@@ -937,7 +937,7 @@ static void spapr_finalize_fdt(sPAPRMachineState *spapr,
+             exit(1);
+         }
+     }
+-
++#endif
+     QLIST_FOREACH(phb, &spapr->phbs, list) {
+         ret = spapr_populate_pci_dt(phb, PHANDLE_XICP, fdt);
+         if (ret < 0) {
+-- 
+1.8.3.1
+

@@ -1,0 +1,66 @@
+From 6817c60eca2c4167c073018cdb44056bb2f5a6d2 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:57 +0200
+Subject: [PATCH 24/34] spapr: do proper error propagation in
+ spapr_cpu_core_realize_child()
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-25-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71144
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 24/27] spapr: do proper error propagation in spapr_cpu_core_realize_child()
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Greg Kurz <groug@kaod.org>
+
+This patch changes spapr_cpu_core_realize_child() to have a local error
+pointer and use error_propagate() as it is supposed to be done.
+
+Signed-off-by: Greg Kurz <groug@kaod.org>
+Reviewed-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit f11235b92065e06e789ee1b523dd71999bc6b3e6)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_cpu_core.c | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index 95e2436..4886cd7 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -262,18 +262,20 @@ out:
+ 
+ static int spapr_cpu_core_realize_child(Object *child, void *opaque)
+ {
+-    Error **errp = opaque;
++    Error **errp = opaque, *local_err = NULL;
+     sPAPRMachineState *spapr = SPAPR_MACHINE(qdev_get_machine());
+     CPUState *cs = CPU(child);
+     PowerPCCPU *cpu = POWERPC_CPU(cs);
+ 
+-    object_property_set_bool(child, true, "realized", errp);
+-    if (*errp) {
++    object_property_set_bool(child, true, "realized", &local_err);
++    if (local_err) {
++        error_propagate(errp, local_err);
+         return 1;
+     }
+ 
+-    spapr_cpu_init(spapr, cpu, errp);
+-    if (*errp) {
++    spapr_cpu_init(spapr, cpu, &local_err);
++    if (local_err) {
++        error_propagate(errp, local_err);
+         return 1;
+     }
+     return 0;
+-- 
+1.8.3.1
+

@@ -1,0 +1,58 @@
+From 1339b83cd68f6382962f2acdc3c111612ce15629 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:38 +0200
+Subject: [PATCH 38/99] qdev: Don't stop applying globals on first error
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-34-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71649
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 33/78] qdev: Don't stop applying globals on first error
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Eduardo Habkost <ehabkost@redhat.com>
+
+qdev_prop_set_globals_for_type() stops applying global properties
+on the first error. It is a leftover from when QEMU exited on any
+error when applying global property. Commit 25f8dd9 changed the
+fatal error to a warning, but neglected to drop the stopping.
+Fix that.
+
+For example, the following command-line will not set CPUID level
+to 3, but will warn only about "x86_64-cpu.vendor" being ignored.
+
+  $ ./x86_64-softmmu/qemu-system-x86_64 \
+      -global x86_64-cpu.vendor=x \
+      -global x86_64-cpu.level=3
+  qemu-system-x86_64: Warning: global x86_64-cpu.vendor=x ignored: Property '.vendor' doesn't take value 'x'
+
+Fix this by not returning from qdev_prop_set_globals_for_type()
+on the first error.
+
+Cc: Markus Armbruster <armbru@redhat.com>
+Reviewed-by: Markus Armbruster <armbru@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 823efc5d26671e4737b2951d65b0565806ee43ab)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/core/qdev-properties.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/hw/core/qdev-properties.c b/hw/core/qdev-properties.c
+index 737d29c..863ea1a 100644
+--- a/hw/core/qdev-properties.c
++++ b/hw/core/qdev-properties.c
+@@ -1087,7 +1087,6 @@ static void qdev_prop_set_globals_for_type(DeviceState *dev,
+             assert(prop->user_provided);
+             error_reportf_err(err, "Warning: global %s.%s=%s ignored: ",
+                               prop->driver, prop->property, prop->value);
+-            return;
+         }
+     }
+ }
+-- 
+1.8.3.1
+

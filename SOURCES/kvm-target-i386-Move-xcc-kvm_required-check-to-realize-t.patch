@@ -1,0 +1,94 @@
+From 98ed6bac6ed4005b46bc51189ba63e9ddc31a7fd Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:25 +0200
+Subject: [PATCH 25/99] target-i386: Move xcc->kvm_required check to realize
+ time
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-21-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71636
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 20/78] target-i386: Move xcc->kvm_required check to realize time
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+It will allow to drop custom cpu_x86_init() and use
+cpu_generic_init() instead, reducing cpu_x86_create()
+to a simple 3-liner.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 104494ea25ef6286d79e2f17d609f7ef4cd2dcce)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/cpu.c | 24 ++++++++++++++++--------
+ 1 file changed, 16 insertions(+), 8 deletions(-)
+
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 97d5b6b..1e3ae19 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -669,6 +669,14 @@ static ObjectClass *x86_cpu_class_by_name(const char *cpu_model)
+     return oc;
+ }
+ 
++static char *x86_cpu_class_get_model_name(X86CPUClass *cc)
++{
++    const char *class_name = object_class_get_name(OBJECT_CLASS(cc));
++    assert(g_str_has_suffix(class_name, X86_CPU_TYPE_SUFFIX));
++    return g_strndup(class_name,
++                     strlen(class_name) - strlen(X86_CPU_TYPE_SUFFIX));
++}
++
+ struct X86CPUDefinition {
+     const char *name;
+     uint32_t level;
+@@ -1573,7 +1581,7 @@ static void host_x86_cpu_initfn(Object *obj)
+      */
+     cpu->host_features = true;
+ 
+-    /* If KVM is disabled, cpu_x86_create() will already report an error */
++    /* If KVM is disabled, x86_cpu_realizefn() will report an error later */
+     if (kvm_enabled()) {
+         env->cpuid_level = kvm_arch_get_supported_cpuid(s, 0x0, 0, R_EAX);
+         env->cpuid_xlevel = kvm_arch_get_supported_cpuid(s, 0x80000000, 0, R_EAX);
+@@ -2199,7 +2207,6 @@ static void x86_cpu_load_def(X86CPU *cpu, X86CPUDefinition *def, Error **errp)
+ X86CPU *cpu_x86_create(const char *cpu_model, Error **errp)
+ {
+     X86CPU *cpu = NULL;
+-    X86CPUClass *xcc;
+     ObjectClass *oc;
+     gchar **model_pieces;
+     char *name, *features;
+@@ -2218,12 +2225,6 @@ X86CPU *cpu_x86_create(const char *cpu_model, Error **errp)
+         error_setg(&error, "Unable to find CPU definition: %s", name);
+         goto out;
+     }
+-    xcc = X86_CPU_CLASS(oc);
+-
+-    if (xcc->kvm_required && !kvm_enabled()) {
+-        error_setg(&error, "CPU model '%s' requires KVM", name);
+-        goto out;
+-    }
+ 
+     cpu = X86_CPU(object_new(object_class_get_name(oc)));
+ 
+@@ -2945,6 +2946,13 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
+     static bool ht_warned;
+     FeatureWord w;
+ 
++    if (xcc->kvm_required && !kvm_enabled()) {
++        char *name = x86_cpu_class_get_model_name(xcc);
++        error_setg(&local_err, "CPU model '%s' requires KVM", name);
++        g_free(name);
++        goto out;
++    }
++
+     if (cpu->apic_id < 0) {
+         error_setg(errp, "apic-id property was not initialized properly");
+         return;
+-- 
+1.8.3.1
+

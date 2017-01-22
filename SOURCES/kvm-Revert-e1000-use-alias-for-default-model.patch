@@ -1,0 +1,81 @@
+From 446cf1f3552b5a5e5e03dba7426b2e4245d571d6 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Wed, 6 Jul 2016 11:08:14 +0200
+Subject: [PATCH 03/11] Revert "e1000: use alias for default model"
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1467803295-18634-3-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70969
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/3] Revert "e1000: use alias for default model"
+Bugzilla: 1353070
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Xiao Wang <jasowang@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+This reverts commit 8304402033e8dbe8e379017d51ed1dd8344f1dce.
+
+In 7.x we have a compat entry for e1000 to use the rhel6-e1000.rom,
+but we never added the same entry for e1000-82540em (which rhel6 doesn't
+have).
+Converting to an alias, which this patch did, means that the compat
+entry gets used for both e1000 and e1000-82540em and so you end up
+with a different ROM when going 7.2->7.3 with the rhel6.6.0 machine type
+and the e1000-82540em device.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/e1000.c | 8 +++++++-
+ qdev-monitor.c | 1 -
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/hw/net/e1000.c b/hw/net/e1000.c
+index 864a9c8..6514e8a 100644
+--- a/hw/net/e1000.c
++++ b/hw/net/e1000.c
+@@ -1928,7 +1928,7 @@ static const TypeInfo e1000_base_info = {
+ 
+ static const E1000Info e1000_devices[] = {
+     {
+-        .name      = "e1000",
++        .name      = "e1000-82540em",
+         .device_id = E1000_DEV_ID_82540EM,
+         .revision  = 0x03,
+         .phy_id2   = E1000_PHY_ID2_8254xx_DEFAULT,
+@@ -1949,6 +1949,11 @@ static const E1000Info e1000_devices[] = {
+ #endif
+ };
+ 
++static const TypeInfo e1000_default_info = {
++    .name          = "e1000",
++    .parent        = "e1000-82540em",
++};
++
+ static void e1000_register_types(void)
+ {
+     int i;
+@@ -1966,6 +1971,7 @@ static void e1000_register_types(void)
+ 
+         type_register(&type_info);
+     }
++    type_register_static(&e1000_default_info);
+ }
+ 
+ type_init(e1000_register_types)
+diff --git a/qdev-monitor.c b/qdev-monitor.c
+index e19617f..6a822f1 100644
+--- a/qdev-monitor.c
++++ b/qdev-monitor.c
+@@ -42,7 +42,6 @@ typedef struct QDevAlias
+ 
+ /* Please keep this table sorted by typename. */
+ static const QDevAlias qdev_alias_table[] = {
+-    { "e1000", "e1000-82540em" },
+     { "ich9-ahci", "ahci" },
+     { "kvm-pci-assign", "pci-assign" },
+     { "lsi53c895a", "lsi" },
+-- 
+1.8.3.1
+

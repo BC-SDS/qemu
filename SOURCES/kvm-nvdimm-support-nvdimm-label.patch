@@ -1,0 +1,262 @@
+From b3915b8ad846ab46b2097ae273ec095a8232afa3 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 24 Jun 2016 18:55:48 +0200
+Subject: [PATCH 19/33] nvdimm: support nvdimm label
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466794559-27963-12-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70778
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 11/22] nvdimm: support nvdimm label
+Bugzilla: 1270345
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+
+Introduce a parameter, 'label-size', which is the size of nvdimm label
+data area which is reserved at the end of backend memory. It is required
+at least 128k
+
+Two callbacks, read_label_data() and write_label_data(), are used to
+operate the label area
+
+Reviewed-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+Reviewed-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit d6fb213a628c66b391d0ce704982bab7c14e559b)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/mem/nvdimm.c         | 132 ++++++++++++++++++++++++++++++++++++++++++++++++
+ include/hw/mem/nvdimm.h |  55 +++++++++++++++++++-
+ 2 files changed, 186 insertions(+), 1 deletion(-)
+
+diff --git a/hw/mem/nvdimm.c b/hw/mem/nvdimm.c
+index 0a602f2..81896c0 100644
+--- a/hw/mem/nvdimm.c
++++ b/hw/mem/nvdimm.c
+@@ -23,20 +23,152 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include "qapi/error.h"
++#include "qapi/visitor.h"
+ #include "hw/mem/nvdimm.h"
+ 
++static void nvdimm_get_label_size(Object *obj, Visitor *v, const char *name,
++                                  void *opaque, Error **errp)
++{
++    NVDIMMDevice *nvdimm = NVDIMM(obj);
++    uint64_t value = nvdimm->label_size;
++
++    visit_type_size(v, name, &value, errp);
++}
++
++static void nvdimm_set_label_size(Object *obj, Visitor *v, const char *name,
++                                  void *opaque, Error **errp)
++{
++    NVDIMMDevice *nvdimm = NVDIMM(obj);
++    Error *local_err = NULL;
++    uint64_t value;
++
++    if (memory_region_size(&nvdimm->nvdimm_mr)) {
++        error_setg(&local_err, "cannot change property value");
++        goto out;
++    }
++
++    visit_type_size(v, name, &value, &local_err);
++    if (local_err) {
++        goto out;
++    }
++    if (value < MIN_NAMESPACE_LABEL_SIZE) {
++        error_setg(&local_err, "Property '%s.%s' (0x%" PRIx64 ") is required"
++                   " at least 0x%lx", object_get_typename(obj),
++                   name, value, MIN_NAMESPACE_LABEL_SIZE);
++        goto out;
++    }
++
++    nvdimm->label_size = value;
++out:
++    error_propagate(errp, local_err);
++}
++
++static void nvdimm_init(Object *obj)
++{
++    object_property_add(obj, "label-size", "int",
++                        nvdimm_get_label_size, nvdimm_set_label_size, NULL,
++                        NULL, NULL);
++}
++
++static MemoryRegion *nvdimm_get_memory_region(PCDIMMDevice *dimm)
++{
++    NVDIMMDevice *nvdimm = NVDIMM(dimm);
++
++    return &nvdimm->nvdimm_mr;
++}
++
++static void nvdimm_realize(PCDIMMDevice *dimm, Error **errp)
++{
++    MemoryRegion *mr = host_memory_backend_get_memory(dimm->hostmem, errp);
++    NVDIMMDevice *nvdimm = NVDIMM(dimm);
++    uint64_t align, pmem_size, size = memory_region_size(mr);
++
++    align = memory_region_get_alignment(mr);
++
++    pmem_size = size - nvdimm->label_size;
++    nvdimm->label_data = memory_region_get_ram_ptr(mr) + pmem_size;
++    pmem_size = QEMU_ALIGN_DOWN(pmem_size, align);
++
++    if (size <= nvdimm->label_size || !pmem_size) {
++        HostMemoryBackend *hostmem = dimm->hostmem;
++        char *path = object_get_canonical_path_component(OBJECT(hostmem));
++
++        error_setg(errp, "the size of memdev %s (0x%" PRIx64 ") is too "
++                   "small to contain nvdimm label (0x%" PRIx64 ") and "
++                   "aligned PMEM (0x%" PRIx64 ")",
++                   path, memory_region_size(mr), nvdimm->label_size, align);
++        return;
++    }
++
++    memory_region_init_alias(&nvdimm->nvdimm_mr, OBJECT(dimm),
++                             "nvdimm-memory", mr, 0, pmem_size);
++    nvdimm->nvdimm_mr.align = align;
++}
++
++/*
++ * the caller should check the input parameters before calling
++ * label read/write functions.
++ */
++static void nvdimm_validate_rw_label_data(NVDIMMDevice *nvdimm, uint64_t size,
++                                        uint64_t offset)
++{
++    assert((nvdimm->label_size >= size + offset) && (offset + size > offset));
++}
++
++static void nvdimm_read_label_data(NVDIMMDevice *nvdimm, void *buf,
++                                   uint64_t size, uint64_t offset)
++{
++    nvdimm_validate_rw_label_data(nvdimm, size, offset);
++
++    memcpy(buf, nvdimm->label_data + offset, size);
++}
++
++static void nvdimm_write_label_data(NVDIMMDevice *nvdimm, const void *buf,
++                                    uint64_t size, uint64_t offset)
++{
++    MemoryRegion *mr;
++    PCDIMMDevice *dimm = PC_DIMM(nvdimm);
++    uint64_t backend_offset;
++
++    nvdimm_validate_rw_label_data(nvdimm, size, offset);
++
++    memcpy(nvdimm->label_data + offset, buf, size);
++
++    mr = host_memory_backend_get_memory(dimm->hostmem, &error_abort);
++    backend_offset = memory_region_size(mr) - nvdimm->label_size + offset;
++    memory_region_set_dirty(mr, backend_offset, size);
++}
++
++static MemoryRegion *nvdimm_get_vmstate_memory_region(PCDIMMDevice *dimm)
++{
++    return host_memory_backend_get_memory(dimm->hostmem, &error_abort);
++}
++
+ static void nvdimm_class_init(ObjectClass *oc, void *data)
+ {
+     DeviceClass *dc = DEVICE_CLASS(oc);
++    PCDIMMDeviceClass *ddc = PC_DIMM_CLASS(oc);
++    NVDIMMClass *nvc = NVDIMM_CLASS(oc);
+ 
+     /* nvdimm hotplug has not been supported yet. */
+     dc->hotpluggable = false;
++
++    ddc->realize = nvdimm_realize;
++    ddc->get_memory_region = nvdimm_get_memory_region;
++    ddc->get_vmstate_memory_region = nvdimm_get_vmstate_memory_region;
++
++    nvc->read_label_data = nvdimm_read_label_data;
++    nvc->write_label_data = nvdimm_write_label_data;
+ }
+ 
+ static TypeInfo nvdimm_info = {
+     .name          = TYPE_NVDIMM,
+     .parent        = TYPE_PC_DIMM,
++    .class_size    = sizeof(NVDIMMClass),
+     .class_init    = nvdimm_class_init,
++    .instance_size = sizeof(NVDIMMDevice),
++    .instance_init = nvdimm_init,
+ };
+ 
+ static void nvdimm_register_types(void)
+diff --git a/include/hw/mem/nvdimm.h b/include/hw/mem/nvdimm.h
+index 60ee92b..1cfe9e0 100644
+--- a/include/hw/mem/nvdimm.h
++++ b/include/hw/mem/nvdimm.h
+@@ -34,7 +34,60 @@
+         }                                                     \
+     } while (0)
+ 
+-#define TYPE_NVDIMM             "nvdimm"
++/*
++ * The minimum label data size is required by NVDIMM Namespace
++ * specification, see the chapter 2 Namespaces:
++ *   "NVDIMMs following the NVDIMM Block Mode Specification use an area
++ *    at least 128KB in size, which holds around 1000 labels."
++ */
++#define MIN_NAMESPACE_LABEL_SIZE      (128UL << 10)
++
++#define TYPE_NVDIMM      "nvdimm"
++#define NVDIMM(obj)      OBJECT_CHECK(NVDIMMDevice, (obj), TYPE_NVDIMM)
++#define NVDIMM_CLASS(oc) OBJECT_CLASS_CHECK(NVDIMMClass, (oc), TYPE_NVDIMM)
++#define NVDIMM_GET_CLASS(obj) OBJECT_GET_CLASS(NVDIMMClass, (obj), \
++                                               TYPE_NVDIMM)
++struct NVDIMMDevice {
++    /* private */
++    PCDIMMDevice parent_obj;
++
++    /* public */
++
++    /*
++     * the size of label data in NVDIMM device which is presented to
++     * guest via __DSM "Get Namespace Label Size" function.
++     */
++    uint64_t label_size;
++
++    /*
++     * the address of label data which is read by __DSM "Get Namespace
++     * Label Data" function and written by __DSM "Set Namespace Label
++     * Data" function.
++     */
++    void *label_data;
++
++    /*
++     * it's the PMEM region in NVDIMM device, which is presented to
++     * guest via ACPI NFIT and _FIT method if NVDIMM hotplug is supported.
++     */
++    MemoryRegion nvdimm_mr;
++};
++typedef struct NVDIMMDevice NVDIMMDevice;
++
++struct NVDIMMClass {
++    /* private */
++    PCDIMMDeviceClass parent_class;
++
++    /* public */
++
++    /* read @size bytes from NVDIMM label data at @offset into @buf. */
++    void (*read_label_data)(NVDIMMDevice *nvdimm, void *buf,
++                            uint64_t size, uint64_t offset);
++    /* write @size bytes from @buf to NVDIMM label data at @offset. */
++    void (*write_label_data)(NVDIMMDevice *nvdimm, const void *buf,
++                             uint64_t size, uint64_t offset);
++};
++typedef struct NVDIMMClass NVDIMMClass;
+ 
+ #define NVDIMM_DSM_MEM_FILE     "etc/acpi/nvdimm-mem"
+ 
+-- 
+1.8.3.1
+

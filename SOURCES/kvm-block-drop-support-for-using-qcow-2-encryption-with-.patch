@@ -1,0 +1,210 @@
+From 89ae499f63f8530788340b4efc4161f35ae82660 Mon Sep 17 00:00:00 2001
+From: Markus Armbruster <armbru@redhat.com>
+Date: Wed, 27 Jul 2016 06:53:14 +0200
+Subject: [PATCH 13/16] block: drop support for using qcow[2] encryption with
+ system emulators
+
+RH-Author: Markus Armbruster <armbru@redhat.com>
+Message-id: <1469602394-4025-2-git-send-email-armbru@redhat.com>
+Patchwork-id: 71467
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH] block: drop support for using qcow[2] encryption with system emulators
+Bugzilla: 1336659
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Daniel P. Berrange <berrange@redhat.com>
+
+From: "Daniel P. Berrange" <berrange@redhat.com>
+
+Back in the 2.3.0 release we declared qcow[2] encryption as
+deprecated, warning people that it would be removed in a future
+release.
+
+  commit a1f688f4152e65260b94f37543521ceff8bfebe4
+  Author: Markus Armbruster <armbru@redhat.com>
+  Date:   Fri Mar 13 21:09:40 2015 +0100
+
+    block: Deprecate QCOW/QCOW2 encryption
+
+The code still exists today, but by a (happy?) accident we entirely
+broke the ability to use qcow[2] encryption in the system emulators
+in the 2.4.0 release due to
+
+  commit 8336aafae1451d54c81dd2b187b45f7c45d2428e
+  Author: Daniel P. Berrange <berrange@redhat.com>
+  Date:   Tue May 12 17:09:18 2015 +0100
+
+    qcow2/qcow: protect against uninitialized encryption key
+
+This commit was designed to prevent future coding bugs which
+might cause QEMU to read/write data on an encrypted block
+device in plain text mode before a decryption key is set.
+
+It turns out this preventative measure was a little too good,
+because we already had a long standing bug where QEMU read
+encrypted data in plain text mode during system emulator
+startup, in order to guess disk geometry:
+
+  Thread 10 (Thread 0x7fffd3fff700 (LWP 30373)):
+  #0  0x00007fffe90b1a28 in raise () at /lib64/libc.so.6
+  #1  0x00007fffe90b362a in abort () at /lib64/libc.so.6
+  #2  0x00007fffe90aa227 in __assert_fail_base () at /lib64/libc.so.6
+  #3  0x00007fffe90aa2d2 in  () at /lib64/libc.so.6
+  #4  0x000055555587ae19 in qcow2_co_readv (bs=0x5555562accb0, sector_num=0, remaining_sectors=1, qiov=0x7fffffffd260) at block/qcow2.c:1229
+  #5  0x000055555589b60d in bdrv_aligned_preadv (bs=bs@entry=0x5555562accb0, req=req@entry=0x7fffd3ffea50, offset=offset@entry=0, bytes=bytes@entry=512, align=align@entry=512, qiov=qiov@entry=0x7fffffffd260, flags=0) at block/io.c:908
+  #6  0x000055555589b8bc in bdrv_co_do_preadv (bs=0x5555562accb0, offset=0, bytes=512, qiov=0x7fffffffd260, flags=<optimized out>) at block/io.c:999
+  #7  0x000055555589c375 in bdrv_rw_co_entry (opaque=0x7fffffffd210) at block/io.c:544
+  #8  0x000055555586933b in coroutine_thread (opaque=0x555557876310) at coroutine-gthread.c:134
+  #9  0x00007ffff64e1835 in g_thread_proxy (data=0x5555562b5590) at gthread.c:778
+  #10 0x00007ffff6bb760a in start_thread () at /lib64/libpthread.so.0
+  #11 0x00007fffe917f59d in clone () at /lib64/libc.so.6
+
+  Thread 1 (Thread 0x7ffff7ecab40 (LWP 30343)):
+  #0  0x00007fffe91797a9 in syscall () at /lib64/libc.so.6
+  #1  0x00007ffff64ff87f in g_cond_wait (cond=cond@entry=0x555555e085f0 <coroutine_cond>, mutex=mutex@entry=0x555555e08600 <coroutine_lock>) at gthread-posix.c:1397
+  #2  0x00005555558692c3 in qemu_coroutine_switch (co=<optimized out>) at coroutine-gthread.c:117
+  #3  0x00005555558692c3 in qemu_coroutine_switch (from_=0x5555562b5e30, to_=to_@entry=0x555557876310, action=action@entry=COROUTINE_ENTER) at coroutine-gthread.c:175
+  #4  0x0000555555868a90 in qemu_coroutine_enter (co=0x555557876310, opaque=0x0) at qemu-coroutine.c:116
+  #5  0x0000555555859b84 in thread_pool_completion_bh (opaque=0x7fffd40010e0) at thread-pool.c:187
+  #6  0x0000555555859514 in aio_bh_poll (ctx=ctx@entry=0x5555562953b0) at async.c:85
+  #7  0x0000555555864d10 in aio_dispatch (ctx=ctx@entry=0x5555562953b0) at aio-posix.c:135
+  #8  0x0000555555864f75 in aio_poll (ctx=ctx@entry=0x5555562953b0, blocking=blocking@entry=true) at aio-posix.c:291
+  #9  0x000055555589c40d in bdrv_prwv_co (bs=bs@entry=0x5555562accb0, offset=offset@entry=0, qiov=qiov@entry=0x7fffffffd260, is_write=is_write@entry=false, flags=flags@entry=(unknown: 0)) at block/io.c:591
+  #10 0x000055555589c503 in bdrv_rw_co (bs=bs@entry=0x5555562accb0, sector_num=sector_num@entry=0, buf=buf@entry=0x7fffffffd2e0 "\321,", nb_sectors=nb_sectors@entry=21845, is_write=is_write@entry=false, flags=flags@entry=(unknown: 0)) at block/io.c:614
+  #11 0x000055555589c562 in bdrv_read_unthrottled (nb_sectors=21845, buf=0x7fffffffd2e0 "\321,", sector_num=0, bs=0x5555562accb0) at block/io.c:622
+  #12 0x000055555589c562 in bdrv_read_unthrottled (bs=0x5555562accb0, sector_num=sector_num@entry=0, buf=buf@entry=0x7fffffffd2e0 "\321,", nb_sectors=nb_sectors@entry=21845) at block/io.c:634
+    nb_sectors@entry=1) at block/block-backend.c:504
+  #14 0x0000555555752e9f in guess_disk_lchs (blk=blk@entry=0x5555562a5290, pcylinders=pcylinders@entry=0x7fffffffd52c, pheads=pheads@entry=0x7fffffffd530, psectors=psectors@entry=0x7fffffffd534) at hw/block/hd-geometry.c:68
+  #15 0x0000555555752ff7 in hd_geometry_guess (blk=0x5555562a5290, pcyls=pcyls@entry=0x555557875d1c, pheads=pheads@entry=0x555557875d20, psecs=psecs@entry=0x555557875d24, ptrans=ptrans@entry=0x555557875d28) at hw/block/hd-geometry.c:133
+  #16 0x0000555555752b87 in blkconf_geometry (conf=conf@entry=0x555557875d00, ptrans=ptrans@entry=0x555557875d28, cyls_max=cyls_max@entry=65536, heads_max=heads_max@entry=16, secs_max=secs_max@entry=255, errp=errp@entry=0x7fffffffd5e0) at hw/block/block.c:71
+  #17 0x0000555555799bc4 in ide_dev_initfn (dev=0x555557875c80, kind=IDE_HD) at hw/ide/qdev.c:174
+  #18 0x0000555555768394 in device_realize (dev=0x555557875c80, errp=0x7fffffffd640) at hw/core/qdev.c:247
+  #19 0x0000555555769a81 in device_set_realized (obj=0x555557875c80, value=<optimized out>, errp=0x7fffffffd730) at hw/core/qdev.c:1058
+  #20 0x00005555558240ce in property_set_bool (obj=0x555557875c80, v=<optimized out>, opaque=0x555557875de0, name=<optimized out>, errp=0x7fffffffd730)
+        at qom/object.c:1514
+  #21 0x0000555555826c87 in object_property_set_qobject (obj=obj@entry=0x555557875c80, value=value@entry=0x55555784bcb0, name=name@entry=0x55555591cb3d "realized", errp=errp@entry=0x7fffffffd730) at qom/qom-qobject.c:24
+  #22 0x0000555555825760 in object_property_set_bool (obj=obj@entry=0x555557875c80, value=value@entry=true, name=name@entry=0x55555591cb3d "realized", errp=errp@entry=0x7fffffffd730) at qom/object.c:905
+  #23 0x000055555576897b in qdev_init_nofail (dev=dev@entry=0x555557875c80) at hw/core/qdev.c:380
+  #24 0x0000555555799ead in ide_create_drive (bus=bus@entry=0x555557629630, unit=unit@entry=0, drive=0x5555562b77e0) at hw/ide/qdev.c:122
+  #25 0x000055555579a746 in pci_ide_create_devs (dev=dev@entry=0x555557628db0, hd_table=hd_table@entry=0x7fffffffd830) at hw/ide/pci.c:440
+  #26 0x000055555579b165 in pci_piix3_ide_init (bus=<optimized out>, hd_table=0x7fffffffd830, devfn=<optimized out>) at hw/ide/piix.c:218
+  #27 0x000055555568ca55 in pc_init1 (machine=0x5555562960a0, pci_enabled=1, kvmclock_enabled=<optimized out>) at /home/berrange/src/virt/qemu/hw/i386/pc_piix.c:256
+  #28 0x0000555555603ab2 in main (argc=<optimized out>, argv=<optimized out>, envp=<optimized out>) at vl.c:4249
+
+So the safety net is correctly preventing QEMU reading cipher
+text as if it were plain text, during startup and aborting QEMU
+to avoid bad usage of this data.
+
+For added fun this bug only happens if the encrypted qcow2
+file happens to have data written to the first cluster,
+otherwise the cluster won't be allocated and so qcow2 would
+not try the decryption routines at all, just return all 0's.
+
+That no one even noticed, let alone reported, this bug that
+has shipped in 2.4.0, 2.5.0 and 2.6.0 shows that the number
+of actual users of encrypted qcow2 is approximately zero.
+
+So rather than fix the crash, and backport it to stable
+releases, just go ahead with what we have warned users about
+and disable any use of qcow2 encryption in the system
+emulators. qemu-img/qemu-io/qemu-nbd are still able to access
+qcow2 encrypted images for the sake of data conversion.
+
+In the future, qcow2 will gain support for the alternative
+luks format, but when this happens it'll be using the
+'-object secret' infrastructure for getting keys, which
+avoids this problematic scenario entirely.
+
+Signed-off-by: Daniel P. Berrange <berrange@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Signed-off-by: Kevin Wolf <kwolf@redhat.com>
+(cherry picked from commit 8c0dcbc4ad2bf4f9f3b27c637b357e87cad70ec7)
+Signed-off-by: Markus Armbruster <armbru@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ block/qcow.c               | 14 ++++++++++----
+ block/qcow2.c              | 14 ++++++++++----
+ tests/qemu-iotests/087.out | 12 ++----------
+ 3 files changed, 22 insertions(+), 18 deletions(-)
+
+diff --git a/block/qcow.c b/block/qcow.c
+index 60ddb12..19357fa 100644
+--- a/block/qcow.c
++++ b/block/qcow.c
+@@ -161,10 +161,16 @@ static int qcow_open(BlockDriverState *bs, QDict *options, int flags,
+     if (s->crypt_method_header) {
+         if (bdrv_uses_whitelist() &&
+             s->crypt_method_header == QCOW_CRYPT_AES) {
+-            error_report("qcow built-in AES encryption is deprecated");
+-            error_printf("Support for it will be removed in a future release.\n"
+-                         "You can use 'qemu-img convert' to switch to an\n"
+-                         "unencrypted qcow image, or a LUKS raw image.\n");
++            error_setg(errp,
++                       "Use of AES-CBC encrypted qcow images is no longer "
++                       "supported in system emulators");
++            error_append_hint(errp,
++                              "You can use 'qemu-img convert' to convert your "
++                              "image to an alternative supported format, such "
++                              "as unencrypted qcow, or raw with the LUKS "
++                              "format instead.\n");
++            ret = -ENOSYS;
++            goto fail;
+         }
+ 
+         bs->encrypted = 1;
+diff --git a/block/qcow2.c b/block/qcow2.c
+index 470734b..69244c2 100644
+--- a/block/qcow2.c
++++ b/block/qcow2.c
+@@ -967,10 +967,16 @@ static int qcow2_open(BlockDriverState *bs, QDict *options, int flags,
+     if (s->crypt_method_header) {
+         if (bdrv_uses_whitelist() &&
+             s->crypt_method_header == QCOW_CRYPT_AES) {
+-            error_report("qcow2 built-in AES encryption is deprecated");
+-            error_printf("Support for it will be removed in a future release.\n"
+-                         "You can use 'qemu-img convert' to switch to an\n"
+-                         "unencrypted qcow2 image, or a LUKS raw image.\n");
++            error_setg(errp,
++                       "Use of AES-CBC encrypted qcow2 images is no longer "
++                       "supported in system emulators");
++            error_append_hint(errp,
++                              "You can use 'qemu-img convert' to convert your "
++                              "image to an alternative supported format, such "
++                              "as unencrypted qcow2, or raw with the LUKS "
++                              "format instead.\n");
++            ret = -ENOSYS;
++            goto fail;
+         }
+ 
+         bs->encrypted = 1;
+diff --git a/tests/qemu-iotests/087.out b/tests/qemu-iotests/087.out
+index 055c553..a95c4b0 100644
+--- a/tests/qemu-iotests/087.out
++++ b/tests/qemu-iotests/087.out
+@@ -42,22 +42,14 @@ Formatting 'TEST_DIR/t.IMGFMT', fmt=IMGFMT size=134217728 encryption=on
+ Testing: -S
+ QMP_VERSION
+ {"return": {}}
+-IMGFMT built-in AES encryption is deprecated
+-Support for it will be removed in a future release.
+-You can use 'qemu-img convert' to switch to an
+-unencrypted IMGFMT image, or a LUKS raw image.
+-{"error": {"class": "GenericError", "desc": "blockdev-add doesn't support encrypted devices"}}
++{"error": {"class": "GenericError", "desc": "Use of AES-CBC encrypted IMGFMT images is no longer supported in system emulators"}}
+ {"return": {}}
+ {"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN"}
+ 
+ Testing:
+ QMP_VERSION
+ {"return": {}}
+-IMGFMT built-in AES encryption is deprecated
+-Support for it will be removed in a future release.
+-You can use 'qemu-img convert' to switch to an
+-unencrypted IMGFMT image, or a LUKS raw image.
+-{"error": {"class": "GenericError", "desc": "Guest must be stopped for opening of encrypted image"}}
++{"error": {"class": "GenericError", "desc": "Use of AES-CBC encrypted IMGFMT images is no longer supported in system emulators"}}
+ {"return": {}}
+ {"timestamp": {"seconds":  TIMESTAMP, "microseconds":  TIMESTAMP}, "event": "SHUTDOWN"}
+ 
+-- 
+1.8.3.1
+

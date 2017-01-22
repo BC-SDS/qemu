@@ -1,0 +1,60 @@
+From 6e1db51cc021881fb94d7b5d7184b91369151778 Mon Sep 17 00:00:00 2001
+From: Xiao Wang <jasowang@redhat.com>
+Date: Thu, 21 Jul 2016 06:40:32 +0200
+Subject: [PATCH 05/35] pcie: Introduce function for DSN capability creation
+
+RH-Author: Xiao Wang <jasowang@redhat.com>
+Message-id: <1469083246-12219-6-git-send-email-jasowang@redhat.com>
+Patchwork-id: 71252
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 05/19] pcie: Introduce function for DSN capability creation
+Bugzilla: 1343092
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Dmitry Fleytman <dfleytma@redhat.com>
+
+From: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+
+Signed-off-by: Dmitry Fleytman <dmitry.fleytman@ravellosystems.com>
+Signed-off-by: Leonid Bloch <leonid.bloch@ravellosystems.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+(cherry picked from commit b56b9285e4b58a0b8fe8b011d48dbf7e2afba785)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/pci/pcie.c         | 10 ++++++++++
+ include/hw/pci/pcie.h |  1 +
+ 2 files changed, 11 insertions(+)
+
+diff --git a/hw/pci/pcie.c b/hw/pci/pcie.c
+index 24cfc3b..9599fde 100644
+--- a/hw/pci/pcie.c
++++ b/hw/pci/pcie.c
+@@ -695,3 +695,13 @@ void pcie_ari_init(PCIDevice *dev, uint16_t offset, uint16_t nextfn)
+                         offset, PCI_ARI_SIZEOF);
+     pci_set_long(dev->config + offset + PCI_ARI_CAP, (nextfn & 0xff) << 8);
+ }
++
++void pcie_dev_ser_num_init(PCIDevice *dev, uint16_t offset, uint64_t ser_num)
++{
++    static const int pci_dsn_ver = 1;
++    static const int pci_dsn_cap = 4;
++
++    pcie_add_capability(dev, PCI_EXT_CAP_ID_DSN, pci_dsn_ver, offset,
++                        PCI_EXT_CAP_DSN_SIZEOF);
++    pci_set_quad(dev->config + offset + pci_dsn_cap, ser_num);
++}
+diff --git a/include/hw/pci/pcie.h b/include/hw/pci/pcie.h
+index cbbf0c5..056d25e 100644
+--- a/include/hw/pci/pcie.h
++++ b/include/hw/pci/pcie.h
+@@ -119,6 +119,7 @@ void pcie_add_capability(PCIDevice *dev,
+                          uint16_t offset, uint16_t size);
+ 
+ void pcie_ari_init(PCIDevice *dev, uint16_t offset, uint16_t nextfn);
++void pcie_dev_ser_num_init(PCIDevice *dev, uint16_t offset, uint64_t ser_num);
+ 
+ extern const VMStateDescription vmstate_pcie_device;
+ 
+-- 
+1.8.3.1
+

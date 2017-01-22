@@ -1,0 +1,51 @@
+From 1a4626353d37ad4a85934deb085192daa91acd7f Mon Sep 17 00:00:00 2001
+From: Kevin Wolf <kwolf@redhat.com>
+Date: Wed, 31 Aug 2016 07:55:46 +0200
+Subject: [PATCH 29/30] linux-aio: Handle io_submit() failure gracefully
+
+RH-Author: Kevin Wolf <kwolf@redhat.com>
+Message-id: <1472630146-18074-2-git-send-email-kwolf@redhat.com>
+Patchwork-id: 72116
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH] linux-aio: Handle io_submit() failure gracefully
+Bugzilla: 1285928
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: John Snow <jsnow@redhat.com>
+
+It is generally not expected that io_submit() fails other than with
+-EAGAIN, but corner cases like SELinux refusing I/O when permissions are
+revoked are still possible. In this case, we shouldn't abort, but just
+return an I/O error for the request.
+
+Signed-off-by: Kevin Wolf <kwolf@redhat.com>
+Message-id: 1470741619-23231-1-git-send-email-kwolf@redhat.com
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+(cherry picked from commit 44713c9e8547f0ff41e3e257f0dd5c17bb497225)
+Signed-off-by: Kevin Wolf <kwolf@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ block/linux-aio.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/block/linux-aio.c b/block/linux-aio.c
+index 805757e..9fc33ed 100644
+--- a/block/linux-aio.c
++++ b/block/linux-aio.c
+@@ -206,7 +206,13 @@ static void ioq_submit(struct qemu_laio_state *s)
+             break;
+         }
+         if (ret < 0) {
+-            abort();
++            /* Fail the first request, retry the rest */
++            aiocb = QSIMPLEQ_FIRST(&s->io_q.pending);
++            QSIMPLEQ_REMOVE_HEAD(&s->io_q.pending, next);
++            s->io_q.n--;
++            aiocb->ret = ret;
++            qemu_laio_process_completion(s, aiocb);
++            continue;
+         }
+ 
+         s->io_q.n -= ret;
+-- 
+1.8.3.1
+

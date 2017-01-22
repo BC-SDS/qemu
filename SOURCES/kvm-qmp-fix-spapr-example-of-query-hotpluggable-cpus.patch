@@ -1,0 +1,46 @@
+From a458f6d28d232a22b4ae09008103c318cb9a2e87 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:37 +0200
+Subject: [PATCH 37/99] qmp: fix spapr example of query-hotpluggable-cpus
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-33-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71648
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 32/78] qmp: fix spapr example of query-hotpluggable-cpus
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+27393c33 qapi: keep names in 'CpuInstanceProperties' in sync with struct CPUCore
+added -id suffix to property names but forgot to fix example in qmp-commands.hx
+
+Fix example to have 'core-id' instead of 'core' to match current code
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Peter Krempa <pkrempa@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 13f5e8003e7b67039cb7a19e41b4f7f7ac669cb3)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ qmp-commands.hx | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/qmp-commands.hx b/qmp-commands.hx
+index 67bce5c..12b12a0 100644
+--- a/qmp-commands.hx
++++ b/qmp-commands.hx
+@@ -4987,8 +4987,8 @@ Example for pseries machine type started with
+ 
+ -> { "execute": "query-hotpluggable-cpus" }
+ <- {"return": [
+-     { "props": { "core": 8 }, "type": "POWER8-spapr-cpu-core",
++     { "props": { "core-id": 8 }, "type": "POWER8-spapr-cpu-core",
+        "vcpus-count": 1 },
+-     { "props": { "core": 0 }, "type": "POWER8-spapr-cpu-core",
++     { "props": { "core-id": 0 }, "type": "POWER8-spapr-cpu-core",
+        "vcpus-count": 1, "qom-path": "/machine/unattached/device[0]"}
+    ]}'
+-- 
+1.8.3.1
+

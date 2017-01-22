@@ -1,0 +1,78 @@
+From c1e03baa430b9b5fc61a846d59e5bb21bb266ee6 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:20 +0200
+Subject: [PATCH 80/99] pc: Init CPUState->cpu_index with index in
+ possible_cpus[]
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-76-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71691
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 75/78] pc: Init CPUState->cpu_index with index in possible_cpus[]
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+It will enshure that cpu_index for a given cpu stays the same
+regardless of the order cpus has been created/deleted.
+
+No compat code is needed as for initial cpus index in
+possible_cpus[] matches cpu_index that's been auto-allocated
+in cpu_exec_init().
+
+Tha same applies for hotplug with cpu-add command if cpus are
+added sequentially in increasing order as 'id' matches cpu_index.
+
+If cpu-add had been used for creating out-of-order cpus,
+that created unmigratable instance since it were not possible
+to start target with the same cpu_index using old way
+of migrating instance with hotplugged cpus:
+
+* source QEMU with CLI (-smp 1,maxcpus=3 and cpu-add id=2)
+  following set of cpu_index is allocated [0, 1] with
+  apics set [0, 2] respectivelly
+* target QEMU is started with CLI -smp 2,maxcpus=3
+  resulting in set of cpu_index [0, 1] but with
+  set of apics [0, 1] wich doesn't match source.
+
+So we don't need compat code in this case as it's never worked
+and newelly added device_add support would use stable cpu_index
+set by machine to begin with, so it won't have above limitation
+and source QEMU could be migrated to destination regardless
+of the order cpus were created.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit a15d2728a9aadeb801370adf5bf0b411a774a2d2)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index e25a740..0a6bf0b 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1800,6 +1800,7 @@ static void pc_cpu_pre_plug(HotplugHandler *hotplug_dev,
+                             DeviceState *dev, Error **errp)
+ {
+     int idx;
++    CPUState *cs;
+     CPUArchId *cpu_slot;
+     X86CPUTopoInfo topo;
+     X86CPU *cpu = X86_CPU(dev);
+@@ -1900,6 +1901,9 @@ static void pc_cpu_pre_plug(HotplugHandler *hotplug_dev,
+         return;
+     }
+     cpu->thread_id = topo.smt_id;
++
++    cs = CPU(cpu);
++    cs->cpu_index = idx;
+ }
+ 
+ static void pc_machine_device_pre_plug_cb(HotplugHandler *hotplug_dev,
+-- 
+1.8.3.1
+

@@ -1,0 +1,132 @@
+From 02891ca4ab9cfc18237143b9a078eb2961aea9c6 Mon Sep 17 00:00:00 2001
+From: Fam Zheng <famz@redhat.com>
+Date: Wed, 14 Sep 2016 02:38:45 +0200
+Subject: [PATCH 02/18] iothread: Stop threads before main() quits
+
+RH-Author: Fam Zheng <famz@redhat.com>
+Message-id: <1473820725-8539-1-git-send-email-famz@redhat.com>
+Patchwork-id: 72301
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH] iothread: Stop threads before main() quits
+Bugzilla: 1343021
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1343021
+Brew: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11748295
+
+Right after main_loop ends, we release various things but keep iothread
+alive. The latter is not prepared to the sudden change of resources.
+
+Specifically, after bdrv_close_all(), virtio-scsi dataplane get a
+surprise at the empty BlockBackend:
+
+(gdb) bt
+    at /usr/src/debug/qemu-2.6.0/hw/scsi/virtio-scsi.c:543
+    at /usr/src/debug/qemu-2.6.0/hw/scsi/virtio-scsi.c:577
+
+It is because the d->conf.blk->root is set to NULL, then
+blk_get_aio_context() returns qemu_aio_context, whereas s->ctx is still
+pointing to the iothread:
+
+    hw/scsi/virtio-scsi.c:543:
+
+    if (s->dataplane_started) {
+        assert(blk_get_aio_context(d->conf.blk) == s->ctx);
+    }
+
+To fix this, let's stop iothreads before doing bdrv_close_all().
+
+Cc: qemu-stable@nongnu.org
+Signed-off-by: Fam Zheng <famz@redhat.com>
+Reviewed-by: Paolo Bonzini <pbonzini@redhat.com>
+Message-id: 1473326931-9699-1-git-send-email-famz@redhat.com
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+(cherry picked from commit dce8921b2baaf95974af8176406881872067adfa)
+Signed-off-by: Fam Zheng <famz@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/sysemu/iothread.h |  1 +
+ iothread.c                | 24 ++++++++++++++++++++----
+ vl.c                      |  2 ++
+ 3 files changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/include/sysemu/iothread.h b/include/sysemu/iothread.h
+index 2eefea1..68ac2de 100644
+--- a/include/sysemu/iothread.h
++++ b/include/sysemu/iothread.h
+@@ -35,5 +35,6 @@ typedef struct {
+ 
+ char *iothread_get_id(IOThread *iothread);
+ AioContext *iothread_get_aio_context(IOThread *iothread);
++void iothread_stop_all(void);
+ 
+ #endif /* IOTHREAD_H */
+diff --git a/iothread.c b/iothread.c
+index f183d38..fb08a60 100644
+--- a/iothread.c
++++ b/iothread.c
+@@ -54,16 +54,25 @@ static void *iothread_run(void *opaque)
+     return NULL;
+ }
+ 
+-static void iothread_instance_finalize(Object *obj)
++static int iothread_stop(Object *object, void *opaque)
+ {
+-    IOThread *iothread = IOTHREAD(obj);
++    IOThread *iothread;
+ 
+-    if (!iothread->ctx) {
+-        return;
++    iothread = (IOThread *)object_dynamic_cast(object, TYPE_IOTHREAD);
++    if (!iothread || !iothread->ctx) {
++        return 0;
+     }
+     iothread->stopping = true;
+     aio_notify(iothread->ctx);
+     qemu_thread_join(&iothread->thread);
++    return 0;
++}
++
++static void iothread_instance_finalize(Object *obj)
++{
++    IOThread *iothread = IOTHREAD(obj);
++
++    iothread_stop(obj, NULL);
+     qemu_cond_destroy(&iothread->init_done_cond);
+     qemu_mutex_destroy(&iothread->init_done_lock);
+     aio_context_unref(iothread->ctx);
+@@ -174,3 +183,10 @@ IOThreadInfoList *qmp_query_iothreads(Error **errp)
+     object_child_foreach(container, query_one_iothread, &prev);
+     return head;
+ }
++
++void iothread_stop_all(void)
++{
++    Object *container = object_get_objects_root();
++
++    object_child_foreach(container, iothread_stop, NULL);
++}
+diff --git a/vl.c b/vl.c
+index 862b13d..0e23313 100644
+--- a/vl.c
++++ b/vl.c
+@@ -119,6 +119,7 @@ int main(int argc, char **argv)
+ #include "crypto/init.h"
+ #include "sysemu/replay.h"
+ #include "qapi/qmp/qerror.h"
++#include "sysemu/iothread.h"
+ 
+ #define MAX_VIRTIO_CONSOLES 1
+ #define MAX_SCLP_CONSOLES 1
+@@ -4691,6 +4692,7 @@ int main(int argc, char **argv, char **envp)
+ 
+     main_loop();
+     replay_disable_events();
++    iothread_stop_all();
+ 
+     bdrv_close_all();
+     pause_all_vcpus();
+-- 
+1.8.3.1
+

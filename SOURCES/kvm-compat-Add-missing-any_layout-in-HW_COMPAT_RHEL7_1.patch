@@ -1,0 +1,77 @@
+From 3938189ea83df502585af5af960bd1ec7e75dd22 Mon Sep 17 00:00:00 2001
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Fri, 8 Apr 2016 20:06:59 +0200
+Subject: [PATCH 2/4] compat: Add missing "any_layout" in HW_COMPAT_RHEL7_1
+
+RH-Author: Eduardo Habkost <ehabkost@redhat.com>
+Message-id: <1460146019-30443-3-git-send-email-ehabkost@redhat.com>
+Patchwork-id: 69982
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 2/2] compat: Add missing "any_layout" in HW_COMPAT_RHEL7_1
+Bugzilla: 1318386
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+
+From: Laurent Vivier <lvivier@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1318386
+
+The change has been backported from 2.4 to RHEL-7.2,
+and the rebase to 2.5 has lost the change on HW_COMPAT_RHEL7_1.
+
+The backport commit is:
+
+    d2e5640 virtio: set any_layout in virtio core
+
+The upstream commit is:
+
+    09999a5 virtio: set any_layout in virtio core
+
+The both commits seem equal because one update HW_COMPAT_2_3 and
+the other HW_COMPAT_RHEL7_1 (and this doesn't appear in the diff
+context).
+
+Signed-off-by: Laurent Vivier <lvivier@redhat.com>
+---
+ include/hw/compat.h | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/compat.h | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/include/hw/compat.h b/include/hw/compat.h
+index 09b6ac8..87c4089 100644
+--- a/include/hw/compat.h
++++ b/include/hw/compat.h
+@@ -137,6 +137,26 @@
+             .driver   = "virtio-pci",\
+             .property = "virtio-pci-bus-master-bug-migration",\
+             .value    = "on",\
++        },{\
++            .driver   = "virtio-blk-pci",\
++            .property = "any_layout",\
++            .value    = "off",\
++        },{\
++            .driver   = "virtio-balloon-pci",\
++            .property = "any_layout",\
++            .value    = "off",\
++        },{\
++            .driver   = "virtio-serial-pci",\
++            .property = "any_layout",\
++            .value    = "off",\
++        },{\
++            .driver   = "virtio-9p-pci",\
++            .property = "any_layout",\
++            .value    = "off",\
++        },{\
++            .driver   = "virtio-rng-pci",\
++            .property = "any_layout",\
++            .value    = "off",\
+         },
+ 
+ /* Mostly like HW_COMPAT_2_4 + 2_3 but:
+-- 
+1.8.3.1
+

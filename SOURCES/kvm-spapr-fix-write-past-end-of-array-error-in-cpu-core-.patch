@@ -1,0 +1,50 @@
+From 43e9c478af9e56f092cd3454ebf27d7782a20b94 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:53 +0200
+Subject: [PATCH 20/34] spapr: fix write-past-end-of-array error in cpu core
+ device init code
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-21-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71140
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 20/27] spapr: fix write-past-end-of-array error in cpu core device init code
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Greg Kurz <groug@kaod.org>
+
+This fixes a potential QEMU crash introduced by commit 3b542549661.
+
+Signed-off-by: Greg Kurz <groug@kaod.org>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit dde35bc966ef8c1afb4f4e0f3c0e99fc0f27ca04)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_cpu_core.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index 3a5da09..8b802a6 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -309,10 +309,9 @@ static void spapr_cpu_core_realize(DeviceState *dev, Error **errp)
+     }
+ 
+ err:
+-    while (i >= 0) {
++    while (--i >= 0) {
+         obj = sc->threads + i * size;
+         object_unparent(obj);
+-        i--;
+     }
+     g_free(sc->threads);
+     error_propagate(errp, local_err);
+-- 
+1.8.3.1
+

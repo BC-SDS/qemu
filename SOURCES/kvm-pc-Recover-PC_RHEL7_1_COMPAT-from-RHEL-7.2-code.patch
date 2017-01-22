@@ -1,0 +1,119 @@
+From a9f8773fe932aee038a5112bbe0b0a01f724ffe0 Mon Sep 17 00:00:00 2001
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Mon, 4 Jul 2016 00:20:00 +0200
+Subject: [PATCH 06/16] pc: Recover PC_RHEL7_1_COMPAT from RHEL-7.2 code
+
+RH-Author: Eduardo Habkost <ehabkost@redhat.com>
+Message-id: <1467591601-12091-4-git-send-email-ehabkost@redhat.com>
+Patchwork-id: 70928
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 3/4] pc: Recover PC_RHEL7_1_COMPAT from RHEL-7.2 code
+Bugzilla: 1318386 1321139
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1318386
+Upstream: not applicable
+
+For some reason, the whole contents of PC_RHEL7_1_COMPAT was lost
+on the 2.6.0 rebase. Recover the previous PC_RHEL7_1_COMPAT
+compat properties from the RHEL-7.1 tree.
+
+Without this, CPUID data on rhel7.1.0 machine-types won't be
+compatible.
+
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/hw/i386/pc.h | 75 +++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 74 insertions(+), 1 deletion(-)
+
+diff --git a/include/hw/i386/pc.h b/include/hw/i386/pc.h
+index fa08528..6396968 100644
+--- a/include/hw/i386/pc.h
++++ b/include/hw/i386/pc.h
+@@ -1004,7 +1004,80 @@ extern void igd_passthrough_isa_bridge_create(PCIBus *bus, uint16_t gpu_dev_id);
+ 		.driver = "core2duo" "-" TYPE_X86_CPU,\
+ 		.property = "vmx",\
+ 		.value = "on",\
+-	},
++	},\
++        { /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "qemu64" "-" TYPE_X86_CPU,\
++            .property = "level",\
++            .value    = stringify(4),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "kvm64" "-" TYPE_X86_CPU,\
++            .property = "level",\
++            .value    = stringify(5),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "pentium3" "-" TYPE_X86_CPU,\
++            .property = "level",\
++            .value    = stringify(2),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "n270" "-" TYPE_X86_CPU,\
++            .property = "level",\
++            .value    = stringify(5),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "Conroe" "-" TYPE_X86_CPU,\
++            .property = "level",\
++            .value    = stringify(4),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "Penryn" "-" TYPE_X86_CPU,\
++            .property = "level",\
++            .value    = stringify(4),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "Nehalem" "-" TYPE_X86_CPU,\
++            .property = "level",\
++            .value    = stringify(4),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "n270" "-" TYPE_X86_CPU,\
++            .property = "xlevel",\
++            .value    = stringify(0x8000000a),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "Penryn" "-" TYPE_X86_CPU,\
++            .property = "xlevel",\
++            .value    = stringify(0x8000000a),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "Conroe" "-" TYPE_X86_CPU,\
++            .property = "xlevel",\
++            .value    = stringify(0x8000000a),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "Nehalem" "-" TYPE_X86_CPU,\
++            .property = "xlevel",\
++            .value    = stringify(0x8000000a),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "Westmere" "-" TYPE_X86_CPU,\
++            .property = "xlevel",\
++            .value    = stringify(0x8000000a),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "SandyBridge" "-" TYPE_X86_CPU,\
++            .property = "xlevel",\
++            .value    = stringify(0x8000000a),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "IvyBridge" "-" TYPE_X86_CPU,\
++            .property = "xlevel",\
++            .value    = stringify(0x8000000a),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "Haswell" "-" TYPE_X86_CPU,\
++            .property = "xlevel",\
++            .value    = stringify(0x8000000a),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "Haswell-noTSX" "-" TYPE_X86_CPU,\
++            .property = "xlevel",\
++            .value    = stringify(0x8000000a),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "Broadwell" "-" TYPE_X86_CPU,\
++            .property = "xlevel",\
++            .value    = stringify(0x8000000a),\
++        },{ /* PC_RHEL7_1_COMPAT */ \
++            .driver   = "Broadwell-noTSX" "-" TYPE_X86_CPU,\
++            .property = "xlevel",\
++            .value    = stringify(0x8000000a),\
++        },
+ 
+ /*
+  * The PC_RHEL_*_COMPAT serve the same purpose for RHEL-7 machine
+-- 
+1.8.3.1
+

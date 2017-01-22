@@ -1,0 +1,132 @@
+From e4faae45bf93c4a79a8ae28238606290e4e9a72d Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:57 +0200
+Subject: [PATCH 57/99] pc: cpu: Consolidate apic-id validity checks in
+ pc_cpu_pre_plug()
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-53-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71668
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 52/78] pc: cpu: Consolidate apic-id validity checks in pc_cpu_pre_plug()
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Machine code knows about all possible APIC IDs so use that
+instead of hack which does O(n^2) complexity duplicate
+checks, interating over global CPUs list.
+As result duplicate check is done only once with O(log n) complexity.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit 4ec60c76d5ab513e375f17b043d2b9cb849adf6c)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc.c      | 43 +++++++++++++++++++++++++++++++------------
+ target-i386/cpu.c | 13 -------------
+ 2 files changed, 31 insertions(+), 25 deletions(-)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 762d869..f431746 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1074,18 +1074,6 @@ void pc_hot_add_cpu(const int64_t id, Error **errp)
+         return;
+     }
+ 
+-    if (cpu_exists(apic_id)) {
+-        error_setg(errp, "Unable to add CPU: %" PRIi64
+-                   ", it already exists", id);
+-        return;
+-    }
+-
+-    if (id >= max_cpus) {
+-        error_setg(errp, "Unable to add CPU: %" PRIi64
+-                   ", max allowed: %d", id, max_cpus - 1);
+-        return;
+-    }
+-
+     if (apic_id >= ACPI_CPU_HOTPLUG_ID_LIMIT) {
+         error_setg(errp, "Unable to add CPU: %" PRIi64
+                    ", resulting APIC ID (%" PRIi64 ") is too large",
+@@ -1780,6 +1768,36 @@ static void pc_cpu_unplug_cb(HotplugHandler *hotplug_dev,
+     error_propagate(errp, local_err);
+ }
+ 
++static void pc_cpu_pre_plug(HotplugHandler *hotplug_dev,
++                            DeviceState *dev, Error **errp)
++{
++    int idx;
++    X86CPU *cpu = X86_CPU(dev);
++    PCMachineState *pcms = PC_MACHINE(hotplug_dev);
++    CPUArchId *cpu_slot = pc_find_cpu_slot(pcms, CPU(dev), &idx);
++
++    if (!cpu_slot) {
++        error_setg(errp, "Invalid CPU index with APIC ID (%" PRIu32
++                   "), valid range 0:%d", cpu->apic_id,
++                   pcms->possible_cpus->len - 1);
++        return;
++    }
++
++    if (cpu_slot->cpu) {
++        error_setg(errp, "CPU[%d] with APIC ID %" PRIu32 " exists",
++                   idx, cpu->apic_id);
++        return;
++    }
++}
++
++static void pc_machine_device_pre_plug_cb(HotplugHandler *hotplug_dev,
++                                          DeviceState *dev, Error **errp)
++{
++    if (object_dynamic_cast(OBJECT(dev), TYPE_CPU)) {
++        pc_cpu_pre_plug(hotplug_dev, dev, errp);
++    }
++}
++
+ static void pc_machine_device_plug_cb(HotplugHandler *hotplug_dev,
+                                       DeviceState *dev, Error **errp)
+ {
+@@ -2078,6 +2096,7 @@ static void pc_machine_class_init(ObjectClass *oc, void *data)
+     /* 240: max CPU count for RHEL */
+     mc->max_cpus = 240;
+     mc->reset = pc_machine_reset;
++    hc->pre_plug = pc_machine_device_pre_plug_cb;
+     hc->plug = pc_machine_device_plug_cb;
+     hc->unplug_request = pc_machine_device_unplug_request_cb;
+     hc->unplug = pc_machine_device_unplug_cb;
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index 3279790..08a774a 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -1859,8 +1859,6 @@ static void x86_cpuid_set_apic_id(Object *obj, Visitor *v, const char *name,
+ {
+     X86CPU *cpu = X86_CPU(obj);
+     DeviceState *dev = DEVICE(obj);
+-    const int64_t min = 0;
+-    const int64_t max = UINT32_MAX;
+     Error *error = NULL;
+     int64_t value;
+ 
+@@ -1875,17 +1873,6 @@ static void x86_cpuid_set_apic_id(Object *obj, Visitor *v, const char *name,
+         error_propagate(errp, error);
+         return;
+     }
+-    if (value < min || value > max) {
+-        error_setg(errp, "Property %s.%s doesn't take value %" PRId64
+-                   " (minimum: %" PRId64 ", maximum: %" PRId64 ")" ,
+-                   object_get_typename(obj), name, value, min, max);
+-        return;
+-    }
+-
+-    if ((value != cpu->apic_id) && cpu_exists(value)) {
+-        error_setg(errp, "CPU with APIC ID %" PRIi64 " exists", value);
+-        return;
+-    }
+     cpu->apic_id = value;
+ }
+ 
+-- 
+1.8.3.1
+

@@ -1,0 +1,56 @@
+From 19204b613ec58c5ab4bce5694e082d2cbde6758e Mon Sep 17 00:00:00 2001
+From: Laurent Vivier <lvivier@redhat.com>
+Date: Fri, 17 Jun 2016 14:15:31 +0200
+Subject: [PATCH 13/13] vfio: Fix broken EEH
+
+RH-Author: Laurent Vivier <lvivier@redhat.com>
+Message-id: <1466172931-19067-1-git-send-email-lvivier@redhat.com>
+Patchwork-id: 70657
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH] vfio: Fix broken EEH
+Bugzilla: 1346627
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Auger Eric <eric.auger@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+
+From: Gavin Shan <gwshan@linux.vnet.ibm.com>
+
+vfio_eeh_container_op() is the backend that communicates with
+host kernel to support EEH functionality in QEMU. However, the
+functon should return the value from host kernel instead of 0
+unconditionally.
+
+dwg: Specifically the problem occurs for the handful of EEH
+sub-operations which can return a non-zero, non-error result.
+
+Signed-off-by: Gavin Shan <gwshan@linux.vnet.ibm.com>
+Acked-by: Alex Williamson <alex.williamson@redhat.com>
+[dwg: clarification to commit message]
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+
+(cherry picked from commit d917e88d85a147a99f38a62a4f95cac21e366d51)
+
+BZ:   https://bugzilla.redhat.com/show_bug.cgi?id=1346627
+BREW: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11201325
+
+Signed-off-by: Laurent Vivier <lvivier@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/vfio/common.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hw/vfio/common.c b/hw/vfio/common.c
+index c49b405..1551c77 100644
+--- a/hw/vfio/common.c
++++ b/hw/vfio/common.c
+@@ -1155,7 +1155,7 @@ static int vfio_eeh_container_op(VFIOContainer *container, uint32_t op)
+         return -errno;
+     }
+ 
+-    return 0;
++    return ret;
+ }
+ 
+ static VFIOContainer *vfio_eeh_as_container(AddressSpace *as)
+-- 
+1.8.3.1
+

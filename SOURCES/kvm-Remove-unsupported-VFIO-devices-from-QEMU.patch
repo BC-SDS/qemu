@@ -1,0 +1,39 @@
+From 81b2836e1568c8036bb21f1a59a6133935ffce17 Mon Sep 17 00:00:00 2001
+From: Wei Huang <wei@redhat.com>
+Date: Sat, 28 May 2016 02:55:43 +0200
+Subject: [PATCH 08/24] Remove unsupported VFIO devices from QEMU
+
+RH-Author: Wei Huang <wei@redhat.com>
+Message-id: <1464404143-31188-3-git-send-email-wei@redhat.com>
+Patchwork-id: 70498
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH V2 2/2] Remove unsupported VFIO devices from QEMU
+Bugzilla: 1326420
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+Calxeda XGMAC and AMD Seattle XGBE are aarch64 specific platform devices.
+In 7.3 we don't support VFIO on aarch64 QEMU; so it is a good idea to remove
+them. Instead of adding config switch to disable them, we remove them in
+makefile directly for all archs (x86, ppc and aarch64).
+
+Signed-off-by: Wei Huang <wei@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/vfio/Makefile.objs | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/hw/vfio/Makefile.objs b/hw/vfio/Makefile.objs
+index ceddbb8..233506f 100644
+--- a/hw/vfio/Makefile.objs
++++ b/hw/vfio/Makefile.objs
+@@ -2,6 +2,4 @@ ifeq ($(CONFIG_LINUX), y)
+ obj-$(CONFIG_SOFTMMU) += common.o
+ obj-$(CONFIG_PCI) += pci.o pci-quirks.o
+ obj-$(CONFIG_SOFTMMU) += platform.o
+-obj-$(CONFIG_SOFTMMU) += calxeda-xgmac.o
+-obj-$(CONFIG_SOFTMMU) += amd-xgbe.o
+ endif
+-- 
+1.8.3.1
+

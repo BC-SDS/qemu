@@ -1,0 +1,123 @@
+From 1f8a488376ae7c9132937bde5bda1646d272545a Mon Sep 17 00:00:00 2001
+From: Xiao Wang <jasowang@redhat.com>
+Date: Fri, 12 Aug 2016 01:38:49 +0200
+Subject: [PATCH 14/17] virtio-net: allow increasing rx queue size
+
+RH-Author: Xiao Wang <jasowang@redhat.com>
+Message-id: <1470965929-5454-1-git-send-email-jasowang@redhat.com>
+Patchwork-id: 71953
+O-Subject: [RHEL7.3/7.2z qemu-kvm-rhev PATCH] virtio-net: allow increasing rx queue size
+Bugzilla: 1358962
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+From: "Michael S. Tsirkin" <mst@redhat.com>
+
+Bugzilla: 1358962
+Upstream: Queued in my tree for 2.8
+Brew Build: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11553930
+Test status: Smoking test by myself
+
+This allows increasing the rx queue size up to 1024: unlike with tx,
+guests don't put in huge S/G lists into RX so the risk of running into
+the max 1024 limitation due to some off-by-one seems small.
+
+It's helpful for users like OVS-DPDK which don't do any buffering on the
+host - 1K roughly matches 500 entries in tun + 256 in the current rx
+queue, which seems to work reasonably well. We could probably make do
+with ~750 entries but virtio spec limits us to powers of two.
+It might be a good idea to specify an s/g size limit in a future
+version.
+
+It also might be possible to make the queue size smaller down the road, 64
+seems like the minimal value which will still work (as guests seem to
+assume a queue full of 1.5K buffers is enough to process the largest
+incoming packet, which is ~64K).  No one actually asked for this, and
+with virtio 1 guests can reduce ring size without need for host
+configuration, so don't bother with this for now.
+
+Cc: Cornelia Huck <cornelia.huck@de.ibm.com>
+Cc: Jason Wang <jasowang@redhat.com>
+Suggested-by: Patrik Hermansson <phermansson@gmail.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Jason Wang <jasowang@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/virtio-net.c            | 26 +++++++++++++++++++++++++-
+ include/hw/virtio/virtio-net.h |  1 +
+ 2 files changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/hw/net/virtio-net.c b/hw/net/virtio-net.c
+index 5798f87..13ab491 100644
+--- a/hw/net/virtio-net.c
++++ b/hw/net/virtio-net.c
+@@ -31,6 +31,11 @@
+ #define MAC_TABLE_ENTRIES    64
+ #define MAX_VLAN    (1 << 12)   /* Per 802.1Q definition */
+ 
++/* previously fixed value */
++#define VIRTIO_NET_RX_QUEUE_DEFAULT_SIZE 256
++/* for now, only allow larger queues; with virtio-1, guest can downsize */
++#define VIRTIO_NET_RX_QUEUE_MIN_SIZE VIRTIO_NET_RX_QUEUE_DEFAULT_SIZE
++
+ /*
+  * Calculate the number of bytes up to and including the given 'field' of
+  * 'container'.
+@@ -1412,7 +1417,8 @@ static void virtio_net_add_queue(VirtIONet *n, int index)
+ {
+     VirtIODevice *vdev = VIRTIO_DEVICE(n);
+ 
+-    n->vqs[index].rx_vq = virtio_add_queue(vdev, 256, virtio_net_handle_rx);
++    n->vqs[index].rx_vq = virtio_add_queue(vdev, n->net_conf.rx_queue_size,
++                                           virtio_net_handle_rx);
+     if (n->net_conf.tx && !strcmp(n->net_conf.tx, "timer")) {
+         n->vqs[index].tx_vq =
+             virtio_add_queue(vdev, 256, virtio_net_handle_tx_timer);
+@@ -1748,6 +1754,22 @@ static void virtio_net_device_realize(DeviceState *dev, Error **errp)
+     virtio_net_set_config_size(n, n->host_features);
+     virtio_init(vdev, "virtio-net", VIRTIO_ID_NET, n->config_size);
+ 
++    /*
++     * We set a lower limit on RX queue size to what it always was.
++     * Guests that want a smaller ring can always resize it without
++     * help from us (using virtio 1 and up).
++     */
++    if (n->net_conf.rx_queue_size < VIRTIO_NET_RX_QUEUE_MIN_SIZE ||
++        n->net_conf.rx_queue_size > VIRTQUEUE_MAX_SIZE ||
++        (n->net_conf.rx_queue_size & (n->net_conf.rx_queue_size - 1))) {
++        error_setg(errp, "Invalid rx_queue_size (= %" PRIu16 "), "
++                   "must be a power of 2 between %d and %d.",
++                   n->net_conf.rx_queue_size, VIRTIO_NET_RX_QUEUE_MIN_SIZE,
++                   VIRTQUEUE_MAX_SIZE);
++        virtio_cleanup(vdev);
++        return;
++    }
++
+     n->max_queues = MAX(n->nic_conf.peers.queues, 1);
+     if (n->max_queues * 2 + 1 > VIRTIO_QUEUE_MAX) {
+         error_setg(errp, "Invalid number of queues (= %" PRIu32 "), "
+@@ -1909,6 +1931,8 @@ static Property virtio_net_properties[] = {
+                        TX_TIMER_INTERVAL),
+     DEFINE_PROP_INT32("x-txburst", VirtIONet, net_conf.txburst, TX_BURST),
+     DEFINE_PROP_STRING("tx", VirtIONet, net_conf.tx),
++    DEFINE_PROP_UINT16("rx_queue_size", VirtIONet, net_conf.rx_queue_size,
++                       VIRTIO_NET_RX_QUEUE_DEFAULT_SIZE),
+     DEFINE_PROP_END_OF_LIST(),
+ };
+ 
+diff --git a/include/hw/virtio/virtio-net.h b/include/hw/virtio/virtio-net.h
+index 0cabdb6..268f7e1 100644
+--- a/include/hw/virtio/virtio-net.h
++++ b/include/hw/virtio/virtio-net.h
+@@ -35,6 +35,7 @@ typedef struct virtio_net_conf
+     uint32_t txtimer;
+     int32_t txburst;
+     char *tx;
++    uint16_t rx_queue_size;
+ } virtio_net_conf;
+ 
+ /* Maximum packet size we can receive from tap device: header + 64k */
+-- 
+1.8.3.1
+

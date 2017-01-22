@@ -1,0 +1,82 @@
+From 55343c06458a36eda8f3b84cf36165600442d803 Mon Sep 17 00:00:00 2001
+From: Gerd Hoffmann <kraxel@redhat.com>
+Date: Thu, 11 Aug 2016 12:53:18 +0200
+Subject: [PATCH 10/17] vnc: don't crash getting server info if lsock is NULL
+
+RH-Author: Gerd Hoffmann <kraxel@redhat.com>
+Message-id: <1470920000-23113-2-git-send-email-kraxel@redhat.com>
+Patchwork-id: 71946
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/3] vnc: don't crash getting server info if lsock is NULL
+Bugzilla: 1359655
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+From: "Daniel P. Berrange" <berrange@redhat.com>
+
+When VNC is started with '-vnc none' there will be no
+listener socket present. When we try to populate the
+VncServerInfo we'll crash accessing a NULL 'lsock'
+field.
+
+ #0  qio_channel_socket_get_local_address (ioc=0x0, errp=errp@entry=0x7ffd5b8aa0f0) at io/channel-socket.c:33
+ #1  0x00007f4b9a297d6f in vnc_init_basic_info_from_server_addr (errp=0x7ffd5b8aa0f0, info=0x7f4b9d425460, ioc=<optimized out>)  at ui/vnc.c:146
+ #2  vnc_server_info_get (vd=0x7f4b9e858000) at ui/vnc.c:223
+ #3  0x00007f4b9a29d318 in vnc_qmp_event (vs=0x7f4b9ef82000, vs=0x7f4b9ef82000, event=QAPI_EVENT_VNC_CONNECTED) at ui/vnc.c:279
+ #4  vnc_connect (vd=vd@entry=0x7f4b9e858000, sioc=sioc@entry=0x7f4b9e8b3a20, skipauth=skipauth@entry=true, websocket=websocket @entry=false) at ui/vnc.c:2994
+ #5  0x00007f4b9a29e8c8 in vnc_display_add_client (id=<optimized out>, csock=<optimized out>, skipauth=<optimized out>) at ui/v nc.c:3825
+ #6  0x00007f4b9a18d8a1 in qmp_marshal_add_client (args=<optimized out>, ret=<optimized out>, errp=0x7ffd5b8aa230) at qmp-marsh al.c:123
+ #7  0x00007f4b9a0b53f5 in handle_qmp_command (parser=<optimized out>, tokens=<optimized out>) at /usr/src/debug/qemu-2.6.0/mon itor.c:3922
+ #8  0x00007f4b9a348580 in json_message_process_token (lexer=0x7f4b9c78dfe8, input=0x7f4b9c7350e0, type=JSON_RCURLY, x=111, y=5 9) at qobject/json-streamer.c:94
+ #9  0x00007f4b9a35cfeb in json_lexer_feed_char (lexer=lexer@entry=0x7f4b9c78dfe8, ch=125 '}', flush=flush@entry=false) at qobj ect/json-lexer.c:310
+ #10 0x00007f4b9a35d0ae in json_lexer_feed (lexer=0x7f4b9c78dfe8, buffer=<optimized out>, size=<optimized out>) at qobject/json -lexer.c:360
+ #11 0x00007f4b9a348679 in json_message_parser_feed (parser=<optimized out>, buffer=<optimized out>, size=<optimized out>) at q object/json-streamer.c:114
+ #12 0x00007f4b9a0b3a1b in monitor_qmp_read (opaque=<optimized out>, buf=<optimized out>, size=<optimized out>) at /usr/src/deb ug/qemu-2.6.0/monitor.c:3938
+ #13 0x00007f4b9a186751 in tcp_chr_read (chan=<optimized out>, cond=<optimized out>, opaque=0x7f4b9c7add40) at qemu-char.c:2895
+ #14 0x00007f4b92b5c79a in g_main_context_dispatch () from /lib64/libglib-2.0.so.0
+ #15 0x00007f4b9a2bb0c0 in glib_pollfds_poll () at main-loop.c:213
+ #16 os_host_main_loop_wait (timeout=<optimized out>) at main-loop.c:258
+ #17 main_loop_wait (nonblocking=<optimized out>) at main-loop.c:506
+ #18 0x00007f4b9a0835cf in main_loop () at vl.c:1934
+ #19 main (argc=<optimized out>, argv=<optimized out>, envp=<optimized out>) at vl.c:4667
+
+Do an upfront check for a NULL lsock and report an error to
+the caller, which matches behaviour from before
+
+  commit 04d2529da27db512dcbd5e99d0e26d333f16efcc
+  Author: Daniel P. Berrange <berrange@redhat.com>
+  Date:   Fri Feb 27 16:20:57 2015 +0000
+
+    ui: convert VNC server to use QIOChannelSocket
+
+where getsockname() would be given a FD value -1 and thus report
+an error to the caller.
+
+Signed-off-by: Daniel P. Berrange <berrange@redhat.com>
+Message-id: 1470134726-15697-2-git-send-email-berrange@redhat.com
+Signed-off-by: Gerd Hoffmann <kraxel@redhat.com>
+(cherry picked from commit 624cdd46d7f67fa2d23e87ffe0a36a569edde11a)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ ui/vnc.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/ui/vnc.c b/ui/vnc.c
+index cf08589..b93fb7b 100644
+--- a/ui/vnc.c
++++ b/ui/vnc.c
+@@ -143,6 +143,11 @@ static void vnc_init_basic_info_from_server_addr(QIOChannelSocket *ioc,
+ {
+     SocketAddress *addr = NULL;
+ 
++    if (!ioc) {
++        error_setg(errp, "No listener socket available");
++        return;
++    }
++
+     addr = qio_channel_socket_get_local_address(ioc, errp);
+     if (!addr) {
+         return;
+-- 
+1.8.3.1
+

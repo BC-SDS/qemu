@@ -1,0 +1,60 @@
+From 4bb9720164c129f1e796e1a25e6aee43a47ee121 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:10 +0200
+Subject: [PATCH 10/99] acpi: add aml_debug()
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-6-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71621
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 05/78] acpi: add aml_debug()
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+Reviewed-by: Marcel Apfelbaum <marcel@redhat.com>
+(cherry picked from commit e8977414a2148c75d2ecf69da8860a7e334cb814)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/aml-build.c         | 9 +++++++++
+ include/hw/acpi/aml-build.h | 1 +
+ 2 files changed, 10 insertions(+)
+
+diff --git a/hw/acpi/aml-build.c b/hw/acpi/aml-build.c
+index bf0cb07..405cab1 100644
+--- a/hw/acpi/aml-build.c
++++ b/hw/acpi/aml-build.c
+@@ -405,6 +405,15 @@ Aml *aml_return(Aml *val)
+     return var;
+ }
+ 
++/* ACPI 1.0b: 16.2.6.3 Debug Objects Encoding: DebugObj */
++Aml *aml_debug(void)
++{
++    Aml *var = aml_alloc();
++    build_append_byte(var->buf, 0x5B); /* ExtOpPrefix */
++    build_append_byte(var->buf, 0x31); /* DebugOp */
++    return var;
++}
++
+ /*
+  * ACPI 1.0b: 16.2.3 Data Objects Encoding:
+  * encodes: ByteConst, WordConst, DWordConst, QWordConst, ZeroOp, OneOp
+diff --git a/include/hw/acpi/aml-build.h b/include/hw/acpi/aml-build.h
+index 3748c03..4f04310 100644
+--- a/include/hw/acpi/aml-build.h
++++ b/include/hw/acpi/aml-build.h
+@@ -246,6 +246,7 @@ void aml_append(Aml *parent_ctx, Aml *child);
+ /* non block AML object primitives */
+ Aml *aml_name(const char *name_format, ...) GCC_FMT_ATTR(1, 2);
+ Aml *aml_name_decl(const char *name, Aml *val);
++Aml *aml_debug(void);
+ Aml *aml_return(Aml *val);
+ Aml *aml_int(const uint64_t val);
+ Aml *aml_arg(int pos);
+-- 
+1.8.3.1
+

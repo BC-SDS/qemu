@@ -1,0 +1,105 @@
+From 1c3121f4c1d521e8004078e764cbbdb31717d2ef Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:45 +0200
+Subject: [PATCH 25/30] vhost: add vhost_net_set_backend()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-26-marcandre.lureau@redhat.com>
+Patchwork-id: 71941
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 25/28] vhost: add vhost_net_set_backend()
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Not all vhost-user backends support ops->vhost_net_set_backend(). It is
+a nicer to provide an assert/error than to crash trying to
+call. Furthermore, it improves a bit the code by hiding vhost_ops
+details.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 950d94ba0671e7f154a9e87a277f8efbddcee28f)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/vhost_net.c        |  9 +++------
+ hw/virtio/vhost.c         | 10 ++++++++++
+ include/hw/virtio/vhost.h |  4 ++++
+ 3 files changed, 17 insertions(+), 6 deletions(-)
+
+diff --git a/hw/net/vhost_net.c b/hw/net/vhost_net.c
+index d7203af..74c89b0 100644
+--- a/hw/net/vhost_net.c
++++ b/hw/net/vhost_net.c
+@@ -242,8 +242,7 @@ static int vhost_net_start_one(struct vhost_net *net,
+         qemu_set_fd_handler(net->backend, NULL, NULL, NULL);
+         file.fd = net->backend;
+         for (file.index = 0; file.index < net->dev.nvqs; ++file.index) {
+-            const VhostOps *vhost_ops = net->dev.vhost_ops;
+-            r = vhost_ops->vhost_net_set_backend(&net->dev, &file);
++            r = vhost_net_set_backend(&net->dev, &file);
+             if (r < 0) {
+                 r = -errno;
+                 goto fail;
+@@ -255,8 +254,7 @@ fail:
+     file.fd = -1;
+     if (net->nc->info->type == NET_CLIENT_OPTIONS_KIND_TAP) {
+         while (file.index-- > 0) {
+-            const VhostOps *vhost_ops = net->dev.vhost_ops;
+-            int r = vhost_ops->vhost_net_set_backend(&net->dev, &file);
++            int r = vhost_net_set_backend(&net->dev, &file);
+             assert(r >= 0);
+         }
+     }
+@@ -277,8 +275,7 @@ static void vhost_net_stop_one(struct vhost_net *net,
+ 
+     if (net->nc->info->type == NET_CLIENT_OPTIONS_KIND_TAP) {
+         for (file.index = 0; file.index < net->dev.nvqs; ++file.index) {
+-            const VhostOps *vhost_ops = net->dev.vhost_ops;
+-            int r = vhost_ops->vhost_net_set_backend(&net->dev, &file);
++            int r = vhost_net_set_backend(&net->dev, &file);
+             assert(r >= 0);
+         }
+     }
+diff --git a/hw/virtio/vhost.c b/hw/virtio/vhost.c
+index 2e7cdd2..0de1536 100644
+--- a/hw/virtio/vhost.c
++++ b/hw/virtio/vhost.c
+@@ -1372,3 +1372,13 @@ void vhost_dev_stop(struct vhost_dev *hdev, VirtIODevice *vdev)
+     vhost_log_put(hdev, true);
+     hdev->started = false;
+ }
++
++int vhost_net_set_backend(struct vhost_dev *hdev,
++                          struct vhost_vring_file *file)
++{
++    if (hdev->vhost_ops->vhost_net_set_backend) {
++        return hdev->vhost_ops->vhost_net_set_backend(hdev, file);
++    }
++
++    return -1;
++}
+diff --git a/include/hw/virtio/vhost.h b/include/hw/virtio/vhost.h
+index 2106ed8..e433089 100644
+--- a/include/hw/virtio/vhost.h
++++ b/include/hw/virtio/vhost.h
+@@ -86,4 +86,8 @@ uint64_t vhost_get_features(struct vhost_dev *hdev, const int *feature_bits,
+ void vhost_ack_features(struct vhost_dev *hdev, const int *feature_bits,
+                         uint64_t features);
+ bool vhost_has_free_slot(void);
++
++int vhost_net_set_backend(struct vhost_dev *hdev,
++                          struct vhost_vring_file *file);
++
+ #endif
+-- 
+1.8.3.1
+

@@ -1,0 +1,55 @@
+From c235cc6b156d42f4220c2e11fb611a7f2b9e138a Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Wed, 3 Aug 2016 07:13:39 +0200
+Subject: [PATCH 90/99] spapr: init CPUState->cpu_index with index relative to
+ core-id
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1470208421-7353-4-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71790
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCHv2 3/5] spapr: init CPUState->cpu_index with index relative to core-id
+Bugzilla: 1361443
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Igor Mammedov <imammedo@redhat.com>
+
+It will enshure that cpu_index for a given cpu stays the same
+regardless of the order cpus has been created/deleted and so
+it would be possible to migrate QEMU instance with out of order
+created CPU.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit b63578bdb50243d05c48c3c94cc58ae446f2eb93)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1361443
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_cpu_core.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index 021bae5..abea1df 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -307,9 +307,13 @@ static void spapr_cpu_core_realize(DeviceState *dev, Error **errp)
+     sc->threads = g_malloc0(size * cc->nr_threads);
+     for (i = 0; i < cc->nr_threads; i++) {
+         char id[32];
++        CPUState *cs;
++
+         obj = sc->threads + i * size;
+ 
+         object_initialize(obj, size, typename);
++        cs = CPU(obj);
++        cs->cpu_index = cc->core_id + i;
+         snprintf(id, sizeof(id), "thread[%d]", i);
+         object_property_add_child(OBJECT(sc), id, obj, &local_err);
+         if (local_err) {
+-- 
+1.8.3.1
+

@@ -1,0 +1,117 @@
+From 61d939536749ff1ddddd188c4f374c2732c170c3 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 24 Jun 2016 18:55:47 +0200
+Subject: [PATCH 18/33] pc-dimm: introduce get_vmstate_memory_region callback
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466794559-27963-11-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70777
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 10/22] pc-dimm: introduce get_vmstate_memory_region callback
+Bugzilla: 1270345
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+
+This callback returns the MemoryRegion that is the memory of dimm should
+be kept during live migration
+
+nvdimm device is different with pc-dimm as its memory includes not only
+the MemoryRegion directly mapping to guest's address space but also the
+memory used as label data
+
+Signed-off-by: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+Reviewed-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 8df1426e44176512be1b6456e90d100d1af907e1)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/mem/pc-dimm.c         | 14 ++++++++++++--
+ include/hw/mem/pc-dimm.h |  5 ++++-
+ 2 files changed, 16 insertions(+), 3 deletions(-)
+
+diff --git a/hw/mem/pc-dimm.c b/hw/mem/pc-dimm.c
+index 6de2275..249193a 100644
+--- a/hw/mem/pc-dimm.c
++++ b/hw/mem/pc-dimm.c
+@@ -40,6 +40,8 @@ void pc_dimm_memory_plug(DeviceState *dev, MemoryHotplugState *hpms,
+     int slot;
+     MachineState *machine = MACHINE(qdev_get_machine());
+     PCDIMMDevice *dimm = PC_DIMM(dev);
++    PCDIMMDeviceClass *ddc = PC_DIMM_GET_CLASS(dimm);
++    MemoryRegion *vmstate_mr = ddc->get_vmstate_memory_region(dimm);
+     Error *local_err = NULL;
+     uint64_t existing_dimms_capacity = 0;
+     uint64_t addr;
+@@ -105,7 +107,7 @@ void pc_dimm_memory_plug(DeviceState *dev, MemoryHotplugState *hpms,
+     }
+ 
+     memory_region_add_subregion(&hpms->mr, addr - hpms->base, mr);
+-    vmstate_register_ram(mr, dev);
++    vmstate_register_ram(vmstate_mr, dev);
+     numa_set_mem_node_id(addr, memory_region_size(mr), dimm->node);
+ 
+ out:
+@@ -116,10 +118,12 @@ void pc_dimm_memory_unplug(DeviceState *dev, MemoryHotplugState *hpms,
+                            MemoryRegion *mr)
+ {
+     PCDIMMDevice *dimm = PC_DIMM(dev);
++    PCDIMMDeviceClass *ddc = PC_DIMM_GET_CLASS(dimm);
++    MemoryRegion *vmstate_mr = ddc->get_vmstate_memory_region(dimm);
+ 
+     numa_unset_mem_node_id(dimm->addr, memory_region_size(mr), dimm->node);
+     memory_region_del_subregion(&hpms->mr, mr);
+-    vmstate_unregister_ram(mr, dev);
++    vmstate_unregister_ram(vmstate_mr, dev);
+ }
+ 
+ static int pc_existing_dimms_capacity_internal(Object *obj, void *opaque)
+@@ -424,6 +428,11 @@ static MemoryRegion *pc_dimm_get_memory_region(PCDIMMDevice *dimm)
+     return host_memory_backend_get_memory(dimm->hostmem, &error_abort);
+ }
+ 
++static MemoryRegion *pc_dimm_get_vmstate_memory_region(PCDIMMDevice *dimm)
++{
++    return host_memory_backend_get_memory(dimm->hostmem, &error_abort);
++}
++
+ static void pc_dimm_class_init(ObjectClass *oc, void *data)
+ {
+     DeviceClass *dc = DEVICE_CLASS(oc);
+@@ -434,6 +443,7 @@ static void pc_dimm_class_init(ObjectClass *oc, void *data)
+     dc->desc = "DIMM memory module";
+ 
+     ddc->get_memory_region = pc_dimm_get_memory_region;
++    ddc->get_vmstate_memory_region = pc_dimm_get_vmstate_memory_region;
+ }
+ 
+ static TypeInfo pc_dimm_info = {
+diff --git a/include/hw/mem/pc-dimm.h b/include/hw/mem/pc-dimm.h
+index e7b7e5a..4373561 100644
+--- a/include/hw/mem/pc-dimm.h
++++ b/include/hw/mem/pc-dimm.h
+@@ -63,7 +63,9 @@ typedef struct PCDIMMDevice {
+  * @realize: called after common dimm is realized so that the dimm based
+  * devices get the chance to do specified operations.
+  * @get_memory_region: returns #MemoryRegion associated with @dimm which
+- * is directly mapped into the physical address space of guest
++ * is directly mapped into the physical address space of guest.
++ * @get_vmstate_memory_region: returns #MemoryRegion which indicates the
++ * memory of @dimm should be kept during live migration.
+  */
+ typedef struct PCDIMMDeviceClass {
+     /* private */
+@@ -72,6 +74,7 @@ typedef struct PCDIMMDeviceClass {
+     /* public */
+     void (*realize)(PCDIMMDevice *dimm, Error **errp);
+     MemoryRegion *(*get_memory_region)(PCDIMMDevice *dimm);
++    MemoryRegion *(*get_vmstate_memory_region)(PCDIMMDevice *dimm);
+ } PCDIMMDeviceClass;
+ 
+ /**
+-- 
+1.8.3.1
+

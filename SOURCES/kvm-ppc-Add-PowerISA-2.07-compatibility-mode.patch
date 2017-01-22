@@ -1,0 +1,69 @@
+From fd1f9221a40579e92a1c0c57526e47be7d57a960 Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Wed, 15 Jun 2016 20:35:18 +0200
+Subject: [PATCH 06/13] ppc: Add PowerISA 2.07 compatibility mode
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1466022918-18958-6-git-send-email-thuth@redhat.com>
+Patchwork-id: 70628
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 5/5] ppc: Add PowerISA 2.07 compatibility mode
+Bugzilla: 1341492
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+
+Make sure that guests can use the PowerISA 2.07 CPU sPAPR
+compatibility mode when they request it and the target CPU
+supports it.
+
+Signed-off-by: Thomas Huth <thuth@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit b30ff227c27c931155f768a04c44a6c8757f195f)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_hcall.c        | 6 ++++--
+ target-ppc/translate_init.c | 3 +++
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/hw/ppc/spapr_hcall.c b/hw/ppc/spapr_hcall.c
+index f65245a..948ee93 100644
+--- a/hw/ppc/spapr_hcall.c
++++ b/hw/ppc/spapr_hcall.c
+@@ -916,7 +916,7 @@ static void cas_handle_compat_cpu(PowerPCCPUClass *pcc, uint32_t pvr,
+                                   unsigned *cpu_version)
+ {
+     unsigned lvl = get_compat_level(pvr);
+-    bool is205, is206;
++    bool is205, is206, is207;
+ 
+     if (!lvl) {
+         return;
+@@ -928,8 +928,10 @@ static void cas_handle_compat_cpu(PowerPCCPUClass *pcc, uint32_t pvr,
+     is206 = (pcc->pcr_supported & PCR_COMPAT_2_06) &&
+             ((lvl == get_compat_level(CPU_POWERPC_LOGICAL_2_06)) ||
+              (lvl == get_compat_level(CPU_POWERPC_LOGICAL_2_06_PLUS)));
++    is207 = (pcc->pcr_supported & PCR_COMPAT_2_07) &&
++            (lvl == get_compat_level(CPU_POWERPC_LOGICAL_2_07));
+ 
+-    if (is205 || is206) {
++    if (is205 || is206 || is207) {
+         if (!max_lvl) {
+             /* User did not set the level, choose the highest */
+             if (*compat_lvl <= lvl) {
+diff --git a/target-ppc/translate_init.c b/target-ppc/translate_init.c
+index 0e295e5..845b2ed 100644
+--- a/target-ppc/translate_init.c
++++ b/target-ppc/translate_init.c
+@@ -9522,6 +9522,9 @@ void ppc_set_compat(PowerPCCPU *cpu, uint32_t cpu_version, Error **errp)
+     case CPU_POWERPC_LOGICAL_2_06_PLUS:
+         env->spr[SPR_PCR] = PCR_TM_DIS | PCR_COMPAT_2_07 | PCR_COMPAT_2_06;
+         break;
++    case CPU_POWERPC_LOGICAL_2_07:
++        env->spr[SPR_PCR] = PCR_COMPAT_2_07;
++        break;
+     default:
+         env->spr[SPR_PCR] = 0;
+         break;
+-- 
+1.8.3.1
+

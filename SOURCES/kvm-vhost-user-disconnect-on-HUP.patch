@@ -1,0 +1,59 @@
+From 3bb912abe8211f7a20945f0e885ff31fb15e7c88 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:21 +0200
+Subject: [PATCH 01/30] vhost-user: disconnect on HUP
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-2-marcandre.lureau@redhat.com>
+Patchwork-id: 71917
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 01/28] vhost-user: disconnect on HUP
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+In some cases, qemu_chr_fe_read_all() on HUP event doesn't raise
+CHR_EVENT_CLOSED because the read/recv function returns -1 on
+disconnected peers (for example with tch_chr_recv, an ECONNRESET errno
+overwritten as EIO).
+
+It is simpler to explicitely disconnect on HUP, rising CHR_EVENT_CLOSED
+if it wasn't disconnected already.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit 9c7d18b3a59f6e4464543905dede90f1a65096cc)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ net/vhost-user.c | 6 +-----
+ 1 file changed, 1 insertion(+), 5 deletions(-)
+
+diff --git a/net/vhost-user.c b/net/vhost-user.c
+index eb9cbc9..7665c4e 100644
+--- a/net/vhost-user.c
++++ b/net/vhost-user.c
+@@ -188,12 +188,8 @@ static gboolean net_vhost_user_watch(GIOChannel *chan, GIOCondition cond,
+                                            void *opaque)
+ {
+     VhostUserState *s = opaque;
+-    uint8_t buf[1];
+ 
+-    /* We don't actually want to read anything, but CHR_EVENT_CLOSED will be
+-     * raised as a side-effect of the read.
+-     */
+-    qemu_chr_fe_read_all(s->chr, buf, sizeof(buf));
++    qemu_chr_disconnect(s->chr);
+ 
+     return FALSE;
+ }
+-- 
+1.8.3.1
+

@@ -1,0 +1,104 @@
+From ef41dd0f17782d84111dca710b359cc255bef2b1 Mon Sep 17 00:00:00 2001
+From: John Snow <jsnow@redhat.com>
+Date: Wed, 14 Sep 2016 20:04:36 +0200
+Subject: [PATCH 12/18] block: Drop superfluous invalidating bs->file from
+ drivers
+
+RH-Author: John Snow <jsnow@redhat.com>
+Message-id: <1473883477-31953-3-git-send-email-jsnow@redhat.com>
+Patchwork-id: 72332
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 2/3] block: Drop superfluous invalidating bs->file from drivers
+Bugzilla: 1355927
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Kevin Wolf <kwolf@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+From: Fam Zheng <famz@redhat.com>
+
+Now they are invalidated by the block layer, so it's not necessary to
+do this in block drivers' implementations of .bdrv_invalidate_cache.
+
+Signed-off-by: Fam Zheng <famz@redhat.com>
+Reviewed-by: Alberto Garcia <berto@igalia.com>
+Signed-off-by: Kevin Wolf <kwolf@redhat.com>
+(cherry picked from commit c9e9e9c66cee9932fb28a41a4659aa421a7a3f78)
+Signed-off-by: John Snow <jsnow@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ block/qcow2.c  |  7 -------
+ block/qed.c    |  6 ------
+ block/quorum.c | 16 ----------------
+ 3 files changed, 29 deletions(-)
+
+diff --git a/block/qcow2.c b/block/qcow2.c
+index 69244c2..e99fd78 100644
+--- a/block/qcow2.c
++++ b/block/qcow2.c
+@@ -1763,13 +1763,6 @@ static void qcow2_invalidate_cache(BlockDriverState *bs, Error **errp)
+ 
+     qcow2_close(bs);
+ 
+-    bdrv_invalidate_cache(bs->file->bs, &local_err);
+-    if (local_err) {
+-        error_propagate(errp, local_err);
+-        bs->drv = NULL;
+-        return;
+-    }
+-
+     memset(s, 0, sizeof(BDRVQcow2State));
+     options = qdict_clone_shallow(bs->options);
+ 
+diff --git a/block/qed.c b/block/qed.c
+index 0af5274..9081941 100644
+--- a/block/qed.c
++++ b/block/qed.c
+@@ -1594,12 +1594,6 @@ static void bdrv_qed_invalidate_cache(BlockDriverState *bs, Error **errp)
+ 
+     bdrv_qed_close(bs);
+ 
+-    bdrv_invalidate_cache(bs->file->bs, &local_err);
+-    if (local_err) {
+-        error_propagate(errp, local_err);
+-        return;
+-    }
+-
+     memset(s, 0, sizeof(BDRVQEDState));
+     ret = bdrv_qed_open(bs, NULL, bs->open_flags, &local_err);
+     if (local_err) {
+diff --git a/block/quorum.c b/block/quorum.c
+index da15465..8f7c099 100644
+--- a/block/quorum.c
++++ b/block/quorum.c
+@@ -747,21 +747,6 @@ static int64_t quorum_getlength(BlockDriverState *bs)
+     return result;
+ }
+ 
+-static void quorum_invalidate_cache(BlockDriverState *bs, Error **errp)
+-{
+-    BDRVQuorumState *s = bs->opaque;
+-    Error *local_err = NULL;
+-    int i;
+-
+-    for (i = 0; i < s->num_children; i++) {
+-        bdrv_invalidate_cache(s->children[i]->bs, &local_err);
+-        if (local_err) {
+-            error_propagate(errp, local_err);
+-            return;
+-        }
+-    }
+-}
+-
+ static coroutine_fn int quorum_co_flush(BlockDriverState *bs)
+ {
+     BDRVQuorumState *s = bs->opaque;
+@@ -1070,7 +1055,6 @@ static BlockDriver bdrv_quorum = {
+ 
+     .bdrv_aio_readv                     = quorum_aio_readv,
+     .bdrv_aio_writev                    = quorum_aio_writev,
+-    .bdrv_invalidate_cache              = quorum_invalidate_cache,
+ 
+     .bdrv_detach_aio_context            = quorum_detach_aio_context,
+     .bdrv_attach_aio_context            = quorum_attach_aio_context,
+-- 
+1.8.3.1
+

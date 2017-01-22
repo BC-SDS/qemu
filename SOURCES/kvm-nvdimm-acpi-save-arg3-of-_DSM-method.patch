@@ -1,0 +1,71 @@
+From 1109c7db4f6ed1daa7e0c16ebf8172fed132a226 Mon Sep 17 00:00:00 2001
+From: Stefan Hajnoczi <stefanha@redhat.com>
+Date: Fri, 24 Jun 2016 18:55:52 +0200
+Subject: [PATCH 23/33] nvdimm acpi: save arg3 of _DSM method
+
+RH-Author: Stefan Hajnoczi <stefanha@redhat.com>
+Message-id: <1466794559-27963-16-git-send-email-stefanha@redhat.com>
+Patchwork-id: 70782
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 15/22] nvdimm acpi: save arg3 of _DSM method
+Bugzilla: 1270345
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+
+Check if the input Arg3 is valid then store it into ARG3 if it is
+needed
+
+Signed-off-by: Xiao Guangrong <guangrong.xiao@linux.intel.com>
+Reviewed-by: Stefan Hajnoczi <stefanha@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 4568c948066737d116432dff8646c59f0ce67a38)
+Signed-off-by: Stefan Hajnoczi <stefanha@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/acpi/nvdimm.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/hw/acpi/nvdimm.c b/hw/acpi/nvdimm.c
+index 14355f8..95504e9 100644
+--- a/hw/acpi/nvdimm.c
++++ b/hw/acpi/nvdimm.c
+@@ -488,6 +488,7 @@ void nvdimm_init_acpi_state(AcpiNVDIMMState *state, MemoryRegion *io,
+ static void nvdimm_build_common_dsm(Aml *dev)
+ {
+     Aml *method, *ifctx, *function, *dsm_mem, *unpatched, *result_size;
++    Aml *pckg, *pckg_index, *pckg_buf;
+     uint8_t byte_list[1];
+ 
+     method = aml_method(NVDIMM_COMMON_DSM, 5, AML_SERIALIZED);
+@@ -524,6 +525,25 @@ static void nvdimm_build_common_dsm(Aml *dev)
+     aml_append(method, aml_store(aml_arg(2), aml_name("FUNC")));
+ 
+     /*
++     * The fourth parameter (Arg3) of _DSM is a package which contains
++     * a buffer, the layout of the buffer is specified by UUID (Arg0),
++     * Revision ID (Arg1) and Function Index (Arg2) which are documented
++     * in the DSM Spec.
++     */
++    pckg = aml_arg(3);
++    ifctx = aml_if(aml_and(aml_equal(aml_object_type(pckg),
++                   aml_int(4 /* Package */)) /* It is a Package? */,
++                   aml_equal(aml_sizeof(pckg), aml_int(1)) /* 1 element? */,
++                   NULL));
++
++    pckg_index = aml_local(2);
++    pckg_buf = aml_local(3);
++    aml_append(ifctx, aml_store(aml_index(pckg, aml_int(0)), pckg_index));
++    aml_append(ifctx, aml_store(aml_derefof(pckg_index), pckg_buf));
++    aml_append(ifctx, aml_store(pckg_buf, aml_name("ARG3")));
++    aml_append(method, ifctx);
++
++    /*
+      * tell QEMU about the real address of DSM memory, then QEMU
+      * gets the control and fills the result in DSM memory.
+      */
+-- 
+1.8.3.1
+

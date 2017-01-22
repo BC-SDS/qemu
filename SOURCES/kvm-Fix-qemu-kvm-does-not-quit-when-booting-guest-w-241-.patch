@@ -1,0 +1,57 @@
+From d52eaa4786a135be4bd12fbb6bc960b3d239768b Mon Sep 17 00:00:00 2001
+From: Marcelo Tosatti <mtosatti@redhat.com>
+Date: Mon, 27 Jun 2016 20:21:25 +0200
+Subject: [PATCH 31/33] Fix qemu-kvm does not quit when booting guest w/ 241
+ vcpus and "-no-kvm"
+
+RH-Author: Marcelo Tosatti <mtosatti@redhat.com>
+Message-id: <20160627202124.GA26255@amt.cnet>
+Patchwork-id: 70796
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v3] Fix qemu-kvm does not quit when booting guest w/ 161 vcpus and "-no-kvm" (BZ 1126666)
+Bugzilla: 1126666
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+Boot a guest with /usr/libexec/qemu-kvm -no-kvm -smp 241
+and it does not fail.
+
+Fix QEMU to match KVM's number of maximum supported CPUs.
+
+Backport commit #: not applicable.
+
+Note: this change was lost during the last rebase.
+The RHEL-7.1 commit number for that change is:
+commit ce72a826c4882e62d8b897efc2183c39d9c21906
+Author: Markus Armbruster <armbru@redhat.com>
+Date:   Mon Aug 11 07:54:35 2014 +0200
+
+    exit when -no-kvm and vcpu count > 160
+
+BZ: 1126666
+Signed-off-by: Marcelo Tosatti <mtosatti@redhat.com>
+Brew build:
+https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=11278816
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index e6315d0..8f9f12b 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -2008,7 +2008,8 @@ static void pc_machine_class_init(ObjectClass *oc, void *data)
+     mc->possible_cpu_arch_ids = pc_possible_cpu_arch_ids;
+     mc->default_boot_order = "cad";
+     mc->hot_add_cpu = pc_hot_add_cpu;
+-    mc->max_cpus = 255;
++    /* 240: max CPU count for RHEL */
++    mc->max_cpus = 240;
+     mc->reset = pc_machine_reset;
+     hc->plug = pc_machine_device_plug_cb;
+     hc->unplug_request = pc_machine_device_unplug_request_cb;
+-- 
+1.8.3.1
+

@@ -1,0 +1,78 @@
+From 9849849942c594bdb1af550f1d6d3a77e5be2693 Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:12:04 +0200
+Subject: [PATCH 64/99] pc: Register created initial and hotpluged CPUs in one
+ place pc_cpu_plug()
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-60-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71675
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 59/78] pc: Register created initial and hotpluged CPUs in one place pc_cpu_plug()
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+Consolidate possible_cpus array management in pc_cpu_plug() for
+smp_cpus, coldplugged with -device and hotplugged with
+device_add.
+
+Signed-off-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit a44a49dbf2eb8b9b430711b152663678c15f689c)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/pc.c | 25 +++++++++----------------
+ 1 file changed, 9 insertions(+), 16 deletions(-)
+
+diff --git a/hw/i386/pc.c b/hw/i386/pc.c
+index 0df00c8..1d6302a 100644
+--- a/hw/i386/pc.c
++++ b/hw/i386/pc.c
+@@ -1156,7 +1156,6 @@ void pc_cpus_init(PCMachineState *pcms)
+         if (i < smp_cpus) {
+             cpu = pc_new_cpu(typename, x86_cpu_apic_id_from_index(i),
+                              &error_fatal);
+-            pcms->possible_cpus->cpus[i].cpu = CPU(cpu);
+             object_unref(OBJECT(cpu));
+         }
+     }
+@@ -1711,25 +1710,19 @@ static void pc_cpu_plug(HotplugHandler *hotplug_dev,
+     Error *local_err = NULL;
+     PCMachineState *pcms = PC_MACHINE(hotplug_dev);
+ 
+-    if (!dev->hotplugged) {
+-        goto out;
+-    }
+-
+-    if (!pcms->acpi_dev) {
+-        error_setg(&local_err,
+-                   "cpu hotplug is not enabled: missing acpi device");
+-        goto out;
++    if (pcms->acpi_dev) {
++        hhc = HOTPLUG_HANDLER_GET_CLASS(pcms->acpi_dev);
++        hhc->plug(HOTPLUG_HANDLER(pcms->acpi_dev), dev, &local_err);
++        if (local_err) {
++            goto out;
++        }
+     }
+ 
+-    hhc = HOTPLUG_HANDLER_GET_CLASS(pcms->acpi_dev);
+-    hhc->plug(HOTPLUG_HANDLER(pcms->acpi_dev), dev, &local_err);
+-    if (local_err) {
+-        goto out;
++    if (dev->hotplugged) {
++        /* increment the number of CPUs */
++        rtc_set_memory(pcms->rtc, 0x5f, rtc_get_memory(pcms->rtc, 0x5f) + 1);
+     }
+ 
+-    /* increment the number of CPUs */
+-    rtc_set_memory(pcms->rtc, 0x5f, rtc_get_memory(pcms->rtc, 0x5f) + 1);
+-
+     found_cpu = pc_find_cpu_slot(pcms, CPU(dev), NULL);
+     found_cpu->cpu = CPU(dev);
+ out:
+-- 
+1.8.3.1
+

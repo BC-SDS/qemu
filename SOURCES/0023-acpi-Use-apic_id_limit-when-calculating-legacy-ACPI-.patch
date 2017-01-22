@@ -1,0 +1,54 @@
+From 75c6cd33a078acf4a2bd2d5e0eecc79d5fea0422 Mon Sep 17 00:00:00 2001
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Fri, 12 Dec 2014 16:53:22 -0600
+Subject: acpi: Use apic_id_limit when calculating legacy ACPI table size
+
+RH-Author: Eduardo Habkost <ehabkost@redhat.com>
+Message-id: <1418403202-5444-1-git-send-email-ehabkost@redhat.com>
+Patchwork-id: 62851
+O-Subject: [RHEV-7.1 qemu-kvm-rhev PATCH] acpi: Use apic_id_limit when calculating legacy ACPI table size
+Bugzilla: 1173167
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+
+The code that calculates the legacy ACPI table size for migration
+compatibility uses max_cpus when calculating legacy_aml_len (the size of
+the DSDT and SSDT tables). However, the SSDT grows according to APIC ID
+limit, not max_cpus.
+
+The bug is not triggered very often because of the 4k alignment on the
+table size. But it can be triggered if you are unlucky enough to cross a
+4k boundary. For example, using the following:
+
+  $ qemu-system-x86_64 -machine pc-i440fx-2.0 -smp 99,sockets=3,cores=33,threads=1
+  qemu-system-x86_64: Warning: migration may not work.
+
+Change the legacy_aml_len calculation to use apic_id_limit, to calculate
+the right size.
+
+Rebase notes (2.6):
+- apic_id_limit variable changed
+
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Jeff E. Nelson <jen@redhat.com>
+---
+ hw/i386/acpi-build.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index 6477003..8dab285 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -2790,7 +2790,7 @@ void acpi_build(AcpiBuildTables *tables, MachineState *machine)
+          */
+         int legacy_aml_len =
+             pcmc->legacy_acpi_table_size +
+-            ACPI_BUILD_LEGACY_CPU_AML_SIZE * max_cpus;
++            ACPI_BUILD_LEGACY_CPU_AML_SIZE * pcms->apic_id_limit;
+         int legacy_table_size =
+             ROUND_UP(tables_blob->len - aml_len + legacy_aml_len,
+                      ACPI_BUILD_ALIGN_SIZE);
+-- 
+2.5.5
+

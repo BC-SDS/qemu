@@ -1,0 +1,71 @@
+From e0ed699a19c37bdde2d26a09e88bb2e0f44ce363 Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Wed, 22 Jun 2016 14:03:17 +0200
+Subject: [PATCH 04/16] Disable new ipmi devices
+
+RH-Author: Miroslav Rezanina <mrezanin@redhat.com>
+Message-id: <d1d72574a1d68f9854a71efc8d8ce108650ba7a7.1466603432.git.mrezanin@redhat.com>
+Patchwork-id: 70748
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCHv3 04/10] Disable new ipmi devices
+Bugzilla: 1333282
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+
+From: Miroslav Rezanina <mrezanin@redhat.com>
+
+There're several new ipmi devices added in QEMU 2.6:
+
+- ipmi-bmc-extern
+- ipmi-bmc-sim
+- isa-ipmi-bt
+- isa-ipmi-kcs
+
+We won't support these devices so disable them.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ default-configs/x86_64-softmmu.mak | 4 ----
+ tests/Makefile                     | 4 ----
+ 2 files changed, 8 deletions(-)
+
+diff --git a/default-configs/x86_64-softmmu.mak b/default-configs/x86_64-softmmu.mak
+index 135226e..acf9cd7 100644
+--- a/default-configs/x86_64-softmmu.mak
++++ b/default-configs/x86_64-softmmu.mak
+@@ -9,10 +9,6 @@ CONFIG_VGA_CIRRUS=y
+ CONFIG_VIRTIO_VGA=y
+ CONFIG_VMMOUSE=y
+ CONFIG_IPMI=y
+-CONFIG_IPMI_LOCAL=y
+-CONFIG_IPMI_EXTERN=y
+-CONFIG_ISA_IPMI_KCS=y
+-CONFIG_ISA_IPMI_BT=y
+ CONFIG_SERIAL=y
+ CONFIG_SERIAL_ISA=y
+ CONFIG_I8254=y
+diff --git a/tests/Makefile b/tests/Makefile
+index d488a91..d7bafb0 100644
+--- a/tests/Makefile
++++ b/tests/Makefile
+@@ -169,8 +169,6 @@ check-qtest-i386-y += tests/boot-order-test$(EXESUF)
+ check-qtest-i386-y += tests/bios-tables-test$(EXESUF)
+ check-qtest-i386-y += tests/pxe-test$(EXESUF)
+ check-qtest-i386-y += tests/rtc-test$(EXESUF)
+-check-qtest-i386-y += tests/ipmi-kcs-test$(EXESUF)
+-check-qtest-i386-y += tests/ipmi-bt-test$(EXESUF)
+ check-qtest-i386-y += tests/i440fx-test$(EXESUF)
+ check-qtest-i386-y += tests/fw_cfg-test$(EXESUF)
+ check-qtest-i386-y += tests/drive_del-test$(EXESUF)
+@@ -515,8 +513,6 @@ tests/spapr-phb-test$(EXESUF): tests/spapr-phb-test.o $(libqos-obj-y)
+ tests/fdc-test$(EXESUF): tests/fdc-test.o
+ tests/ide-test$(EXESUF): tests/ide-test.o $(libqos-pc-obj-y)
+ tests/ahci-test$(EXESUF): tests/ahci-test.o $(libqos-pc-obj-y)
+-tests/ipmi-kcs-test$(EXESUF): tests/ipmi-kcs-test.o
+-tests/ipmi-bt-test$(EXESUF): tests/ipmi-bt-test.o
+ tests/hd-geo-test$(EXESUF): tests/hd-geo-test.o
+ tests/boot-order-test$(EXESUF): tests/boot-order-test.o $(libqos-obj-y)
+ tests/bios-tables-test$(EXESUF): tests/bios-tables-test.o \
+-- 
+1.8.3.1
+

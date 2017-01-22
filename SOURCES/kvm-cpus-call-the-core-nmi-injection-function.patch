@@ -1,0 +1,56 @@
+From a640f880a603186c9262a7b211355f878b6e3c03 Mon Sep 17 00:00:00 2001
+From: Bandan Das <bsd@redhat.com>
+Date: Mon, 23 May 2016 18:07:20 +0200
+Subject: [PATCH 05/24] cpus: call the core nmi injection function
+
+RH-Author: Bandan Das <bsd@redhat.com>
+Message-id: <1464026840-20552-4-git-send-email-bsd@redhat.com>
+Patchwork-id: 70435
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 3/3] cpus: call the core nmi injection function
+Bugzilla: 1335720
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+We can call the common function here directly since
+x86 specific actions will be taken care of by the arch
+specific nmi handler
+
+Signed-off-by: Bandan Das <bsd@redhat.com>
+Message-Id: <1463761717-26558-4-git-send-email-bsd@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+(cherry picked from commit 1453e6627d19a8d6d54480c6980f5cef5dfc6833)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ cpus.c | 14 --------------
+ 1 file changed, 14 deletions(-)
+
+diff --git a/cpus.c b/cpus.c
+index cbeb1f6..4fccbde 100644
+--- a/cpus.c
++++ b/cpus.c
+@@ -1691,21 +1691,7 @@ exit:
+ 
+ void qmp_inject_nmi(Error **errp)
+ {
+-#if defined(TARGET_I386)
+-    CPUState *cs;
+-
+-    CPU_FOREACH(cs) {
+-        X86CPU *cpu = X86_CPU(cs);
+-
+-        if (!cpu->apic_state) {
+-            cpu_interrupt(cs, CPU_INTERRUPT_NMI);
+-        } else {
+-            apic_deliver_nmi(cpu->apic_state);
+-        }
+-    }
+-#else
+     nmi_monitor_handle(monitor_get_cpu_index(), errp);
+-#endif
+ }
+ 
+ void dump_drift_info(FILE *f, fprintf_function cpu_fprintf)
+-- 
+1.8.3.1
+

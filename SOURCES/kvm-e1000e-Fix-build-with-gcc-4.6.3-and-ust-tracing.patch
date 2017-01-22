@@ -1,0 +1,65 @@
+From c25b8cccf9a73e646ae1a1465e99be3a99fd4733 Mon Sep 17 00:00:00 2001
+From: Xiao Wang <jasowang@redhat.com>
+Date: Thu, 21 Jul 2016 06:40:44 +0200
+Subject: [PATCH 17/35] e1000e: Fix build with gcc 4.6.3 and ust tracing
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Xiao Wang <jasowang@redhat.com>
+Message-id: <1469083246-12219-18-git-send-email-jasowang@redhat.com>
+Patchwork-id: 71264
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCH 17/19] e1000e: Fix build with gcc 4.6.3 and ust tracing
+Bugzilla: 1343092
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Dmitry Fleytman <dfleytma@redhat.com>
+
+From: Dmitry Fleytman <dmitry@daynix.com>
+
+This patch fixes used-uninitialized false
+positive while compiling with ust tracing
+backend plus gcc 4.6.3:
+
+hw/net/e1000e.c: In function ‘e1000e_io_write’:
+hw/net/e1000e.c:170:39: error: ‘idx’ may be used uninitialized in this function [-Werror=uninitialized]
+hw/net/e1000e.c: In function ‘e1000e_io_read’:
+hw/net/e1000e.c:145:35: error: ‘idx’ may be used uninitialized in this function [-Werror=uninitialized]
+cc1: all warnings being treated as errors
+make: *** [hw/net/e1000e.o] Error 1
+
+Signed-off-by: Dmitry Fleytman <dmitry@daynix.com>
+Acked-by: Jason Wang <jasowang@redhat.com>
+Message-id: 1465023763-10773-1-git-send-email-dmitry@daynix.com
+Signed-off-by: Peter Maydell <peter.maydell@linaro.org>
+(cherry picked from commit de5dca1b792ada25c29a95c8f84e01f4300aef9c)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/e1000e.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/hw/net/e1000e.c b/hw/net/e1000e.c
+index 61bcbb6..692283f 100644
+--- a/hw/net/e1000e.c
++++ b/hw/net/e1000e.c
+@@ -133,7 +133,7 @@ static uint64_t
+ e1000e_io_read(void *opaque, hwaddr addr, unsigned size)
+ {
+     E1000EState *s = opaque;
+-    uint32_t idx;
++    uint32_t idx = 0;
+     uint64_t val;
+ 
+     switch (addr) {
+@@ -158,7 +158,7 @@ e1000e_io_write(void *opaque, hwaddr addr,
+                 uint64_t val, unsigned size)
+ {
+     E1000EState *s = opaque;
+-    uint32_t idx;
++    uint32_t idx = 0;
+ 
+     switch (addr) {
+     case E1000_IOADDR:
+-- 
+1.8.3.1
+

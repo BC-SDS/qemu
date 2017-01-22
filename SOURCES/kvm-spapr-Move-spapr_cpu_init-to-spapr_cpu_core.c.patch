@@ -1,0 +1,196 @@
+From e724356931f3bfebceeb307a00690a8cac3f22bf Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 12 Jul 2016 07:41:44 +0200
+Subject: [PATCH 11/34] spapr: Move spapr_cpu_init() to spapr_cpu_core.c
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468309320-14859-12-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71131
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 11/27] spapr: Move spapr_cpu_init() to spapr_cpu_core.c
+Bugzilla: 1172917
+RH-Acked-by: Igor Mammedov <imammedo@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Bharata B Rao <bharata@linux.vnet.ibm.com>
+
+Start consolidating CPU init related routines in spapr_cpu_core.c. As
+part of this, move spapr_cpu_init() and its dependencies from spapr.c
+to spapr_cpu_core.c
+
+No functionality change in this patch.
+
+Signed-off-by: Bharata B Rao <bharata@linux.vnet.ibm.com>
+[dwg: Rename TIMEBASE_FREQ to SPAPR_TIMEBASE_FREQ, since it's now in a
+ public(ish) header]
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+
+(cherry picked from commit afd10a0fa6e90b79bad981c7334df2995d667de2)
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1172917
+
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr.c          | 50 ++-----------------------------------------------
+ hw/ppc/spapr_cpu_core.c | 48 +++++++++++++++++++++++++++++++++++++++++++++++
+ include/hw/ppc/spapr.h  |  2 ++
+ 3 files changed, 52 insertions(+), 48 deletions(-)
+
+diff --git a/hw/ppc/spapr.c b/hw/ppc/spapr.c
+index 4d87615..85dae22 100644
+--- a/hw/ppc/spapr.c
++++ b/hw/ppc/spapr.c
+@@ -88,8 +88,6 @@
+ 
+ #define MIN_RMA_SLOF            128UL
+ 
+-#define TIMEBASE_FREQ           512000000ULL
+-
+ #define PHANDLE_XICP            0x00001111
+ 
+ #define HTAB_SIZE(spapr)        (1ULL << ((spapr)->htab_shift))
+@@ -598,7 +596,8 @@ static void spapr_populate_cpu_dt(CPUState *cs, void *fdt, int offset,
+     int index = ppc_get_vcpu_dt_id(cpu);
+     uint32_t segs[] = {cpu_to_be32(28), cpu_to_be32(40),
+                        0xffffffff, 0xffffffff};
+-    uint32_t tbfreq = kvm_enabled() ? kvmppc_get_tbfreq() : TIMEBASE_FREQ;
++    uint32_t tbfreq = kvm_enabled() ? kvmppc_get_tbfreq()
++        : SPAPR_TIMEBASE_FREQ;
+     uint32_t cpufreq = kvm_enabled() ? kvmppc_get_clockfreq() : 1000000000;
+     uint32_t page_sizes_prop[64];
+     size_t page_sizes_prop_size;
+@@ -1180,26 +1179,6 @@ static void ppc_spapr_reset(void)
+ 
+ }
+ 
+-static void spapr_cpu_reset(void *opaque)
+-{
+-    sPAPRMachineState *spapr = SPAPR_MACHINE(qdev_get_machine());
+-    PowerPCCPU *cpu = opaque;
+-    CPUState *cs = CPU(cpu);
+-    CPUPPCState *env = &cpu->env;
+-
+-    cpu_reset(cs);
+-
+-    /* All CPUs start halted.  CPU0 is unhalted from the machine level
+-     * reset code and the rest are explicitly started up by the guest
+-     * using an RTAS call */
+-    cs->halted = 1;
+-
+-    env->spr[SPR_HIOR] = 0;
+-
+-    ppc_hash64_set_external_hpt(cpu, spapr->htab, spapr->htab_shift,
+-                                &error_fatal);
+-}
+-
+ static void spapr_create_nvram(sPAPRMachineState *spapr)
+ {
+     DeviceState *dev = qdev_create(&spapr->vio_bus->bus, "spapr-nvram");
+@@ -1605,31 +1584,6 @@ static void spapr_boot_set(void *opaque, const char *boot_device,
+     machine->boot_order = g_strdup(boot_device);
+ }
+ 
+-void spapr_cpu_init(sPAPRMachineState *spapr, PowerPCCPU *cpu, Error **errp)
+-{
+-    CPUPPCState *env = &cpu->env;
+-
+-    /* Set time-base frequency to 512 MHz */
+-    cpu_ppc_tb_init(env, TIMEBASE_FREQ);
+-
+-    /* Enable PAPR mode in TCG or KVM */
+-    cpu_ppc_set_papr(cpu);
+-
+-    if (cpu->max_compat) {
+-        Error *local_err = NULL;
+-
+-        ppc_set_compat(cpu, cpu->max_compat, &local_err);
+-        if (local_err) {
+-            error_propagate(errp, local_err);
+-            return;
+-        }
+-    }
+-
+-    xics_cpu_setup(spapr->icp, cpu);
+-
+-    qemu_register_reset(spapr_cpu_reset, cpu);
+-}
+-
+ /*
+  * Reset routine for LMB DR devices.
+  *
+diff --git a/hw/ppc/spapr_cpu_core.c b/hw/ppc/spapr_cpu_core.c
+index 719777a..2e24e39 100644
+--- a/hw/ppc/spapr_cpu_core.c
++++ b/hw/ppc/spapr_cpu_core.c
+@@ -14,6 +14,54 @@
+ #include "qapi/error.h"
+ #include <sysemu/cpus.h>
+ #include "target-ppc/kvm_ppc.h"
++#include "hw/ppc/ppc.h"
++#include "target-ppc/mmu-hash64.h"
++#include <sysemu/numa.h>
++
++static void spapr_cpu_reset(void *opaque)
++{
++    sPAPRMachineState *spapr = SPAPR_MACHINE(qdev_get_machine());
++    PowerPCCPU *cpu = opaque;
++    CPUState *cs = CPU(cpu);
++    CPUPPCState *env = &cpu->env;
++
++    cpu_reset(cs);
++
++    /* All CPUs start halted.  CPU0 is unhalted from the machine level
++     * reset code and the rest are explicitly started up by the guest
++     * using an RTAS call */
++    cs->halted = 1;
++
++    env->spr[SPR_HIOR] = 0;
++
++    ppc_hash64_set_external_hpt(cpu, spapr->htab, spapr->htab_shift,
++                                &error_fatal);
++}
++
++void spapr_cpu_init(sPAPRMachineState *spapr, PowerPCCPU *cpu, Error **errp)
++{
++    CPUPPCState *env = &cpu->env;
++
++    /* Set time-base frequency to 512 MHz */
++    cpu_ppc_tb_init(env, SPAPR_TIMEBASE_FREQ);
++
++    /* Enable PAPR mode in TCG or KVM */
++    cpu_ppc_set_papr(cpu);
++
++    if (cpu->max_compat) {
++        Error *local_err = NULL;
++
++        ppc_set_compat(cpu, cpu->max_compat, &local_err);
++        if (local_err) {
++            error_propagate(errp, local_err);
++            return;
++        }
++    }
++
++    xics_cpu_setup(spapr->icp, cpu);
++
++    qemu_register_reset(spapr_cpu_reset, cpu);
++}
+ 
+ static int spapr_cpu_core_realize_child(Object *child, void *opaque)
+ {
+diff --git a/include/hw/ppc/spapr.h b/include/hw/ppc/spapr.h
+index 5c8a4d5..5e3fb56 100644
+--- a/include/hw/ppc/spapr.h
++++ b/include/hw/ppc/spapr.h
+@@ -16,6 +16,8 @@ typedef struct sPAPREventLogEntry sPAPREventLogEntry;
+ #define HPTE64_V_HPTE_DIRTY     0x0000000000000040ULL
+ #define SPAPR_ENTRY_POINT       0x100
+ 
++#define SPAPR_TIMEBASE_FREQ     512000000ULL
++
+ typedef struct sPAPRMachineClass sPAPRMachineClass;
+ typedef struct sPAPRMachineState sPAPRMachineState;
+ 
+-- 
+1.8.3.1
+

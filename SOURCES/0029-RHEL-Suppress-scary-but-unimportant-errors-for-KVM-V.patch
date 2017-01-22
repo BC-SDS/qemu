@@ -1,0 +1,51 @@
+From d6d37a5b5b850f027d21792666344376ddfe6db5 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Tue, 18 Aug 2015 06:06:09 +0200
+Subject: RHEL: Suppress scary but unimportant errors for KVM VFIO on powerpc
+
+Patchwork-id: 67563
+O-Subject: [RHEL7.2 qemu-kvm-rhev PATCH] RHEL: Suppress scary but unimportant errors for KVM VFIO on powerpc
+Bugzilla: 1237034
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+The current downstream qemu VFIO code produces an error message if a vfio
+device is requested, but it can't create the KVM VFIO device in the kernel.
+
+This error is important for x86, because the kvm-vfio device is necessary
+to avoid potential coherency problems.  For Power, however, the in-kernel
+device is unnecessary and not currently built.
+
+We're working upstream to enable the pseudo device for Power, but in the
+meantime, suppress the alarming but harmless error message in qemu.
+
+Upstream: downstream only patch
+Signed-off-by: David Gibson <dgibson@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/vfio/common.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/hw/vfio/common.c b/hw/vfio/common.c
+index f27db36..c49b405 100644
+--- a/hw/vfio/common.c
++++ b/hw/vfio/common.c
+@@ -693,6 +693,14 @@ static void vfio_kvm_device_add_group(VFIOGroup *group)
+         };
+ 
+         if (kvm_vm_ioctl(kvm_state, KVM_CREATE_DEVICE, &cd)) {
++#if defined(TARGET_PPC) || defined(TARGET_PPC64)
++            /* RHEL: powerpc doesn't currently need or implement the
++             * KVM VFIO device.  We plan to enable it eventually but
++             * for now suppress the scary error message if we fail to
++             * initialize the pseudo-device */
++            if (errno == ENODEV)
++                return;
++#endif
+             error_report("Failed to create KVM VFIO device: %m");
+             return;
+         }
+-- 
+2.5.5
+

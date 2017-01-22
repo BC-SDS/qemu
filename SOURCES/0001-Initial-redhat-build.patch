@@ -1,0 +1,258 @@
+From 051fb9bf036d159ce8daed10745f9d08fd7d2ab1 Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Thu, 5 Nov 2015 10:38:15 +0100
+Subject: Initial redhat build
+
+Switch to new unified build structure.
+
+Rebase to 2.6:
+- removed q35-acpi-dsdt.aml
+- add enable-gcrypt option
+
+Rebase to 2.5:
+- New seccomp hadling in configure
+- New condition format  in migration/migration.c
+- libcacard extracted
+- vnc fixes
+- libsecomp for aarch64 requirements changed downstream
+
+Rebase to 2.4:
+    - remove --enable-ws-vnc
+    - use error_setg instead of error_set in migration/migration.c
+    - remove target-x86_64.conf
+    - create /etc/qemu-kvm on copying of bridge.conf
+    - disabled opengl
+    - rebased to version 2.3.0-30.el7
+
+Included commits (rebase 2.4)
+    - 9201274 spec: Remove obsolete differentiation code
+    - a938a8c spec: Use external configuration script
+    - 5ca8d0e spec: Use configure options to prevent default resolution
+    - 5dca391 spec: Ship complete QMP documentation files
+    - 7899edd aarch64: allow --enable-seccomp
+    - a56fb9c aarch64: redhat spec: enable seccomp
+    - a9571e6 rhel: Update package version for SLOF dependency
+    - 25c70c4 configure: Add support for tcmalloc
+    - db72485 Change fsreeze-hook default location
+    - 14b8a9e redhat: add kvm-unit-tests tarball to environment
+    - 5ee4238 spec: Build tscdeadline_latency.flat from kvm-unit-tests
+    - 6ba800b Downstream-only: Start kvm-setup service before libvirtd service
+    - 59b43d6 Do not stop qemu-guest-agent service on target switch
+    - 4d851fa provide vhost module config file with max_mem_regions set to 509
+    - 0b18027 spec: Require proper version of SLOF
+    - 3c436c7 Fix rh-brew-aarch64, rh-brew-ppc rh-brew-ga-ppc target
+---
+ .gitpublish                               |    8 +
+ Makefile                                  |    2 +-
+ configure                                 |   16 +-
+ migration/migration.c                     |    7 +
+ os-posix.c                                |    2 +-
+ redhat/.gitignore                         |    1 +
+ redhat/80-kvm.rules                       |    1 +
+ redhat/85-kvm.preset                      |    5 +
+ redhat/99-qemu-guest-agent.rules          |    2 +
+ redhat/Makefile                           |   72 +
+ redhat/Makefile.common                    |   37 +
+ redhat/README.rhel6-gpxe-source           |    9 +
+ redhat/bios-256k.bin                      |  Bin 0 -> 262144 bytes
+ redhat/bridge.conf                        |    1 +
+ redhat/build_configure.sh                 |  118 +
+ redhat/ksm.service                        |   13 +
+ redhat/ksm.sysconfig                      |    4 +
+ redhat/ksmctl.c                           |   77 +
+ redhat/ksmtuned                           |  138 +
+ redhat/ksmtuned.conf                      |   21 +
+ redhat/ksmtuned.service                   |   12 +
+ redhat/kvm-setup                          |   31 +
+ redhat/kvm-setup.service                  |   14 +
+ redhat/kvm-unit-tests.git-4ea7633.tar.bz2 |  Bin 0 -> 148090 bytes
+ redhat/kvm.modules                        |   21 +
+ redhat/qemu-ga.sysconfig                  |   19 +
+ redhat/qemu-guest-agent.service           |   21 +
+ redhat/qemu-kvm.spec.template             | 4678 +++++++++++++++++++++++++++++
+ redhat/qemu.binfmt                        |   17 +
+ redhat/rhel6-ne2k_pci.rom                 |  Bin 0 -> 54272 bytes
+ redhat/rhel6-pcnet.rom                    |  Bin 0 -> 54784 bytes
+ redhat/rhel6-rtl8139.rom                  |  Bin 0 -> 54272 bytes
+ redhat/rhel6-virtio.rom                   |  Bin 0 -> 53248 bytes
+ redhat/rpmbuild/BUILD/.gitignore          |    2 +
+ redhat/rpmbuild/RPMS/.gitignore           |    2 +
+ redhat/rpmbuild/SOURCES/.gitignore        |    2 +
+ redhat/rpmbuild/SPECS/.gitignore          |    2 +
+ redhat/rpmbuild/SRPMS/.gitignore          |    2 +
+ redhat/scripts/frh.py                     |   27 +
+ redhat/scripts/git-backport-diff          |  302 ++
+ redhat/scripts/git-compile-check          |  215 ++
+ redhat/scripts/process-patches.sh         |   70 +
+ redhat/scripts/tarball_checksum.sh        |    3 +
+ redhat/vhost.conf                         |    3 +
+ ui/vnc.c                                  |    2 +-
+ 45 files changed, 5974 insertions(+), 5 deletions(-)
+ create mode 100644 .gitpublish
+ create mode 100644 redhat/.gitignore
+ create mode 100644 redhat/80-kvm.rules
+ create mode 100644 redhat/85-kvm.preset
+ create mode 100644 redhat/99-qemu-guest-agent.rules
+ create mode 100644 redhat/Makefile
+ create mode 100644 redhat/Makefile.common
+ create mode 100644 redhat/README.rhel6-gpxe-source
+ create mode 100644 redhat/bios-256k.bin
+ create mode 100644 redhat/bridge.conf
+ create mode 100755 redhat/build_configure.sh
+ create mode 100644 redhat/ksm.service
+ create mode 100644 redhat/ksm.sysconfig
+ create mode 100644 redhat/ksmctl.c
+ create mode 100644 redhat/ksmtuned
+ create mode 100644 redhat/ksmtuned.conf
+ create mode 100644 redhat/ksmtuned.service
+ create mode 100644 redhat/kvm-setup
+ create mode 100644 redhat/kvm-setup.service
+ create mode 100644 redhat/kvm-unit-tests.git-4ea7633.tar.bz2
+ create mode 100755 redhat/kvm.modules
+ create mode 100644 redhat/qemu-ga.sysconfig
+ create mode 100644 redhat/qemu-guest-agent.service
+ create mode 100644 redhat/qemu-kvm.spec.template
+ create mode 100644 redhat/qemu.binfmt
+ create mode 100644 redhat/rhel6-ne2k_pci.rom
+ create mode 100644 redhat/rhel6-pcnet.rom
+ create mode 100644 redhat/rhel6-rtl8139.rom
+ create mode 100644 redhat/rhel6-virtio.rom
+ create mode 100644 redhat/rpmbuild/BUILD/.gitignore
+ create mode 100644 redhat/rpmbuild/RPMS/.gitignore
+ create mode 100644 redhat/rpmbuild/SOURCES/.gitignore
+ create mode 100644 redhat/rpmbuild/SPECS/.gitignore
+ create mode 100644 redhat/rpmbuild/SRPMS/.gitignore
+ create mode 100755 redhat/scripts/frh.py
+ create mode 100755 redhat/scripts/git-backport-diff
+ create mode 100755 redhat/scripts/git-compile-check
+ create mode 100755 redhat/scripts/process-patches.sh
+ create mode 100755 redhat/scripts/tarball_checksum.sh
+ create mode 100644 redhat/vhost.conf
+
+diff --git a/Makefile b/Makefile
+index 1d076a9..709070d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -414,7 +414,7 @@ install-doc: $(DOCS)
+ 	$(INSTALL_DATA) qmp-commands.txt "$(DESTDIR)$(qemu_docdir)"
+ ifdef CONFIG_POSIX
+ 	$(INSTALL_DIR) "$(DESTDIR)$(mandir)/man1"
+-	$(INSTALL_DATA) qemu.1 "$(DESTDIR)$(mandir)/man1"
++	$(INSTALL_DATA) qemu.1 "$(DESTDIR)$(mandir)/man1/qemu-kvm.1"
+ ifneq ($(TOOLS),)
+ 	$(INSTALL_DATA) qemu-img.1 "$(DESTDIR)$(mandir)/man1"
+ 	$(INSTALL_DIR) "$(DESTDIR)$(mandir)/man8"
+diff --git a/configure b/configure
+index c37fc5f..78efd98 100755
+--- a/configure
++++ b/configure
+@@ -317,6 +317,7 @@ virglrenderer=""
+ tpm="yes"
+ libssh2=""
+ vhdx=""
++live_block_migration="no"
+ numa=""
+ tcmalloc="no"
+ jemalloc="no"
+@@ -1147,6 +1148,10 @@ for opt do
+   ;;
+   --enable-jemalloc) jemalloc="yes"
+   ;;
++  --disable-live-block-migration) live_block_migration="no"
++  ;;
++  --enable-live-block-migration) live_block_migration="yes"
++  ;;
+   *)
+       echo "ERROR: unknown option $opt"
+       echo "Try '$0 --help' for more information"
+@@ -1366,6 +1371,8 @@ disabled with --disable-FEATURE, default is enabled if available:
+   tpm             TPM support
+   libssh2         ssh block device support
+   vhdx            support for the Microsoft VHDX image format
++  live-block-migration disable live block migration
++  live-block-migration  enable live block migration
+   numa            libnuma support
+   tcmalloc        tcmalloc support
+   jemalloc        jemalloc support
+@@ -1870,13 +1877,13 @@ fi
+ 
+ if test "$seccomp" != "no" ; then
+     case "$cpu" in
+-    i386|x86_64)
++    i386|x86_64|aarch64)
+         libseccomp_minver="2.1.0"
+         ;;
+     mips)
+         libseccomp_minver="2.2.0"
+         ;;
+-    arm|aarch64)
++    arm)
+         libseccomp_minver="2.2.3"
+         ;;
+     *)
+@@ -4861,6 +4868,7 @@ echo "libssh2 support   $libssh2"
+ echo "TPM passthrough   $tpm_passthrough"
+ echo "QOM debugging     $qom_cast_debug"
+ echo "vhdx              $vhdx"
++echo "Live block migration $live_block_migration"
+ echo "lzo support       $lzo"
+ echo "snappy support    $snappy"
+ echo "bzip2 support     $bzip2"
+@@ -5396,6 +5404,10 @@ if test "$vhdx" = "yes" ; then
+   echo "CONFIG_VHDX=y" >> $config_host_mak
+ fi
+ 
++if test "$live_block_migration" = "yes" ; then
++  echo "CONFIG_LIVE_BLOCK_MIGRATION=y" >> $config_host_mak
++fi
++
+ # USB host support
+ if test "$libusb" = "yes"; then
+   echo "HOST_USB=libusb legacy" >> $config_host_mak
+diff --git a/migration/migration.c b/migration/migration.c
+index 991313a..b526e6c 100644
+--- a/migration/migration.c
++++ b/migration/migration.c
+@@ -1004,6 +1004,13 @@ void qmp_migrate(const char *uri, bool has_blk, bool blk,
+     params.blk = has_blk && blk;
+     params.shared = has_inc && inc;
+ 
++#ifndef CONFIG_LIVE_BLOCK_MIGRATION
++    if (params.blk || params.shared) {
++        error_setg(errp, QERR_UNSUPPORTED);
++        return;
++    }
++#endif
++
+     if (migration_is_setup_or_active(s->state) ||
+         s->state == MIGRATION_STATUS_CANCELLING) {
+         error_setg(errp, QERR_MIGRATION_ACTIVE);
+diff --git a/os-posix.c b/os-posix.c
+index 107fde3..d4c8f18 100644
+--- a/os-posix.c
++++ b/os-posix.c
+@@ -78,7 +78,7 @@ void os_setup_signal_handling(void)
+ /* Find a likely location for support files using the location of the binary.
+    For installed binaries this will be "$bindir/../share/qemu".  When
+    running from the build tree this will be "$bindir/../pc-bios".  */
+-#define SHARE_SUFFIX "/share/qemu"
++#define SHARE_SUFFIX "/share/qemu-kvm"
+ #define BUILD_SUFFIX "/pc-bios"
+ char *os_find_datadir(void)
+ {
+diff --git a/ui/vnc.c b/ui/vnc.c
+index d2ebf1f..cf08589 100644
+--- a/ui/vnc.c
++++ b/ui/vnc.c
+@@ -3728,7 +3728,7 @@ void vnc_display_open(const char *id, Error **errp)
+     }
+ 
+ #ifdef CONFIG_VNC_SASL
+-    if ((saslErr = sasl_server_init(NULL, "qemu")) != SASL_OK) {
++    if ((saslErr = sasl_server_init(NULL, "qemu-kvm")) != SASL_OK) {
+         error_setg(errp, "Failed to initialize SASL auth: %s",
+                    sasl_errstring(saslErr, NULL, NULL));
+         goto fail;
+-- 
+2.5.5
+

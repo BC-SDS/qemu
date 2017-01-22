@@ -1,0 +1,167 @@
+From 3d493f670d4390605fb8c86c6672694e89bc58df Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Thu, 11 Aug 2016 08:43:36 +0200
+Subject: [PATCH 16/30] vhost-user: keep vhost_net after a disconnection
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160811084348.10475-17-marcandre.lureau@redhat.com>
+Patchwork-id: 71932
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 16/28] vhost-user: keep vhost_net after a disconnection
+Bugzilla: 1355902
+RH-Acked-by: Maxime Coquelin <maxime.coquelin@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Many code paths assume get_vhost_net() returns non-null.
+
+Keep VhostUserState.vhost_net after a successful vhost_net_init(),
+instead of freeing it in vhost_net_cleanup().
+
+VhostUserState.vhost_net is thus freed before after being recreated or
+on final vhost_user_cleanup() and there is no need to save the acked
+features.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit e6bcb1b61782cefacecc8b9ee7a5f782373dab2d)
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=1355902
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/vhost_net.c |  1 -
+ net/tap.c          |  1 +
+ net/vhost-user.c   | 36 +++++++++++++++++++-----------------
+ 3 files changed, 20 insertions(+), 18 deletions(-)
+
+diff --git a/hw/net/vhost_net.c b/hw/net/vhost_net.c
+index f9a8e70..a2086b8 100644
+--- a/hw/net/vhost_net.c
++++ b/hw/net/vhost_net.c
+@@ -378,7 +378,6 @@ void vhost_net_stop(VirtIODevice *dev, NetClientState *ncs,
+ void vhost_net_cleanup(struct vhost_net *net)
+ {
+     vhost_dev_cleanup(&net->dev);
+-    g_free(net);
+ }
+ 
+ int vhost_net_notify_migration_done(struct vhost_net *net, char* mac_addr)
+diff --git a/net/tap.c b/net/tap.c
+index b3957d8..59e67fc 100644
+--- a/net/tap.c
++++ b/net/tap.c
+@@ -312,6 +312,7 @@ static void tap_cleanup(NetClientState *nc)
+ 
+     if (s->vhost_net) {
+         vhost_net_cleanup(s->vhost_net);
++        g_free(s->vhost_net);
+         s->vhost_net = NULL;
+     }
+ 
+diff --git a/net/vhost-user.c b/net/vhost-user.c
+index 7665c4e..197c848 100644
+--- a/net/vhost-user.c
++++ b/net/vhost-user.c
+@@ -45,11 +45,6 @@ uint64_t vhost_user_get_acked_features(NetClientState *nc)
+     return s->acked_features;
+ }
+ 
+-static int vhost_user_running(VhostUserState *s)
+-{
+-    return (s->vhost_net) ? 1 : 0;
+-}
+-
+ static void vhost_user_stop(int queues, NetClientState *ncs[])
+ {
+     VhostUserState *s;
+@@ -59,15 +54,14 @@ static void vhost_user_stop(int queues, NetClientState *ncs[])
+         assert (ncs[i]->info->type == NET_CLIENT_OPTIONS_KIND_VHOST_USER);
+ 
+         s = DO_UPCAST(VhostUserState, nc, ncs[i]);
+-        if (!vhost_user_running(s)) {
+-            continue;
+-        }
+ 
+         if (s->vhost_net) {
+             /* save acked features */
+-            s->acked_features = vhost_net_get_acked_features(s->vhost_net);
++            uint64_t features = vhost_net_get_acked_features(s->vhost_net);
++            if (features) {
++                s->acked_features = features;
++            }
+             vhost_net_cleanup(s->vhost_net);
+-            s->vhost_net = NULL;
+         }
+     }
+ }
+@@ -75,6 +69,7 @@ static void vhost_user_stop(int queues, NetClientState *ncs[])
+ static int vhost_user_start(int queues, NetClientState *ncs[])
+ {
+     VhostNetOptions options;
++    struct vhost_net *net = NULL;
+     VhostUserState *s;
+     int max_queues;
+     int i;
+@@ -85,33 +80,39 @@ static int vhost_user_start(int queues, NetClientState *ncs[])
+         assert (ncs[i]->info->type == NET_CLIENT_OPTIONS_KIND_VHOST_USER);
+ 
+         s = DO_UPCAST(VhostUserState, nc, ncs[i]);
+-        if (vhost_user_running(s)) {
+-            continue;
+-        }
+ 
+         options.net_backend = ncs[i];
+         options.opaque      = s->chr;
+         options.busyloop_timeout = 0;
+-        s->vhost_net = vhost_net_init(&options);
+-        if (!s->vhost_net) {
++        net = vhost_net_init(&options);
++        if (!net) {
+             error_report("failed to init vhost_net for queue %d", i);
+             goto err;
+         }
+ 
+         if (i == 0) {
+-            max_queues = vhost_net_get_max_queues(s->vhost_net);
++            max_queues = vhost_net_get_max_queues(net);
+             if (queues > max_queues) {
+                 error_report("you are asking more queues than supported: %d",
+                              max_queues);
+                 goto err;
+             }
+         }
++
++        if (s->vhost_net) {
++            vhost_net_cleanup(s->vhost_net);
++            g_free(s->vhost_net);
++        }
++        s->vhost_net = net;
+     }
+ 
+     return 0;
+ 
+ err:
+-    vhost_user_stop(i + 1, ncs);
++    if (net) {
++        vhost_net_cleanup(net);
++    }
++    vhost_user_stop(i, ncs);
+     return -1;
+ }
+ 
+@@ -150,6 +151,7 @@ static void vhost_user_cleanup(NetClientState *nc)
+ 
+     if (s->vhost_net) {
+         vhost_net_cleanup(s->vhost_net);
++        g_free(s->vhost_net);
+         s->vhost_net = NULL;
+     }
+     if (s->chr) {
+-- 
+1.8.3.1
+

@@ -1,0 +1,97 @@
+From dad42a63c84c15d473c97f409af22eda656c6210 Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Tue, 2 Aug 2016 11:14:36 +0200
+Subject: [PATCH 86/99] migration: regain control of images when migration
+ fails to complete
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1470136476-8468-2-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 71725
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/1] migration: regain control of images when migration fails to complete
+Bugzilla: 1361539
+RH-Acked-by: Stefan Hajnoczi <stefanha@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Amit Shah <amit.shah@redhat.com>
+
+From: Greg Kurz <gkurz@linux.vnet.ibm.com>
+
+We currently have an error path during migration that can cause
+the source QEMU to abort:
+
+migration_thread()
+  migration_completion()
+    runstate_is_running() ----------------> true if guest is running
+    bdrv_inactivate_all() ----------------> inactivate images
+    qemu_savevm_state_complete_precopy()
+     ... qemu_fflush()
+           socket_writev_buffer() --------> error because destination fails
+         qemu_fflush() -------------------> set error on migration stream
+  migration_completion() -----------------> set migrate state to FAILED
+migration_thread() -----------------------> break migration loop
+  vm_start() -----------------------------> restart guest with inactive
+                                            images
+
+and you get:
+
+qemu-system-ppc64: socket_writev_buffer: Got err=104 for (32768/18446744073709551615)
+qemu-system-ppc64: /home/greg/Work/qemu/qemu-master/block/io.c:1342:bdrv_co_do_pwritev: Assertion `!(bs->open_flags & 0x0800)' failed.
+Aborted (core dumped)
+
+If we try postcopy with a similar scenario, we also get the writev error
+message but QEMU leaves the guest paused because entered_postcopy is true.
+
+We could possibly do the same with precopy and leave the guest paused.
+But since the historical default for migration errors is to restart the
+source, this patch adds a call to bdrv_invalidate_cache_all() instead.
+
+Signed-off-by: Greg Kurz <gkurz@linux.vnet.ibm.com>
+Message-Id: <146357896785.6003.11983081732454362715.stgit@bahia.huguette.org>
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+(cherry picked from commit fe904ea8242cbae2d7e69c052c754b8f5f1ba1d6)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ migration/migration.c | 17 +++++++++++++++--
+ 1 file changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/migration/migration.c b/migration/migration.c
+index 802ca19..d8c6477 100644
+--- a/migration/migration.c
++++ b/migration/migration.c
+@@ -1608,19 +1608,32 @@ static void migration_completion(MigrationState *s, int current_active_state,
+         rp_error = await_return_path_close_on_source(s);
+         trace_migration_completion_postcopy_end_after_rp(rp_error);
+         if (rp_error) {
+-            goto fail;
++            goto fail_invalidate;
+         }
+     }
+ 
+     if (qemu_file_get_error(s->to_dst_file)) {
+         trace_migration_completion_file_err();
+-        goto fail;
++        goto fail_invalidate;
+     }
+ 
+     migrate_set_state(&s->state, current_active_state,
+                       MIGRATION_STATUS_COMPLETED);
+     return;
+ 
++fail_invalidate:
++    /* If not doing postcopy, vm_start() will be called: let's regain
++     * control on images.
++     */
++    if (s->state == MIGRATION_STATUS_ACTIVE) {
++        Error *local_err = NULL;
++
++        bdrv_invalidate_cache_all(&local_err);
++        if (local_err) {
++            error_report_err(local_err);
++        }
++    }
++
+ fail:
+     migrate_set_state(&s->state, current_active_state,
+                       MIGRATION_STATUS_FAILED);
+-- 
+1.8.3.1
+

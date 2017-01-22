@@ -1,0 +1,285 @@
+From 081d92cbfbd1007409497d111e35d6481aafd7e6 Mon Sep 17 00:00:00 2001
+From: David Gibson <dgibson@redhat.com>
+Date: Mon, 11 Jul 2016 01:38:22 +0200
+Subject: [PATCH 15/27] vfio/spapr: Create DMA window dynamically (SPAPR IOMMU
+ v2)
+
+RH-Author: David Gibson <dgibson@redhat.com>
+Message-id: <1468201103-4990-16-git-send-email-dgibson@redhat.com>
+Patchwork-id: 71102
+O-Subject: [RHEL7.3 qemu-kvm-rhev PATCHv2 15/16] vfio/spapr: Create DMA window dynamically (SPAPR IOMMU v2)
+Bugzilla: 1213667
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Alex Williamson <alex.williamson@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Alexey Kardashevskiy <aik@ozlabs.ru>
+
+New VFIO_SPAPR_TCE_v2_IOMMU type supports dynamic DMA window management.
+This adds ability to VFIO common code to dynamically allocate/remove
+DMA windows in the host kernel when new VFIO container is added/removed.
+
+This adds a helper to vfio_listener_region_add which makes
+VFIO_IOMMU_SPAPR_TCE_CREATE ioctl and adds just created IOMMU into
+the host IOMMU list; the opposite action is taken in
+vfio_listener_region_del.
+
+When creating a new window, this uses heuristic to decide on the TCE table
+levels number.
+
+This should cause no guest visible change in behavior.
+
+Signed-off-by: Alexey Kardashevskiy <aik@ozlabs.ru>
+Reviewed-by: David Gibson <david@gibson.dropbear.id.au>
+[dwg: Added some casts to prevent printf() warnings on certain targets
+ where the kernel headers' __u64 doesn't match uint64_t or PRIx64]
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+
+(cherry picked from commit 2e4109de8e589beecd69996ee14f24021b991c0d)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+Conflicts:
+	hw/vfio/trace-events
+
+Corrected conflict because downstream all trace events are in the
+master file, not distributed through the tree.
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=1213667
+Signed-off-by: David Gibson <dgibson@redhat.com>
+---
+ hw/vfio/common.c              | 80 +++++++++++++++++++++++++++++++++++++------
+ hw/vfio/spapr.c               | 71 ++++++++++++++++++++++++++++++++++++++
+ include/hw/vfio/vfio-common.h |  6 ++++
+ trace-events                  |  2 ++
+ 4 files changed, 149 insertions(+), 10 deletions(-)
+
+diff --git a/hw/vfio/common.c b/hw/vfio/common.c
+index c7f7180..e6c0f44 100644
+--- a/hw/vfio/common.c
++++ b/hw/vfio/common.c
+@@ -263,6 +263,21 @@ static void vfio_host_win_add(VFIOContainer *container,
+     QLIST_INSERT_HEAD(&container->hostwin_list, hostwin, hostwin_next);
+ }
+ 
++static int vfio_host_win_del(VFIOContainer *container, hwaddr min_iova,
++                             hwaddr max_iova)
++{
++    VFIOHostDMAWindow *hostwin;
++
++    QLIST_FOREACH(hostwin, &container->hostwin_list, hostwin_next) {
++        if (hostwin->min_iova == min_iova && hostwin->max_iova == max_iova) {
++            QLIST_REMOVE(hostwin, hostwin_next);
++            return 0;
++        }
++    }
++
++    return -1;
++}
++
+ static bool vfio_listener_skipped_section(MemoryRegionSection *section)
+ {
+     return (!memory_region_is_ram(section->mr) &&
+@@ -372,6 +387,31 @@ static void vfio_listener_region_add(MemoryListener *listener,
+     }
+     end = int128_get64(int128_sub(llend, int128_one()));
+ 
++    if (container->iommu_type == VFIO_SPAPR_TCE_v2_IOMMU) {
++        VFIOHostDMAWindow *hostwin;
++        hwaddr pgsize = 0;
++
++        /* For now intersections are not allowed, we may relax this later */
++        QLIST_FOREACH(hostwin, &container->hostwin_list, hostwin_next) {
++            if (ranges_overlap(hostwin->min_iova,
++                               hostwin->max_iova - hostwin->min_iova + 1,
++                               section->offset_within_address_space,
++                               int128_get64(section->size))) {
++                ret = -1;
++                goto fail;
++            }
++        }
++
++        ret = vfio_spapr_create_window(container, section, &pgsize);
++        if (ret) {
++            goto fail;
++        }
++
++        vfio_host_win_add(container, section->offset_within_address_space,
++                          section->offset_within_address_space +
++                          int128_get64(section->size) - 1, pgsize);
++    }
++
+     hostwin_found = false;
+     QLIST_FOREACH(hostwin, &container->hostwin_list, hostwin_next) {
+         if (hostwin->min_iova <= iova && end <= hostwin->max_iova) {
+@@ -508,6 +548,18 @@ static void vfio_listener_region_del(MemoryListener *listener,
+                      "0x%"HWADDR_PRIx") = %d (%m)",
+                      container, iova, end - iova, ret);
+     }
++
++    if (container->iommu_type == VFIO_SPAPR_TCE_v2_IOMMU) {
++        vfio_spapr_remove_window(container,
++                                 section->offset_within_address_space);
++        if (vfio_host_win_del(container,
++                              section->offset_within_address_space,
++                              section->offset_within_address_space +
++                              int128_get64(section->size) - 1) < 0) {
++            hw_error("%s: Cannot delete missing window at %"HWADDR_PRIx,
++                     __func__, section->offset_within_address_space);
++        }
++    }
+ }
+ 
+ static const MemoryListener vfio_memory_listener = {
+@@ -903,11 +955,6 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as)
+             }
+         }
+ 
+-        /*
+-         * This only considers the host IOMMU's 32-bit window.  At
+-         * some point we need to add support for the optional 64-bit
+-         * window and dynamic windows
+-         */
+         info.argsz = sizeof(info);
+         ret = ioctl(fd, VFIO_IOMMU_SPAPR_TCE_GET_INFO, &info);
+         if (ret) {
+@@ -919,11 +966,24 @@ static int vfio_connect_container(VFIOGroup *group, AddressSpace *as)
+             goto free_container_exit;
+         }
+ 
+-        /* The default table uses 4K pages */
+-        vfio_host_win_add(container, info.dma32_window_start,
+-                          info.dma32_window_start +
+-                          info.dma32_window_size - 1,
+-                          0x1000);
++        if (v2) {
++            /*
++             * There is a default window in just created container.
++             * To make region_add/del simpler, we better remove this
++             * window now and let those iommu_listener callbacks
++             * create/remove them when needed.
++             */
++            ret = vfio_spapr_remove_window(container, info.dma32_window_start);
++            if (ret) {
++                goto free_container_exit;
++            }
++        } else {
++            /* The default table uses 4K pages */
++            vfio_host_win_add(container, info.dma32_window_start,
++                              info.dma32_window_start +
++                              info.dma32_window_size - 1,
++                              0x1000);
++        }
+     } else {
+         error_report("vfio: No available IOMMU models");
+         ret = -EINVAL;
+diff --git a/hw/vfio/spapr.c b/hw/vfio/spapr.c
+index 7d64443..0af3423 100644
+--- a/hw/vfio/spapr.c
++++ b/hw/vfio/spapr.c
+@@ -137,3 +137,74 @@ const MemoryListener vfio_prereg_listener = {
+     .region_add = vfio_prereg_listener_region_add,
+     .region_del = vfio_prereg_listener_region_del,
+ };
++
++int vfio_spapr_create_window(VFIOContainer *container,
++                             MemoryRegionSection *section,
++                             hwaddr *pgsize)
++{
++    int ret;
++    unsigned pagesize = memory_region_iommu_get_min_page_size(section->mr);
++    unsigned entries, pages;
++    struct vfio_iommu_spapr_tce_create create = { .argsz = sizeof(create) };
++
++    /*
++     * FIXME: For VFIO iommu types which have KVM acceleration to
++     * avoid bouncing all map/unmaps through qemu this way, this
++     * would be the right place to wire that up (tell the KVM
++     * device emulation the VFIO iommu handles to use).
++     */
++    create.window_size = int128_get64(section->size);
++    create.page_shift = ctz64(pagesize);
++    /*
++     * SPAPR host supports multilevel TCE tables, there is some
++     * heuristic to decide how many levels we want for our table:
++     * 0..64 = 1; 65..4096 = 2; 4097..262144 = 3; 262145.. = 4
++     */
++    entries = create.window_size >> create.page_shift;
++    pages = MAX((entries * sizeof(uint64_t)) / getpagesize(), 1);
++    pages = MAX(pow2ceil(pages) - 1, 1); /* Round up */
++    create.levels = ctz64(pages) / 6 + 1;
++
++    ret = ioctl(container->fd, VFIO_IOMMU_SPAPR_TCE_CREATE, &create);
++    if (ret) {
++        error_report("Failed to create a window, ret = %d (%m)", ret);
++        return -errno;
++    }
++
++    if (create.start_addr != section->offset_within_address_space) {
++        vfio_spapr_remove_window(container, create.start_addr);
++
++        error_report("Host doesn't support DMA window at %"HWADDR_PRIx", must be %"PRIx64,
++                     section->offset_within_address_space,
++                     (uint64_t)create.start_addr);
++        ioctl(container->fd, VFIO_IOMMU_SPAPR_TCE_REMOVE, &remove);
++        return -EINVAL;
++    }
++    trace_vfio_spapr_create_window(create.page_shift,
++                                   create.window_size,
++                                   create.start_addr);
++    *pgsize = pagesize;
++
++    return 0;
++}
++
++int vfio_spapr_remove_window(VFIOContainer *container,
++                             hwaddr offset_within_address_space)
++{
++    struct vfio_iommu_spapr_tce_remove remove = {
++        .argsz = sizeof(remove),
++        .start_addr = offset_within_address_space,
++    };
++    int ret;
++
++    ret = ioctl(container->fd, VFIO_IOMMU_SPAPR_TCE_REMOVE, &remove);
++    if (ret) {
++        error_report("Failed to remove window at %"PRIx64,
++                     (uint64_t)remove.start_addr);
++        return -errno;
++    }
++
++    trace_vfio_spapr_remove_window(offset_within_address_space);
++
++    return 0;
++}
+diff --git a/include/hw/vfio/vfio-common.h b/include/hw/vfio/vfio-common.h
+index 74ad6f0..376b74b 100644
+--- a/include/hw/vfio/vfio-common.h
++++ b/include/hw/vfio/vfio-common.h
+@@ -165,4 +165,10 @@ int vfio_get_region_info(VFIODevice *vbasedev, int index,
+ #endif
+ extern const MemoryListener vfio_prereg_listener;
+ 
++int vfio_spapr_create_window(VFIOContainer *container,
++                             MemoryRegionSection *section,
++                             hwaddr *pgsize);
++int vfio_spapr_remove_window(VFIOContainer *container,
++                             hwaddr offset_within_address_space);
++
+ #endif /* !HW_VFIO_VFIO_COMMON_H */
+diff --git a/trace-events b/trace-events
+index 60e438b..5b98a52 100644
+--- a/trace-events
++++ b/trace-events
+@@ -1756,6 +1756,8 @@ vfio_prereg_listener_region_add_skip(uint64_t start, uint64_t end) "%"PRIx64" -
+ vfio_prereg_listener_region_del_skip(uint64_t start, uint64_t end) "%"PRIx64" - %"PRIx64
+ vfio_prereg_register(uint64_t va, uint64_t size, int ret) "va=%"PRIx64" size=%"PRIx64" ret=%d"
+ vfio_prereg_unregister(uint64_t va, uint64_t size, int ret) "va=%"PRIx64" size=%"PRIx64" ret=%d"
++vfio_spapr_create_window(int ps, uint64_t ws, uint64_t off) "pageshift=0x%x winsize=0x%"PRIx64" offset=0x%"PRIx64
++vfio_spapr_remove_window(uint64_t off) "offset=%"PRIx64
+ 
+ #hw/acpi/memory_hotplug.c
+ mhp_acpi_invalid_slot_selected(uint32_t slot) "0x%"PRIx32
+-- 
+1.8.3.1
+

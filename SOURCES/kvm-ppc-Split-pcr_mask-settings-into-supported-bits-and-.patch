@@ -1,0 +1,103 @@
+From 088552cfccdc048517ccffc4475bf8ed390ec0d5 Mon Sep 17 00:00:00 2001
+From: Thomas Huth <thuth@redhat.com>
+Date: Wed, 15 Jun 2016 20:35:15 +0200
+Subject: [PATCH 03/13] ppc: Split pcr_mask settings into supported bits and
+ the register mask
+
+RH-Author: Thomas Huth <thuth@redhat.com>
+Message-id: <1466022918-18958-3-git-send-email-thuth@redhat.com>
+Patchwork-id: 70626
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 2/5] ppc: Split pcr_mask settings into supported bits and the register mask
+Bugzilla: 1341492
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+
+The current pcr_mask values are ambiguous: Should these be the mask
+that defines valid bits in the PCR register? Or should these rather
+indicate which compatibility levels are possible? Anyway, POWER6 and
+POWER7 should certainly not use the same values here. So let's
+introduce an additional variable "pcr_supported" here which is
+used to indicate the valid compatibility levels, and use pcr_mask
+to signal the valid bits in the PCR register.
+
+Signed-off-by: Thomas Huth <thuth@redhat.com>
+Signed-off-by: David Gibson <david@gibson.dropbear.id.au>
+(cherry picked from commit 8cd2ce7aaa3c3fadc561f40045d4d53ff72e94ef)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/ppc/spapr_hcall.c        | 4 ++--
+ target-ppc/cpu-qom.h        | 3 ++-
+ target-ppc/cpu.h            | 1 +
+ target-ppc/translate_init.c | 6 ++++--
+ 4 files changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/hw/ppc/spapr_hcall.c b/hw/ppc/spapr_hcall.c
+index 5139af7..f65245a 100644
+--- a/hw/ppc/spapr_hcall.c
++++ b/hw/ppc/spapr_hcall.c
+@@ -923,9 +923,9 @@ static void cas_handle_compat_cpu(PowerPCCPUClass *pcc, uint32_t pvr,
+     }
+ 
+     /* If it is a logical PVR, try to determine the highest level */
+-    is205 = (pcc->pcr_mask & PCR_COMPAT_2_05) &&
++    is205 = (pcc->pcr_supported & PCR_COMPAT_2_05) &&
+             (lvl == get_compat_level(CPU_POWERPC_LOGICAL_2_05));
+-    is206 = (pcc->pcr_mask & PCR_COMPAT_2_06) &&
++    is206 = (pcc->pcr_supported & PCR_COMPAT_2_06) &&
+             ((lvl == get_compat_level(CPU_POWERPC_LOGICAL_2_06)) ||
+              (lvl == get_compat_level(CPU_POWERPC_LOGICAL_2_06_PLUS)));
+ 
+diff --git a/target-ppc/cpu-qom.h b/target-ppc/cpu-qom.h
+index 7d5e2b3..69af69a 100644
+--- a/target-ppc/cpu-qom.h
++++ b/target-ppc/cpu-qom.h
+@@ -57,7 +57,8 @@ typedef struct PowerPCCPUClass {
+ 
+     uint32_t pvr;
+     bool (*pvr_match)(struct PowerPCCPUClass *pcc, uint32_t pvr);
+-    uint64_t pcr_mask;
++    uint64_t pcr_mask;          /* Available bits in PCR register */
++    uint64_t pcr_supported;     /* Bits for supported PowerISA versions */
+     uint32_t svr;
+     uint64_t insns_flags;
+     uint64_t insns_flags2;
+diff --git a/target-ppc/cpu.h b/target-ppc/cpu.h
+index 5282533..5a96c1e 100644
+--- a/target-ppc/cpu.h
++++ b/target-ppc/cpu.h
+@@ -2255,6 +2255,7 @@ enum {
+ enum {
+     PCR_COMPAT_2_05     = 1ull << (63-62),
+     PCR_COMPAT_2_06     = 1ull << (63-61),
++    PCR_COMPAT_2_07     = 1ull << (63-60),
+     PCR_VEC_DIS         = 1ull << (63-0), /* Vec. disable (bit NA since POWER8) */
+     PCR_VSX_DIS         = 1ull << (63-1), /* VSX disable (bit NA since POWER8) */
+     PCR_TM_DIS          = 1ull << (63-2), /* Trans. memory disable (POWER8) */
+diff --git a/target-ppc/translate_init.c b/target-ppc/translate_init.c
+index f515725..1356ce8 100644
+--- a/target-ppc/translate_init.c
++++ b/target-ppc/translate_init.c
+@@ -8363,7 +8363,8 @@ POWERPC_FAMILY(POWER7)(ObjectClass *oc, void *data)
+     dc->desc = "POWER7";
+     dc->props = powerpc_servercpu_properties;
+     pcc->pvr_match = ppc_pvr_match_power7;
+-    pcc->pcr_mask = PCR_COMPAT_2_05 | PCR_COMPAT_2_06;
++    pcc->pcr_mask = PCR_VEC_DIS | PCR_VSX_DIS | PCR_COMPAT_2_05;
++    pcc->pcr_supported = PCR_COMPAT_2_06 | PCR_COMPAT_2_05;
+     pcc->init_proc = init_proc_POWER7;
+     pcc->check_pow = check_pow_nocheck;
+     pcc->insns_flags = PPC_INSNS_BASE | PPC_ISEL | PPC_STRING | PPC_MFTB |
+@@ -8443,7 +8444,8 @@ POWERPC_FAMILY(POWER8)(ObjectClass *oc, void *data)
+     dc->desc = "POWER8";
+     dc->props = powerpc_servercpu_properties;
+     pcc->pvr_match = ppc_pvr_match_power8;
+-    pcc->pcr_mask = PCR_COMPAT_2_05 | PCR_COMPAT_2_06;
++    pcc->pcr_mask = PCR_TM_DIS | PCR_COMPAT_2_06 | PCR_COMPAT_2_05;
++    pcc->pcr_supported = PCR_COMPAT_2_07 | PCR_COMPAT_2_06 | PCR_COMPAT_2_05;
+     pcc->init_proc = init_proc_POWER8;
+     pcc->check_pow = check_pow_nocheck;
+     pcc->insns_flags = PPC_INSNS_BASE | PPC_ISEL | PPC_STRING | PPC_MFTB |
+-- 
+1.8.3.1
+

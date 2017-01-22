@@ -1,0 +1,167 @@
+From 32d75849045525e31c8621aa4071e9aa5960db15 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Fri, 17 Jun 2016 13:45:41 +0200
+Subject: [PATCH 08/25] vhost-net: save & restore vhost-user acked features
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <1466171144-10377-8-git-send-email-marcandre.lureau@redhat.com>
+Patchwork-id: 70653
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 07/10] vhost-net: save & restore vhost-user acked features
+Bugzilla: 1322087
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Michael S. Tsirkin <mst@redhat.com>
+
+From: Marc-André Lureau <marcandre.lureau@redhat.com>
+
+The initial vhost-user connection sets the features to be negotiated
+with the driver. Renegotiation isn't possible without device reset.
+
+To handle reconnection of vhost-user backend, ensure the same set of
+features are provided, and reuse already acked features.
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Tested-by: Yuanhan Liu <yuanhan.liu@linux.intel.com>
+Reviewed-by: Yuanhan Liu <yuanhan.liu@linux.intel.com>
+Reviewed-by: Victor Kaplansky <victork@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+
+(cherry picked from commit a463215b087c41d7ca94e51aa347cde523831873)
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/net/vhost_net.c       | 27 ++++++++++++++++++++++++++-
+ include/net/vhost-user.h |  1 +
+ include/net/vhost_net.h  |  3 +++
+ net/vhost-user.c         | 10 ++++++++++
+ 4 files changed, 40 insertions(+), 1 deletion(-)
+
+diff --git a/hw/net/vhost_net.c b/hw/net/vhost_net.c
+index 805a0df..b28881f 100644
+--- a/hw/net/vhost_net.c
++++ b/hw/net/vhost_net.c
+@@ -120,6 +120,11 @@ uint64_t vhost_net_get_max_queues(VHostNetState *net)
+     return net->dev.max_queues;
+ }
+ 
++uint64_t vhost_net_get_acked_features(VHostNetState *net)
++{
++    return net->dev.acked_features;
++}
++
+ static int vhost_net_get_fd(NetClientState *backend)
+ {
+     switch (backend->info->type) {
+@@ -136,6 +141,7 @@ struct vhost_net *vhost_net_init(VhostNetOptions *options)
+     int r;
+     bool backend_kernel = options->backend_type == VHOST_BACKEND_TYPE_KERNEL;
+     struct vhost_net *net = g_malloc(sizeof *net);
++    uint64_t features = 0;
+ 
+     if (!options->net_backend) {
+         fprintf(stderr, "vhost-net requires net backend to be setup\n");
+@@ -183,8 +189,21 @@ struct vhost_net *vhost_net_init(VhostNetOptions *options)
+             goto fail;
+         }
+     }
++
+     /* Set sane init value. Override when guest acks. */
+-    vhost_net_ack_features(net, 0);
++    if (net->nc->info->type == NET_CLIENT_OPTIONS_KIND_VHOST_USER) {
++        features = vhost_user_get_acked_features(net->nc);
++        if (~net->dev.features & features) {
++            fprintf(stderr, "vhost lacks feature mask %" PRIu64
++                    " for backend\n",
++                    (uint64_t)(~net->dev.features & features));
++            vhost_dev_cleanup(&net->dev);
++            goto fail;
++        }
++    }
++
++    vhost_net_ack_features(net, features);
++
+     return net;
+ fail:
+     g_free(net);
+@@ -447,10 +466,16 @@ uint64_t vhost_net_get_features(struct vhost_net *net, uint64_t features)
+ {
+     return features;
+ }
++
+ void vhost_net_ack_features(struct vhost_net *net, uint64_t features)
+ {
+ }
+ 
++uint64_t vhost_net_get_acked_features(VHostNetState *net)
++{
++    return 0;
++}
++
+ bool vhost_net_virtqueue_pending(VHostNetState *net, int idx)
+ {
+     return false;
+diff --git a/include/net/vhost-user.h b/include/net/vhost-user.h
+index 85109f6..efae35d 100644
+--- a/include/net/vhost-user.h
++++ b/include/net/vhost-user.h
+@@ -13,5 +13,6 @@
+ 
+ struct vhost_net;
+ struct vhost_net *vhost_user_get_vhost_net(NetClientState *nc);
++uint64_t vhost_user_get_acked_features(NetClientState *nc);
+ 
+ #endif /* VHOST_USER_H_ */
+diff --git a/include/net/vhost_net.h b/include/net/vhost_net.h
+index 3389b41..0bd4877 100644
+--- a/include/net/vhost_net.h
++++ b/include/net/vhost_net.h
+@@ -31,4 +31,7 @@ int vhost_net_notify_migration_done(VHostNetState *net, char* mac_addr);
+ VHostNetState *get_vhost_net(NetClientState *nc);
+ 
+ int vhost_set_vring_enable(NetClientState * nc, int enable);
++
++uint64_t vhost_net_get_acked_features(VHostNetState *net);
++
+ #endif
+diff --git a/net/vhost-user.c b/net/vhost-user.c
+index 41ddb4b..d72ce9b 100644
+--- a/net/vhost-user.c
++++ b/net/vhost-user.c
+@@ -23,6 +23,7 @@ typedef struct VhostUserState {
+     CharDriverState *chr;
+     VHostNetState *vhost_net;
+     int watch;
++    uint64_t acked_features;
+ } VhostUserState;
+ 
+ typedef struct VhostUserChardevProps {
+@@ -37,6 +38,13 @@ VHostNetState *vhost_user_get_vhost_net(NetClientState *nc)
+     return s->vhost_net;
+ }
+ 
++uint64_t vhost_user_get_acked_features(NetClientState *nc)
++{
++    VhostUserState *s = DO_UPCAST(VhostUserState, nc, nc);
++    assert(nc->info->type == NET_CLIENT_OPTIONS_KIND_VHOST_USER);
++    return s->acked_features;
++}
++
+ static int vhost_user_running(VhostUserState *s)
+ {
+     return (s->vhost_net) ? 1 : 0;
+@@ -56,6 +64,8 @@ static void vhost_user_stop(int queues, NetClientState *ncs[])
+         }
+ 
+         if (s->vhost_net) {
++            /* save acked features */
++            s->acked_features = vhost_net_get_acked_features(s->vhost_net);
+             vhost_net_cleanup(s->vhost_net);
+             s->vhost_net = NULL;
+         }
+-- 
+1.8.3.1
+

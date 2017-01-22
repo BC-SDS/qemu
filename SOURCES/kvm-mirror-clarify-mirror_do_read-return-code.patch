@@ -1,0 +1,71 @@
+From 696e3d502d64de8865fa1f29e0a62fe29294eb42 Mon Sep 17 00:00:00 2001
+From: John Snow <jsnow@redhat.com>
+Date: Fri, 8 Jul 2016 16:35:19 +0200
+Subject: [PATCH 09/11] mirror: clarify mirror_do_read return code
+
+RH-Author: John Snow <jsnow@redhat.com>
+Message-id: <1467995721-12563-2-git-send-email-jsnow@redhat.com>
+Patchwork-id: 71084
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 1/3] mirror: clarify mirror_do_read return code
+Bugzilla: 1336705
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Fam Zheng <famz@redhat.com>
+RH-Acked-by: Max Reitz <mreitz@redhat.com>
+
+mirror_do_read intends to return the number of sectors processed after
+the starting sector, without regard to how many sectors were processed
+before the starting sector due to alignment.
+
+Clean up the comments and code to hopefully illustrate this more clearly.
+
+This also fixes an issue in initialization where if the mirror buffer size
+is initialized to smaller than the number of sectors being requested for
+transfer, we report back an incorrectly large number to the caller.
+
+Signed-off-by: John Snow <jsnow@redhat.com>
+Reviewed-by: Eric Blake <eblake@redhat.com>
+Reviewed-by: Fam Zheng <famz@redhat.com>
+Message-id: 1466625064-11280-2-git-send-email-jsnow@redhat.com
+Signed-off-by: Jeff Cody <jcody@redhat.com>
+(cherry picked from commit 176129552f78bcb99022036d3293c6593c9716c3)
+Signed-off-by: John Snow <jsnow@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ block/mirror.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/block/mirror.c b/block/mirror.c
+index 07f95a4..c484187 100644
+--- a/block/mirror.c
++++ b/block/mirror.c
+@@ -217,7 +217,9 @@ static inline void mirror_wait_for_io(MirrorBlockJob *s)
+ }
+ 
+ /* Submit async read while handling COW.
+- * Returns: nb_sectors if no alignment is necessary, or
++ * Returns: The number of sectors copied after and including sector_num,
++ *          excluding any sectors copied prior to sector_num due to alignment.
++ *          This will be nb_sectors if no alignment is necessary, or
+  *          (new_end - sector_num) if tail is rounded up or down due to
+  *          alignment or buffer limit.
+  */
+@@ -226,7 +228,7 @@ static int mirror_do_read(MirrorBlockJob *s, int64_t sector_num,
+ {
+     BlockDriverState *source = s->common.bs;
+     int sectors_per_chunk, nb_chunks;
+-    int ret = nb_sectors;
++    int ret;
+     MirrorOp *op;
+ 
+     sectors_per_chunk = s->granularity >> BDRV_SECTOR_BITS;
+@@ -234,6 +236,7 @@ static int mirror_do_read(MirrorBlockJob *s, int64_t sector_num,
+     /* We can only handle as much as buf_size at a time. */
+     nb_sectors = MIN(s->buf_size >> BDRV_SECTOR_BITS, nb_sectors);
+     assert(nb_sectors);
++    ret = nb_sectors;
+ 
+     if (s->cow_bitmap) {
+         ret += mirror_cow_align(s, &sector_num, &nb_sectors);
+-- 
+1.8.3.1
+

@@ -1,0 +1,413 @@
+From 82156fc536b88433f0c3f5320197d7c71c5b5f89 Mon Sep 17 00:00:00 2001
+From: Peter Xu <peterx@redhat.com>
+Date: Thu, 18 Aug 2016 03:00:34 +0200
+Subject: [PATCH 16/37] intel_iommu: Add support for PCI MSI remap
+
+RH-Author: Peter Xu <peterx@redhat.com>
+Message-id: <1471489253-2811-16-git-send-email-peterx@redhat.com>
+Patchwork-id: 72000
+O-Subject: [RHEL-7.3 qemu-kvm-rhev v2 15/34] intel_iommu: Add support for PCI MSI remap
+Bugzilla: 1358653
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+
+This patch enables interrupt remapping for PCI devices.
+
+To play the trick, one memory region "iommu_ir" is added as child region
+of the original iommu memory region, covering range 0xfeeXXXXX (which is
+the address range for APIC). All the writes to this range will be taken
+as MSI, and translation is carried out only when IR is enabled.
+
+Idea suggested by Paolo Bonzini.
+
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Reviewed-by: Michael S. Tsirkin <mst@redhat.com>
+Signed-off-by: Michael S. Tsirkin <mst@redhat.com>
+(cherry picked from commit 651e4cefeee8e388919e51f4e299033ab2a8b87d)
+Signed-off-by: Peter Xu <peterx@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ hw/i386/intel_iommu.c          | 239 +++++++++++++++++++++++++++++++++++++++++
+ hw/i386/intel_iommu_internal.h |   2 +
+ include/hw/i386/intel_iommu.h  |  66 ++++++++++++
+ 3 files changed, 307 insertions(+)
+
+diff --git a/hw/i386/intel_iommu.c b/hw/i386/intel_iommu.c
+index 6a6cb3b..2e57396 100644
+--- a/hw/i386/intel_iommu.c
++++ b/hw/i386/intel_iommu.c
+@@ -1982,6 +1982,240 @@ static Property vtd_properties[] = {
+     DEFINE_PROP_END_OF_LIST(),
+ };
+ 
++/* Read IRTE entry with specific index */
++static int vtd_irte_get(IntelIOMMUState *iommu, uint16_t index,
++                        VTD_IRTE *entry)
++{
++    dma_addr_t addr = 0x00;
++
++    addr = iommu->intr_root + index * sizeof(*entry);
++    if (dma_memory_read(&address_space_memory, addr, entry,
++                        sizeof(*entry))) {
++        VTD_DPRINTF(GENERAL, "error: fail to access IR root at 0x%"PRIx64
++                    " + %"PRIu16, iommu->intr_root, index);
++        return -VTD_FR_IR_ROOT_INVAL;
++    }
++
++    if (!entry->present) {
++        VTD_DPRINTF(GENERAL, "error: present flag not set in IRTE"
++                    " entry index %u value 0x%"PRIx64 " 0x%"PRIx64,
++                    index, le64_to_cpu(entry->data[1]),
++                    le64_to_cpu(entry->data[0]));
++        return -VTD_FR_IR_ENTRY_P;
++    }
++
++    if (entry->__reserved_0 || entry->__reserved_1 || \
++        entry->__reserved_2) {
++        VTD_DPRINTF(GENERAL, "error: IRTE entry index %"PRIu16
++                    " reserved fields non-zero: 0x%"PRIx64 " 0x%"PRIx64,
++                    index, le64_to_cpu(entry->data[1]),
++                    le64_to_cpu(entry->data[0]));
++        return -VTD_FR_IR_IRTE_RSVD;
++    }
++
++    /*
++     * TODO: Check Source-ID corresponds to SVT (Source Validation
++     * Type) bits
++     */
++
++    return 0;
++}
++
++/* Fetch IRQ information of specific IR index */
++static int vtd_remap_irq_get(IntelIOMMUState *iommu, uint16_t index, VTDIrq *irq)
++{
++    VTD_IRTE irte = { 0 };
++    int ret = 0;
++
++    ret = vtd_irte_get(iommu, index, &irte);
++    if (ret) {
++        return ret;
++    }
++
++    irq->trigger_mode = irte.trigger_mode;
++    irq->vector = irte.vector;
++    irq->delivery_mode = irte.delivery_mode;
++    /* Not support EIM yet: please refer to vt-d 9.10 DST bits */
++#define  VTD_IR_APIC_DEST_MASK         (0xff00ULL)
++#define  VTD_IR_APIC_DEST_SHIFT        (8)
++    irq->dest = (le32_to_cpu(irte.dest_id) & VTD_IR_APIC_DEST_MASK) >> \
++        VTD_IR_APIC_DEST_SHIFT;
++    irq->dest_mode = irte.dest_mode;
++    irq->redir_hint = irte.redir_hint;
++
++    VTD_DPRINTF(IR, "remapping interrupt index %d: trig:%u,vec:%u,"
++                "deliver:%u,dest:%u,dest_mode:%u", index,
++                irq->trigger_mode, irq->vector, irq->delivery_mode,
++                irq->dest, irq->dest_mode);
++
++    return 0;
++}
++
++/* Generate one MSI message from VTDIrq info */
++static void vtd_generate_msi_message(VTDIrq *irq, MSIMessage *msg_out)
++{
++    VTD_MSIMessage msg = {};
++
++    /* Generate address bits */
++    msg.dest_mode = irq->dest_mode;
++    msg.redir_hint = irq->redir_hint;
++    msg.dest = irq->dest;
++    msg.__addr_head = cpu_to_le32(0xfee);
++    /* Keep this from original MSI address bits */
++    msg.__not_used = irq->msi_addr_last_bits;
++
++    /* Generate data bits */
++    msg.vector = irq->vector;
++    msg.delivery_mode = irq->delivery_mode;
++    msg.level = 1;
++    msg.trigger_mode = irq->trigger_mode;
++
++    msg_out->address = msg.msi_addr;
++    msg_out->data = msg.msi_data;
++}
++
++/* Interrupt remapping for MSI/MSI-X entry */
++static int vtd_interrupt_remap_msi(IntelIOMMUState *iommu,
++                                   MSIMessage *origin,
++                                   MSIMessage *translated)
++{
++    int ret = 0;
++    VTD_IR_MSIAddress addr;
++    uint16_t index;
++    VTDIrq irq = {0};
++
++    assert(origin && translated);
++
++    if (!iommu || !iommu->intr_enabled) {
++        goto do_not_translate;
++    }
++
++    if (origin->address & VTD_MSI_ADDR_HI_MASK) {
++        VTD_DPRINTF(GENERAL, "error: MSI addr high 32 bits nonzero"
++                    " during interrupt remapping: 0x%"PRIx32,
++                    (uint32_t)((origin->address & VTD_MSI_ADDR_HI_MASK) >> \
++                    VTD_MSI_ADDR_HI_SHIFT));
++        return -VTD_FR_IR_REQ_RSVD;
++    }
++
++    addr.data = origin->address & VTD_MSI_ADDR_LO_MASK;
++    if (le16_to_cpu(addr.__head) != 0xfee) {
++        VTD_DPRINTF(GENERAL, "error: MSI addr low 32 bits invalid: "
++                    "0x%"PRIx32, addr.data);
++        return -VTD_FR_IR_REQ_RSVD;
++    }
++
++    /* This is compatible mode. */
++    if (addr.int_mode != VTD_IR_INT_FORMAT_REMAP) {
++        goto do_not_translate;
++    }
++
++    index = addr.index_h << 15 | le16_to_cpu(addr.index_l);
++
++#define  VTD_IR_MSI_DATA_SUBHANDLE       (0x0000ffff)
++#define  VTD_IR_MSI_DATA_RESERVED        (0xffff0000)
++
++    if (addr.sub_valid) {
++        /* See VT-d spec 5.1.2.2 and 5.1.3 on subhandle */
++        index += origin->data & VTD_IR_MSI_DATA_SUBHANDLE;
++    }
++
++    ret = vtd_remap_irq_get(iommu, index, &irq);
++    if (ret) {
++        return ret;
++    }
++
++    if (addr.sub_valid) {
++        VTD_DPRINTF(IR, "received MSI interrupt");
++        if (origin->data & VTD_IR_MSI_DATA_RESERVED) {
++            VTD_DPRINTF(GENERAL, "error: MSI data bits non-zero for "
++                        "interrupt remappable entry: 0x%"PRIx32,
++                        origin->data);
++            return -VTD_FR_IR_REQ_RSVD;
++        }
++    } else {
++        uint8_t vector = origin->data & 0xff;
++        VTD_DPRINTF(IR, "received IOAPIC interrupt");
++        /* IOAPIC entry vector should be aligned with IRTE vector
++         * (see vt-d spec 5.1.5.1). */
++        if (vector != irq.vector) {
++            VTD_DPRINTF(GENERAL, "IOAPIC vector inconsistent: "
++                        "entry: %d, IRTE: %d, index: %d",
++                        vector, irq.vector, index);
++        }
++    }
++
++    /*
++     * We'd better keep the last two bits, assuming that guest OS
++     * might modify it. Keep it does not hurt after all.
++     */
++    irq.msi_addr_last_bits = addr.__not_care;
++
++    /* Translate VTDIrq to MSI message */
++    vtd_generate_msi_message(&irq, translated);
++
++    VTD_DPRINTF(IR, "mapping MSI 0x%"PRIx64":0x%"PRIx32 " -> "
++                "0x%"PRIx64":0x%"PRIx32, origin->address, origin->data,
++                translated->address, translated->data);
++    return 0;
++
++do_not_translate:
++    memcpy(translated, origin, sizeof(*origin));
++    return 0;
++}
++
++static MemTxResult vtd_mem_ir_read(void *opaque, hwaddr addr,
++                                   uint64_t *data, unsigned size,
++                                   MemTxAttrs attrs)
++{
++    return MEMTX_OK;
++}
++
++static MemTxResult vtd_mem_ir_write(void *opaque, hwaddr addr,
++                                    uint64_t value, unsigned size,
++                                    MemTxAttrs attrs)
++{
++    int ret = 0;
++    MSIMessage from = {0}, to = {0};
++
++    from.address = (uint64_t) addr + VTD_INTERRUPT_ADDR_FIRST;
++    from.data = (uint32_t) value;
++
++    ret = vtd_interrupt_remap_msi(opaque, &from, &to);
++    if (ret) {
++        /* TODO: report error */
++        VTD_DPRINTF(GENERAL, "int remap fail for addr 0x%"PRIx64
++                    " data 0x%"PRIx32, from.address, from.data);
++        /* Drop this interrupt */
++        return MEMTX_ERROR;
++    }
++
++    VTD_DPRINTF(IR, "delivering MSI 0x%"PRIx64":0x%"PRIx32
++                " for device sid 0x%04x",
++                to.address, to.data, sid);
++
++    if (dma_memory_write(&address_space_memory, to.address,
++                         &to.data, size)) {
++        VTD_DPRINTF(GENERAL, "error: fail to write 0x%"PRIx64
++                    " value 0x%"PRIx32, to.address, to.data);
++    }
++
++    return MEMTX_OK;
++}
++
++static const MemoryRegionOps vtd_mem_ir_ops = {
++    .read_with_attrs = vtd_mem_ir_read,
++    .write_with_attrs = vtd_mem_ir_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .impl = {
++        .min_access_size = 4,
++        .max_access_size = 4,
++    },
++    .valid = {
++        .min_access_size = 4,
++        .max_access_size = 4,
++    },
++};
+ 
+ VTDAddressSpace *vtd_find_add_as(IntelIOMMUState *s, PCIBus *bus, int devfn)
+ {
+@@ -2009,6 +2243,11 @@ VTDAddressSpace *vtd_find_add_as(IntelIOMMUState *s, PCIBus *bus, int devfn)
+         vtd_dev_as->context_cache_entry.context_cache_gen = 0;
+         memory_region_init_iommu(&vtd_dev_as->iommu, OBJECT(s),
+                                  &s->iommu_ops, "intel_iommu", UINT64_MAX);
++        memory_region_init_io(&vtd_dev_as->iommu_ir, OBJECT(s),
++                              &vtd_mem_ir_ops, s, "intel_iommu_ir",
++                              VTD_INTERRUPT_ADDR_SIZE);
++        memory_region_add_subregion(&vtd_dev_as->iommu, VTD_INTERRUPT_ADDR_FIRST,
++                                    &vtd_dev_as->iommu_ir);
+         address_space_init(&vtd_dev_as->as,
+                            &vtd_dev_as->iommu, "intel_iommu");
+     }
+diff --git a/hw/i386/intel_iommu_internal.h b/hw/i386/intel_iommu_internal.h
+index 2a9987f..e1a08cb 100644
+--- a/hw/i386/intel_iommu_internal.h
++++ b/hw/i386/intel_iommu_internal.h
+@@ -110,6 +110,8 @@
+ /* Interrupt Address Range */
+ #define VTD_INTERRUPT_ADDR_FIRST    0xfee00000ULL
+ #define VTD_INTERRUPT_ADDR_LAST     0xfeefffffULL
++#define VTD_INTERRUPT_ADDR_SIZE     (VTD_INTERRUPT_ADDR_LAST - \
++                                     VTD_INTERRUPT_ADDR_FIRST + 1)
+ 
+ /* The shift of source_id in the key of IOTLB hash table */
+ #define VTD_IOTLB_SID_SHIFT         36
+diff --git a/include/hw/i386/intel_iommu.h b/include/hw/i386/intel_iommu.h
+index 260aa8e..cdbbddd 100644
+--- a/include/hw/i386/intel_iommu.h
++++ b/include/hw/i386/intel_iommu.h
+@@ -24,6 +24,8 @@
+ #include "hw/qdev.h"
+ #include "sysemu/dma.h"
+ #include "hw/i386/x86-iommu.h"
++#include "hw/i386/ioapic.h"
++#include "hw/pci/msi.h"
+ 
+ #define TYPE_INTEL_IOMMU_DEVICE "intel-iommu"
+ #define INTEL_IOMMU_DEVICE(obj) \
+@@ -46,6 +48,10 @@
+ 
+ #define DMAR_REPORT_F_INTR          (1)
+ 
++#define  VTD_MSI_ADDR_HI_MASK        (0xffffffff00000000ULL)
++#define  VTD_MSI_ADDR_HI_SHIFT       (32)
++#define  VTD_MSI_ADDR_LO_MASK        (0x00000000ffffffffULL)
++
+ typedef struct VTDContextEntry VTDContextEntry;
+ typedef struct VTDContextCacheEntry VTDContextCacheEntry;
+ typedef struct IntelIOMMUState IntelIOMMUState;
+@@ -54,6 +60,8 @@ typedef struct VTDIOTLBEntry VTDIOTLBEntry;
+ typedef struct VTDBus VTDBus;
+ typedef union VTD_IRTE VTD_IRTE;
+ typedef union VTD_IR_MSIAddress VTD_IR_MSIAddress;
++typedef struct VTDIrq VTDIrq;
++typedef struct VTD_MSIMessage VTD_MSIMessage;
+ 
+ /* Context-Entry */
+ struct VTDContextEntry {
+@@ -74,6 +82,7 @@ struct VTDAddressSpace {
+     uint8_t devfn;
+     AddressSpace as;
+     MemoryRegion iommu;
++    MemoryRegion iommu_ir;      /* Interrupt region: 0xfeeXXXXX */
+     IntelIOMMUState *iommu_state;
+     VTDContextCacheEntry context_cache_entry;
+ };
+@@ -161,6 +170,63 @@ union VTD_IR_MSIAddress {
+     uint32_t data;
+ };
+ 
++/* Generic IRQ entry information */
++struct VTDIrq {
++    /* Used by both IOAPIC/MSI interrupt remapping */
++    uint8_t trigger_mode;
++    uint8_t vector;
++    uint8_t delivery_mode;
++    uint32_t dest;
++    uint8_t dest_mode;
++
++    /* only used by MSI interrupt remapping */
++    uint8_t redir_hint;
++    uint8_t msi_addr_last_bits;
++};
++
++struct VTD_MSIMessage {
++    union {
++        struct {
++#ifdef HOST_WORDS_BIGENDIAN
++            uint32_t __addr_head:12; /* 0xfee */
++            uint32_t dest:8;
++            uint32_t __reserved:8;
++            uint32_t redir_hint:1;
++            uint32_t dest_mode:1;
++            uint32_t __not_used:2;
++#else
++            uint32_t __not_used:2;
++            uint32_t dest_mode:1;
++            uint32_t redir_hint:1;
++            uint32_t __reserved:8;
++            uint32_t dest:8;
++            uint32_t __addr_head:12; /* 0xfee */
++#endif
++            uint32_t __addr_hi:32;
++        } QEMU_PACKED;
++        uint64_t msi_addr;
++    };
++    union {
++        struct {
++#ifdef HOST_WORDS_BIGENDIAN
++            uint16_t trigger_mode:1;
++            uint16_t level:1;
++            uint16_t __resved:3;
++            uint16_t delivery_mode:3;
++            uint16_t vector:8;
++#else
++            uint16_t vector:8;
++            uint16_t delivery_mode:3;
++            uint16_t __resved:3;
++            uint16_t level:1;
++            uint16_t trigger_mode:1;
++#endif
++            uint16_t __resved1:16;
++        } QEMU_PACKED;
++        uint32_t msi_data;
++    };
++};
++
+ /* When IR is enabled, all MSI/MSI-X data bits should be zero */
+ #define VTD_IR_MSI_DATA          (0)
+ 
+-- 
+1.8.3.1
+

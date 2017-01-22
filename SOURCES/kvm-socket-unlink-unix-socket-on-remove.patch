@@ -1,0 +1,119 @@
+From 6cb87519ee7c994437995e2fcfa69f42c7207dbe Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Marc-Andr=C3=A9=20Lureau?= <marcandre.lureau@redhat.com>
+Date: Mon, 4 Jul 2016 20:57:31 +0200
+Subject: [PATCH 11/16] socket: unlink unix socket on remove
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+RH-Author: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-id: <20160704205732.27022-5-marcandre.lureau@redhat.com>
+Patchwork-id: 70941
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH v2 4/5] socket: unlink unix socket on remove
+Bugzilla: 1347077
+RH-Acked-by: Xiao Wang <jasowang@redhat.com>
+RH-Acked-by: Laurent Vivier <lvivier@redhat.com>
+RH-Acked-by: Victor Kaplansky <vkaplans@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+From: Marc-André Lureau <marcandre.lureau@redhat.com>
+
+qemu leaves unix socket files behind when removing a listening chardev
+or leaving. qemu could clean that up, even if doing so isn't race-free.
+
+Fixes:
+https://bugzilla.redhat.com/show_bug.cgi?id=1347077
+
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Message-Id: <1466105332-10285-4-git-send-email-marcandre.lureau@redhat.com>
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+
+(cherry picked from commit 74b6ce43e3aacbb101018407196fc963e2c39fea)
+Signed-off-by: Marc-André Lureau <marcandre.lureau@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ include/qemu/sockets.h         |  1 +
+ io/channel-socket.c            | 10 ++++++++++
+ tests/test-io-channel-socket.c |  2 +-
+ util/qemu-sockets.c            | 18 ++++++++++++++++++
+ 4 files changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/include/qemu/sockets.h b/include/qemu/sockets.h
+index 1bd9218..5dd2648 100644
+--- a/include/qemu/sockets.h
++++ b/include/qemu/sockets.h
+@@ -51,6 +51,7 @@ SocketAddress *socket_parse(const char *str, Error **errp);
+ int socket_connect(SocketAddress *addr, Error **errp,
+                    NonBlockingConnectHandler *callback, void *opaque);
+ int socket_listen(SocketAddress *addr, Error **errp);
++void socket_listen_cleanup(int fd, Error **errp);
+ int socket_dgram(SocketAddress *remote, SocketAddress *local, Error **errp);
+ 
+ /* Old, ipv4 only bits.  Don't use for new code. */
+diff --git a/io/channel-socket.c b/io/channel-socket.c
+index 1cd5848..6ec87f8 100644
+--- a/io/channel-socket.c
++++ b/io/channel-socket.c
+@@ -400,7 +400,17 @@ static void qio_channel_socket_init(Object *obj)
+ static void qio_channel_socket_finalize(Object *obj)
+ {
+     QIOChannelSocket *ioc = QIO_CHANNEL_SOCKET(obj);
++
+     if (ioc->fd != -1) {
++        if (QIO_CHANNEL(ioc)->features & QIO_CHANNEL_FEATURE_LISTEN) {
++            Error *err = NULL;
++
++            socket_listen_cleanup(ioc->fd, &err);
++            if (err) {
++                error_report_err(err);
++                err = NULL;
++            }
++        }
+ #ifdef WIN32
+         WSAEventSelect(ioc->fd, NULL, 0);
+ #endif
+diff --git a/tests/test-io-channel-socket.c b/tests/test-io-channel-socket.c
+index 855306b..f73e063 100644
+--- a/tests/test-io-channel-socket.c
++++ b/tests/test-io-channel-socket.c
+@@ -383,7 +383,7 @@ static void test_io_channel_unix(bool async)
+ 
+     qapi_free_SocketAddress(listen_addr);
+     qapi_free_SocketAddress(connect_addr);
+-    unlink(TEST_SOCKET);
++    g_assert(g_file_test(TEST_SOCKET, G_FILE_TEST_EXISTS) == FALSE);
+ }
+ 
+ 
+diff --git a/util/qemu-sockets.c b/util/qemu-sockets.c
+index 0d53691..194d4c3 100644
+--- a/util/qemu-sockets.c
++++ b/util/qemu-sockets.c
+@@ -997,6 +997,24 @@ int socket_listen(SocketAddress *addr, Error **errp)
+     return fd;
+ }
+ 
++void socket_listen_cleanup(int fd, Error **errp)
++{
++    SocketAddress *addr;
++
++    addr = socket_local_address(fd, errp);
++
++    if (addr->type == SOCKET_ADDRESS_KIND_UNIX
++        && addr->u.q_unix.data->path) {
++        if (unlink(addr->u.q_unix.data->path) < 0 && errno != ENOENT) {
++            error_setg_errno(errp, errno,
++                             "Failed to unlink socket %s",
++                             addr->u.q_unix.data->path);
++        }
++    }
++
++    g_free(addr);
++}
++
+ int socket_dgram(SocketAddress *remote, SocketAddress *local, Error **errp)
+ {
+     int fd;
+-- 
+1.8.3.1
+

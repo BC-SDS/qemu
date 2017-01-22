@@ -1,0 +1,35 @@
+From 2eaf71c45fe74d2f74d9a0df2f0c4b3ae920c5bd Mon Sep 17 00:00:00 2001
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Wed, 22 Jun 2016 14:03:16 +0200
+Subject: [PATCH 03/16] Disable rocker device
+
+RH-Author: Miroslav Rezanina <mrezanin@redhat.com>
+Message-id: <4d66bfd05eae17384c1c8165d9c13f9f73f39239.1466603432.git.mrezanin@redhat.com>
+Patchwork-id: 70746
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCHv3 03/10] Disable rocker device
+Bugzilla: 1333282
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Thomas Huth <thuth@redhat.com>
+
+From: Miroslav Rezanina <mrezanin@redhat.com>
+
+We won't support rocker device so disable it.
+
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ default-configs/pci.mak | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/default-configs/pci.mak b/default-configs/pci.mak
+index e12c609..bd6451c 100644
+--- a/default-configs/pci.mak
++++ b/default-configs/pci.mak
+@@ -19,4 +19,3 @@ CONFIG_PCI_TESTDEV=y
+ CONFIG_VGA=y
+ CONFIG_VGA_PCI=y
+ CONFIG_IVSHMEM=$(CONFIG_EVENTFD)
+-CONFIG_ROCKER=y
+-- 
+1.8.3.1
+

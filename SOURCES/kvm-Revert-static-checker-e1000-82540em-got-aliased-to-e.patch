@@ -1,0 +1,42 @@
+From 07428f65dad9a21425a344f0ee477cebb4f1d62b Mon Sep 17 00:00:00 2001
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+Date: Wed, 6 Jul 2016 11:08:13 +0200
+Subject: [PATCH 02/11] Revert "static checker: e1000-82540em got aliased to
+ e1000"
+
+RH-Author: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Message-id: <1467803295-18634-2-git-send-email-dgilbert@redhat.com>
+Patchwork-id: 70968
+O-Subject: [RHEL-7.3 qemu-kvm-rhev PATCH 1/3] Revert "static checker: e1000-82540em got aliased to e1000"
+Bugzilla: 1353070
+RH-Acked-by: Laszlo Ersek <lersek@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Xiao Wang <jasowang@redhat.com>
+
+From: "Dr. David Alan Gilbert" <dgilbert@redhat.com>
+
+This reverts commit 1483e0d74dcfd183ff46dd63cc57e1fe8b775bf8.
+Since I'm about to revert the alias, the fix for the checker isn't
+appropriate.
+
+Signed-off-by: Dr. David Alan Gilbert <dgilbert@redhat.com>
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ scripts/vmstate-static-checker.py | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/scripts/vmstate-static-checker.py b/scripts/vmstate-static-checker.py
+index b5ecaf6..b6c0bbe 100755
+--- a/scripts/vmstate-static-checker.py
++++ b/scripts/vmstate-static-checker.py
+@@ -99,7 +99,6 @@ def get_changed_sec_name(sec):
+     # Section names can change -- see commit 292b1634 for an example.
+     changes = {
+         "ICH9 LPC": "ICH9-LPC",
+-        "e1000-82540em": "e1000",
+     }
+ 
+     for item in changes:
+-- 
+1.8.3.1
+

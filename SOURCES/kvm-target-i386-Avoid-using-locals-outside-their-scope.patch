@@ -1,0 +1,52 @@
+From d9a459ff1df8c318dce8d31fedfc95db3ec3625a Mon Sep 17 00:00:00 2001
+From: Igor Mammedov <imammedo@redhat.com>
+Date: Mon, 1 Aug 2016 08:11:47 +0200
+Subject: [PATCH 47/99] target-i386: Avoid using locals outside their scope
+
+RH-Author: Igor Mammedov <imammedo@redhat.com>
+Message-id: <1470039143-24450-43-git-send-email-imammedo@redhat.com>
+Patchwork-id: 71658
+O-Subject: [RHEV-7.3 qemu-kvm-rhev PATCH 42/78] target-i386: Avoid using locals outside their scope
+Bugzilla: 1087672
+RH-Acked-by: Marcel Apfelbaum <marcel@redhat.com>
+RH-Acked-by: David Gibson <dgibson@redhat.com>
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+From: Paolo Bonzini <pbonzini@redhat.com>
+
+x86_cpu_parse_featurestr has a "val = num;" assignment just before num
+goes out of scope.  Push num up to fix the issue.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Reviewed-by: Igor Mammedov <imammedo@redhat.com>
+Reviewed-by: Eduardo Habkost <ehabkost@redhat.com>
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+(cherry picked from commit cf2887c9738451eb989c6c102af070dee2dc172a)
+Signed-off-by: Miroslav Rezanina <mrezanin@redhat.com>
+---
+ target-i386/cpu.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/target-i386/cpu.c b/target-i386/cpu.c
+index a613229..e6ec9d6 100644
+--- a/target-i386/cpu.c
++++ b/target-i386/cpu.c
+@@ -1997,6 +1997,7 @@ static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
+         const char *name;
+         const char *val = NULL;
+         char *eq = NULL;
++        char num[32];
+ 
+         /* Compatibility syntax: */
+         if (featurestr[0] == '+') {
+@@ -2022,7 +2023,6 @@ static void x86_cpu_parse_featurestr(CPUState *cs, char *features,
+         if (!strcmp(name, "tsc-freq")) {
+             int64_t tsc_freq;
+             char *err;
+-            char num[32];
+ 
+             tsc_freq = qemu_strtosz_suffix_unit(val, &err,
+                                            QEMU_STRTOSZ_DEFSUFFIX_B, 1000);
+-- 
+1.8.3.1
+
