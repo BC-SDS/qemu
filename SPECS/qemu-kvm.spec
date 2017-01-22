@@ -77,7 +77,7 @@ Summary: QEMU is a FAST! processor emulator
 Name: %{pkgname}%{?pkgsuffix}
 Version: 1.5.3
 # We change it to 501 in case of overwriiten, change by Luo Gangyi
-Release: 502%{?dist}.bc
+Release: 503%{?dist}.bc
 # Epoch because we pushed a qemu-1.0 package. AIUI this can't ever be dropped
 Epoch: 10
 License: GPLv2+ and LGPLv2+ and BSD
@@ -4938,6 +4938,16 @@ cp %{SOURCE18} pc-bios # keep "make check" happy
 %patch1551 -p1
 %patch1552 -p1
 %patch1553 -p1
+%patch1554 -p1
+%patch1555 -p1
+%patch1556 -p1
+%patch1557 -p1
+%patch1558 -p1
+%patch1559 -p1
+%patch1560 -p1
+%patch1561 -p1
+%patch1562 -p1
+
 
 %build
 buildarch="%{kvm_target}-softmmu"
