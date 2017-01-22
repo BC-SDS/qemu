@@ -77,7 +77,7 @@ Summary: QEMU is a FAST! processor emulator
 Name: %{pkgname}%{?pkgsuffix}
 Version: 1.5.3
 # We change it to 501 in case of overwriiten, change by Luo Gangyi
-Release: 503%{?dist}.bc
+Release: 505%{?dist}.bc
 # Epoch because we pushed a qemu-1.0 package. AIUI this can't ever be dropped
 Epoch: 10
 License: GPLv2+ and LGPLv2+ and BSD
@@ -631,7 +631,7 @@ Patch282: kvm-block-bdrv_reopen_prepare-don-t-use-QERR_OPEN_FILE_F.patch
 # For bz#907743 - qemu-ga: empty reason string for OpenFileFailed error
 Patch283: kvm-qerror-drop-QERR_OPEN_FILE_FAILED-macro.patch
 # For bz#787463 - disable ivshmem (was: [Hitachi 7.0 FEAT] Support ivshmem (Inter-VM Shared Memory))
-Patch284: kvm-rhel-Drop-ivshmem-device.patch
+# Patch284: kvm-rhel-Drop-ivshmem-device.patch
 # For bz#1001144 - Disable or remove device usb-host-linux
 Patch285: kvm-usb-remove-old-usb-host-code.patch
 # For bz#997702 - Migration from RHEL6.5 host to RHEL7.0 host is failed with virtio-net device
@@ -3172,6 +3172,8 @@ Patch1559: sheepdog-check-simultaneous-create-in-resend_aioreq.patch
 Patch1560: sheepdog-fix-overlapping-metadata-update.patch
 Patch1561: sheepdog-fix-a-core-dump.patch
 Patch1562: sheepdog-add-reconnect-to-cluster.patch
+Patch1563: sheepdog-support-external-IO-NIC-function.patch
+Patch1564: hw-ivshmem-disable-one-code-line-for-TREND.patch
 
 
 BuildRequires: zlib-devel
@@ -3671,7 +3673,7 @@ cp %{SOURCE18} pc-bios # keep "make check" happy
 %patch281 -p1
 %patch282 -p1
 %patch283 -p1
-%patch284 -p1
+# %patch284 -p1
 %patch285 -p1
 %patch286 -p1
 %patch287 -p1
@@ -4947,6 +4949,8 @@ cp %{SOURCE18} pc-bios # keep "make check" happy
 %patch1560 -p1
 %patch1561 -p1
 %patch1562 -p1
+%patch1563 -p1
+%patch1564 -p1
 
 
 %build
@@ -5400,6 +5404,10 @@ sh %{_sysconfdir}/sysconfig/modules/kvm.modules &> /dev/null || :
 %{_libdir}/pkgconfig/libcacard.pc
 
 %changelog
+* Thu Jun 16 2016 Xiubo Li <lixiubo@cmss.chinamobile.com>
+- enable ivshmem (was: [Hitachi 7.0 FEAT] Support ivshmem (Inter-VM Shared Memory)))
+- fix one ivshmem bug to support TREND
+
 * Mon May 16 2016 Luo Gangyi <luogangyi@cmss.chinamobile.com>
 - enable block live migration
 - enable sheepdog driver
