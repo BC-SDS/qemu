@@ -78,7 +78,7 @@ Obsoletes: %1 < %{obsoletes_version}
 Summary: QEMU is a FAST! processor emulator
 Name: %{pkgname}%{?pkgsuffix}
 Version: 2.6.0
-Release: 29%{?dist}
+Release: 29.1%{?dist}
 # Epoch because we pushed a qemu-1.0 package. AIUI this can't ever be dropped
 Epoch: 10
 License: GPLv2+ and LGPLv2+ and BSD
@@ -1150,6 +1150,7 @@ Patch10000: sheepdog-fix-overlapping-metadata-update.patch
 Patch10001: sheepdog-add-reconnect-to-cluster.patch
 Patch10002: sheepdog-support-external-IO-NIC-function.patch
 Patch10003: kvm-migration-Fix-migrated-VM-lost-connection-due-to-ovs.patch
+Patch10004: kvm-vhostuser-support-dvs.patch
 
 BuildRequires: zlib-devel
 BuildRequires: SDL-devel
@@ -1891,6 +1892,7 @@ ApplyOptionalPatch()
 %patch10001 -p1
 %patch10002 -p1
 %patch10003 -p1
+%patch10004 -p1
 
 
 ApplyOptionalPatch qemu-kvm-test.patch
@@ -2328,6 +2330,9 @@ useradd -r -u 107 -g qemu -G kvm -d / -s /sbin/nologin \
 %endif
 
 %changelog
+* Tue Apr 14 2017 yuxing <yu.xing@zte.com.cn>
+- kvm-vhostuser-support-dvs.patch
+
 * Tue Dec 27 2016 Yaowei Bai <baiyaowei@cmss.chinamobile.com>
 - kvm-migration-Fix-migrated-VM-lost-connection-due-to-ovs.patch
 

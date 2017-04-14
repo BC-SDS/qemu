@@ -1,0 +1,459 @@
+From 6241440d560fe93f501bc96ff628cd8492795b97 Mon Sep 17 00:00:00 2001
+From: yuxing <yu.xing@zte.com.cn>
+Date: Fri, 14 Apr 2017 15:01:34 +0800
+Subject: [PATCH] kvm: vhostuser support dvs
+
+add vhostuser support for dvs
+
+Signed-off-by: yuxing <yu.xing@zte.com.cn>
+---
+ hw/net/vhost_net.c                | 10 +++++++
+ hw/virtio/vhost-user.c            | 19 +++++++++++++
+ hw/virtio/vhost.c                 | 17 +++++++++++-
+ include/hw/virtio/vhost-backend.h |  6 ++++
+ include/hw/virtio/vhost.h         |  1 +
+ include/net/vhost_net.h           |  1 +
+ linux-headers/linux/vhost.h       |  4 +++
+ net/net.c                         | 58 +++++++++++++++++++++++++++++++++++++--
+ net/vhost-user.c                  | 43 ++++++++++++++++++++++++-----
+ qapi-schema.json                  |  4 ++-
+ 10 files changed, 152 insertions(+), 11 deletions(-)
+
+diff --git a/hw/net/vhost_net.c b/hw/net/vhost_net.c
+index 519f8b8..b384150 100644
+--- a/hw/net/vhost_net.c
++++ b/hw/net/vhost_net.c
+@@ -36,6 +36,7 @@
+ #include "standard-headers/linux/virtio_ring.h"
+ #include "hw/virtio/vhost.h"
+ #include "hw/virtio/virtio-bus.h"
++#include "qemu/cutils.h"
+ 
+ struct vhost_net {
+     struct vhost_dev dev;
+@@ -153,6 +154,15 @@ struct vhost_net *vhost_net_init(VhostNetOptions *options)
+     net->dev.nvqs = 2;
+     net->dev.vqs = net->vqs;
+ 
++    if(options->backend_type == VHOST_BACKEND_TYPE_USER)
++    {
++        if(options->ifname[0]!= '\0')
++        {       
++            pstrcpy(net->dev.ifname, sizeof(net->dev.ifname),options->ifname);
++        }       
++    }
++
++
+     if (backend_kernel) {
+         r = vhost_net_get_fd(options->net_backend);
+         if (r < 0) {
+diff --git a/hw/virtio/vhost-user.c b/hw/virtio/vhost-user.c
+index 76dc287..48a4fce 100644
+--- a/hw/virtio/vhost-user.c
++++ b/hw/virtio/vhost-user.c
+@@ -60,6 +60,7 @@ typedef enum VhostUserRequest {
+     VHOST_USER_GET_QUEUE_NUM = 17,
+     VHOST_USER_SET_VRING_ENABLE = 18,
+     VHOST_USER_SEND_RARP = 19,
++    VHOST_USER_SET_NET_NAME = 20,
+     VHOST_USER_MAX
+ } VhostUserRequest;
+ 
+@@ -97,6 +98,7 @@ typedef struct VhostUserMsg {
+         struct vhost_vring_addr addr;
+         VhostUserMemory memory;
+         VhostUserLog log;
++        struct vhost_net_name name;
+     } payload;
+ } QEMU_PACKED VhostUserMsg;
+ 
+@@ -372,6 +374,22 @@ static int vhost_user_set_vring_num(struct vhost_dev *dev,
+     return vhost_set_vring(dev, VHOST_USER_SET_VRING_NUM, ring);
+ }
+ 
++static int vhost_user_set_net_name(struct vhost_dev *dev,
++                                    struct vhost_net_name *pname)
++{
++    VhostUserMsg msg = {
++        .request = VHOST_USER_SET_NET_NAME,
++        .flags = VHOST_USER_VERSION,
++        .payload.name = *pname,
++        .size = sizeof(msg.payload.name),
++    };
++
++    vhost_user_write(dev, &msg, NULL, 0);
++
++    return 0;
++}
++
++
+ static int vhost_user_set_vring_base(struct vhost_dev *dev,
+                                      struct vhost_vring_state *ring)
+ {
+@@ -698,6 +716,7 @@ const VhostOps user_ops = {
+         .vhost_set_vring_addr = vhost_user_set_vring_addr,
+         .vhost_set_vring_endian = vhost_user_set_vring_endian,
+         .vhost_set_vring_num = vhost_user_set_vring_num,
++        .vhost_set_net_name = vhost_user_set_net_name, 
+         .vhost_set_vring_base = vhost_user_set_vring_base,
+         .vhost_get_vring_base = vhost_user_get_vring_base,
+         .vhost_set_vring_kick = vhost_user_set_vring_kick,
+diff --git a/hw/virtio/vhost.c b/hw/virtio/vhost.c
+index 3b4db14..a394e30 100644
+--- a/hw/virtio/vhost.c
++++ b/hw/virtio/vhost.c
+@@ -26,7 +26,7 @@
+ #include "hw/virtio/virtio-bus.h"
+ #include "hw/virtio/virtio-access.h"
+ #include "migration/migration.h"
+-
++#include "qemu/cutils.h"
+ /* enabled until disconnected backend stabilizes */
+ #define _VHOST_DEBUG 1
+ 
+@@ -837,6 +837,7 @@ static int vhost_virtqueue_start(struct vhost_dev *dev,
+     };
+     struct VirtQueue *vvq = virtio_get_queue(vdev, idx);
+ 
++    struct vhost_net_name name;
+ 
+     vq->num = state.num = virtio_queue_get_num(vdev, idx);
+     r = dev->vhost_ops->vhost_set_vring_num(dev, &state);
+@@ -845,6 +846,20 @@ static int vhost_virtqueue_start(struct vhost_dev *dev,
+         return -errno;
+     }
+ 
++    if ( dev->vhost_ops->backend_type == VHOST_BACKEND_TYPE_USER && dev->ifname[0]!= '\0') {
++    {
++        pstrcpy(name.ifname, sizeof(name.ifname),dev->ifname);
++        if(dev->vhost_ops->vhost_set_net_name != NULL)
++        {
++            r = dev->vhost_ops->vhost_set_net_name(dev,&name);
++            if (r) 
++            {
++                return -errno;
++            }
++        }
++    }       
++}
++
+     state.num = virtio_queue_get_last_avail_idx(vdev, idx);
+     r = dev->vhost_ops->vhost_set_vring_base(dev, &state);
+     if (r) {
+diff --git a/include/hw/virtio/vhost-backend.h b/include/hw/virtio/vhost-backend.h
+index 84e1cb7..8f424cc 100644
+--- a/include/hw/virtio/vhost-backend.h
++++ b/include/hw/virtio/vhost-backend.h
+@@ -26,6 +26,7 @@ struct vhost_vring_file;
+ struct vhost_vring_state;
+ struct vhost_vring_addr;
+ struct vhost_scsi_target;
++struct vhost_net_name;
+ 
+ typedef int (*vhost_backend_init)(struct vhost_dev *dev, void *opaque);
+ typedef int (*vhost_backend_cleanup)(struct vhost_dev *dev);
+@@ -49,6 +50,9 @@ typedef int (*vhost_set_vring_endian_op)(struct vhost_dev *dev,
+                                          struct vhost_vring_state *ring);
+ typedef int (*vhost_set_vring_num_op)(struct vhost_dev *dev,
+                                       struct vhost_vring_state *ring);
++typedef int (*vhost_set_net_name_op)(struct vhost_dev *dev,
++                                      struct vhost_net_name *pname);
++
+ typedef int (*vhost_set_vring_base_op)(struct vhost_dev *dev,
+                                        struct vhost_vring_state *ring);
+ typedef int (*vhost_get_vring_base_op)(struct vhost_dev *dev,
+@@ -89,6 +93,7 @@ typedef struct VhostOps {
+     vhost_set_vring_addr_op vhost_set_vring_addr;
+     vhost_set_vring_endian_op vhost_set_vring_endian;
+     vhost_set_vring_num_op vhost_set_vring_num;
++    vhost_set_net_name_op vhost_set_net_name;
+     vhost_set_vring_base_op vhost_set_vring_base;
+     vhost_get_vring_base_op vhost_get_vring_base;
+     vhost_set_vring_kick_op vhost_set_vring_kick;
+@@ -106,6 +111,7 @@ typedef struct VhostOps {
+ } VhostOps;
+ 
+ extern const VhostOps user_ops;
++#define MAX_VHOST_IF_NAME 48
+ 
+ int vhost_set_backend_type(struct vhost_dev *dev,
+                            VhostBackendType backend_type);
+diff --git a/include/hw/virtio/vhost.h b/include/hw/virtio/vhost.h
+index e433089..a076537 100644
+--- a/include/hw/virtio/vhost.h
++++ b/include/hw/virtio/vhost.h
+@@ -61,6 +61,7 @@ struct vhost_dev {
+     void *opaque;
+     struct vhost_log *log;
+     QLIST_ENTRY(vhost_dev) entry;
++    char ifname[MAX_VHOST_IF_NAME];
+ };
+ 
+ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
+diff --git a/include/net/vhost_net.h b/include/net/vhost_net.h
+index 5a08eff..3b0532c 100644
+--- a/include/net/vhost_net.h
++++ b/include/net/vhost_net.h
+@@ -12,6 +12,7 @@ typedef struct VhostNetOptions {
+     NetClientState *net_backend;
+     uint32_t busyloop_timeout;
+     void *opaque;
++    char ifname[MAX_VHOST_IF_NAME];
+ } VhostNetOptions;
+ 
+ uint64_t vhost_net_get_max_queues(VHostNetState *net);
+diff --git a/linux-headers/linux/vhost.h b/linux-headers/linux/vhost.h
+index 571294c..c740a94 100644
+--- a/linux-headers/linux/vhost.h
++++ b/linux-headers/linux/vhost.h
+@@ -15,6 +15,7 @@
+ #include <linux/ioctl.h>
+ #include <linux/virtio_config.h>
+ #include <linux/virtio_ring.h>
++#include "hw/virtio/vhost-backend.h"
+ 
+ struct vhost_vring_state {
+ 	unsigned int index;
+@@ -27,6 +28,9 @@ struct vhost_vring_file {
+ 
+ };
+ 
++struct vhost_net_name{
++        char ifname[MAX_VHOST_IF_NAME];
++};
+ struct vhost_vring_addr {
+ 	unsigned int index;
+ 	/* Option flags. */
+diff --git a/net/net.c b/net/net.c
+index 6b0b375..8e88745 100644
+--- a/net/net.c
++++ b/net/net.c
+@@ -47,6 +47,7 @@
+ #include "sysemu/sysemu.h"
+ #include "net/filter.h"
+ #include "qapi/string-output-visitor.h"
++#include "sysemu/char.h"
+ 
+ /* Net bridge is currently not supported for W32. */
+ #if !defined(_WIN32)
+@@ -1152,7 +1153,12 @@ void qmp_netdev_add(QDict *qdict, QObject **ret, Error **errp)
+ {
+     Error *local_err = NULL;
+     QemuOptsList *opts_list;
+-    QemuOpts *opts;
++    QemuOpts *opts, *charopts=NULL;
++
++    CharDriverState *chr;
++    char a[100];
++    char b[20];
++    const char *optarg;
+ 
+     opts_list = qemu_find_opts_err("netdev", &local_err);
+     if (local_err) {
+@@ -1164,6 +1170,39 @@ void qmp_netdev_add(QDict *qdict, QObject **ret, Error **errp)
+         goto out;
+     }
+ 
++    if(strncmp(qemu_opt_get(opts,"type"),"vhost-user",20) == 0)
++    {   	 
++        chr = qemu_chr_find("charnet0");
++
++        if(chr != NULL)
++        {
++            snprintf(a,100,"socket,id=%s,path=%s",qemu_opt_get(opts,"chardev"),qemu_opt_get(chr->opts,"path"));
++        }
++        else
++        {
++            snprintf(a,100,"socket,id=%s,path=/opt/network/ovdk/bin/vhost.sock",qemu_opt_get(opts,"chardev"));
++        }
++        
++        if(qemu_opt_get(opts,"reconnect") != NULL)
++        {
++            snprintf(b,20,",reconnect=%s",qemu_opt_get(opts,"reconnect"));
++            strcat(a,b);
++        }
++
++        optarg =a;
++        charopts = qemu_opts_parse_noisily(qemu_find_opts("chardev"),
++                                               optarg, true);
++        if(charopts == NULL)
++        {
++            error_report("qemu_opts_parse_noisily error");
++        }                                       
++        qemu_chr_new_from_opts(charopts, NULL, &local_err);
++        if (local_err) 
++        {
++            error_report("qemu_chr_new_from_opts error");
++        }    
++    }
++    
+     netdev_add(opts, &local_err);
+     if (local_err) {
+         qemu_opts_del(opts);
+@@ -1178,6 +1217,10 @@ void qmp_netdev_del(const char *id, Error **errp)
+ {
+     NetClientState *nc;
+     QemuOpts *opts;
++    Error *err = NULL;
++    const char *chardevid= NULL;
++    char a[100]= {};
++
+ 
+     nc = qemu_find_netdev(id);
+     if (!nc) {
+@@ -1191,9 +1234,20 @@ void qmp_netdev_del(const char *id, Error **errp)
+         error_setg(errp, "Device '%s' is not a netdev", id);
+         return;
+     }
+-
++    
++    if(strncmp(qemu_opt_get(opts,"type"),"vhost-user",20) == 0)
++    {  
++        chardevid = qemu_opt_get(opts,"chardev"); 
++        strncpy(a,chardevid,100);    
++    }
+     qemu_del_net_client(nc);
+     qemu_opts_del(opts);
++
++    if(a[0] != '\0')
++    {
++        chardevid = a;
++        qmp_chardev_remove(chardevid,&err);
++    }
+ }
+ 
+ static void netfilter_print_info(Monitor *mon, NetFilterState *nf)
+diff --git a/net/vhost-user.c b/net/vhost-user.c
+index 0d44c85..b2de295 100644
+--- a/net/vhost-user.c
++++ b/net/vhost-user.c
+@@ -17,6 +17,7 @@
+ #include "qemu/error-report.h"
+ #include "qmp-commands.h"
+ #include "trace.h"
++#include "qemu/cutils.h"
+ 
+ typedef struct VhostUserState {
+     NetClientState nc;
+@@ -24,12 +25,14 @@ typedef struct VhostUserState {
+     VHostNetState *vhost_net;
+     int watch;
+     uint64_t acked_features;
+-    bool started;
++    bool started;     
++    char ifname[MAX_VHOST_IF_NAME];
+ } VhostUserState;
+ 
+ typedef struct VhostUserChardevProps {
+     bool is_socket;
+     bool is_unix;
++    bool is_reconnect;
+ } VhostUserChardevProps;
+ 
+ VHostNetState *vhost_user_get_vhost_net(NetClientState *nc)
+@@ -85,6 +88,12 @@ static int vhost_user_start(int queues, NetClientState *ncs[])
+         options.net_backend = ncs[i];
+         options.opaque      = s->chr;
+         options.busyloop_timeout = 0;
++
++        if(s->ifname[0]!= '\0')
++        {
++    	    pstrcpy(options.ifname, sizeof(options.ifname),s->ifname);
++        }
++        
+         net = vhost_net_init(&options);
+         if (!net) {
+             error_report("failed to init vhost_net for queue %d", i);
+@@ -238,7 +247,7 @@ static void net_vhost_user_event(void *opaque, int event)
+ 
+ static int net_vhost_user_init(NetClientState *peer, const char *device,
+                                const char *name, CharDriverState *chr,
+-                               int queues)
++                               int queues, char *ifname)
+ {
+     NetClientState *nc, *nc0 = NULL;
+     VhostUserState *s;
+@@ -260,8 +269,11 @@ static int net_vhost_user_init(NetClientState *peer, const char *device,
+ 
+         s = DO_UPCAST(VhostUserState, nc, nc);
+         s->chr = chr;
++         if(ifname[0]!= '\0')
++         {
++             pstrcpy(s->ifname, sizeof(s->ifname),ifname);
++         }
+     }
+-
+     s = DO_UPCAST(VhostUserState, nc, nc0);
+     do {
+         Error *err = NULL;
+@@ -279,8 +291,8 @@ static int net_vhost_user_init(NetClientState *peer, const char *device,
+ }
+ 
+ static int net_vhost_chardev_opts(void *opaque,
+-                                  const char *name, const char *value,
+-                                  Error **errp)
++                                 const char *name, const char *value,
++                                 Error **errp)
+ {
+     VhostUserChardevProps *props = opaque;
+ 
+@@ -289,7 +301,11 @@ static int net_vhost_chardev_opts(void *opaque,
+     } else if (strcmp(name, "path") == 0) {
+         props->is_unix = true;
+     } else if (strcmp(name, "server") == 0) {
+-    } else {
++    }
++    else if (strcmp(name, "reconnect") == 0) {
++        props->is_reconnect = true;
++    } 	 
++    else {
+         error_setg(errp,
+                    "vhost-user does not support a chardev with option %s=%s",
+                    name, value);
+@@ -354,6 +370,8 @@ int net_init_vhost_user(const NetClientOptions *opts, const char *name,
+     int queues;
+     const NetdevVhostUserOptions *vhost_user_opts;
+     CharDriverState *chr;
++    char ifname[MAX_VHOST_IF_NAME];
++    
+ 
+     assert(opts->type == NET_CLIENT_OPTIONS_KIND_VHOST_USER);
+     vhost_user_opts = opts->u.vhost_user.data;
+@@ -377,5 +395,16 @@ int net_init_vhost_user(const NetClientOptions *opts, const char *name,
+         return -1;
+     }
+ 
+-    return net_vhost_user_init(peer, "vhost_user", name, chr, queues);
++    if(vhost_user_opts->has_ifname)
++    {   
++        pstrcpy(ifname, sizeof ifname, vhost_user_opts->ifname);
++    }   
++    else
++    {   
++        ifname[0] = '\0';
++    }   
++
++
++    return net_vhost_user_init(peer, "vhost_user", name, chr, queues, ifname);
+ }
++
+diff --git a/qapi-schema.json b/qapi-schema.json
+index 01c3e9e..f9aad1b 100644
+--- a/qapi-schema.json
++++ b/qapi-schema.json
+@@ -2747,9 +2747,11 @@
+ ##
+ { 'struct': 'NetdevVhostUserOptions',
+   'data': {
++    '*ifname':        'str',
+     'chardev':        'str',
+     '*vhostforce':    'bool',
+-    '*queues':        'int' } }
++    '*queues':        'int' ,
++    '*reconnect':     'uint64' } }
+ 
+ ##
+ # @NetClientOptions
+-- 
+1.8.3.1
+
